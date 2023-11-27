@@ -1,81 +1,142 @@
 //! Ishikari Queue
 
-use crate::worker::Status::*;
-use crate::Job;
+use crate::{Context, Job, Status::*};
 use buildstructor::buildstructor;
 use futures::TryStreamExt;
 use sqlx::postgres::PgListener;
 use sqlx::PgPool;
+use std::any::Any;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
 pub struct Queue {
-    name: String,
-    pool: Arc<PgPool>,
+    pub context: Arc<dyn std::any::Any + Send + Sync>,
+    pub name: String,
+    pub pool: Arc<PgPool>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueueNotification {
+    queue: String,
 }
 
 #[buildstructor]
 impl Queue {
     #[builder]
-    pub fn new(name: String, pool: Arc<PgPool>) -> Self {
-        Self { name, pool }
+    pub fn new(
+        name: String,
+        pool: Arc<PgPool>,
+        context: Option<Arc<dyn Any + Send + Sync>>,
+    ) -> Self {
+        let context = context.unwrap_or(Arc::new(()));
+
+        Self {
+            context,
+            name,
+            pool,
+        }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
-        info!("Starting queue {}", self.name);
+    pub fn start(self: Arc<Self>) {
+        let queue = self.clone();
+
+        tokio::spawn(async move {
+            queue.run().await.unwrap();
+        });
+    }
+
+    async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        info!("Starting queue '{}'", self.name);
 
         let mut listener = PgListener::connect_with(&self.pool).await?;
         listener.listen_all(vec!["insert", "signal"]).await?;
         let mut stream = listener.into_stream();
 
+        // TODO: make this configurable
         let mut interval = pin!(tokio::time::interval(Duration::from_secs(2)));
 
         loop {
             tokio::select! {
                 res = stream.try_next() => {
-                    if let Some(notification) = res? {
-                        info!("Queue {} received notification: {notification:?}", self.name);
-                        info!("Fetching jobs due to notification");
-                        execute_jobs(&self.pool, &self.name, 10).await;
+                    match res {
+                        Ok(Some(notification)) => {
+                            handle_notification(self.clone(), &notification).await;
+                        }
+                        Ok(None) => {
+                            info!("Queue '{}' received EOF", self.name);
+                            break Ok(());
+                        }
+                        Err(e) => {
+                            error!("Queue '{}' received error: {}", self.name, e);
+                            break Ok(());
+                        }
                     }
                 },
                 _ = interval.tick() => {
                     info!("Queue {}: checking for jobs", self.name);
-                    execute_jobs(&self.pool, &self.name, 10).await;
+                    execute_jobs(self.clone()).await;
                 }
             }
         }
     }
 }
 
-async fn execute_jobs(pool: &PgPool, queue_name: &str, limit: i64) {
-    match fetch_and_update_jobs(pool, queue_name, limit).await {
+async fn handle_notification(queue: Arc<Queue>, notification: &sqlx::postgres::PgNotification) {
+    match notification.channel() {
+        "insert" => match serde_json::from_str::<QueueNotification>(notification.payload()) {
+            Ok(QueueNotification { queue: name }) => {
+                if name == queue.name {
+                    info!("Queue '{}': insert notification", queue.name);
+                    execute_jobs(queue.clone()).await;
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Queue '{}': received invalid insert notification: {}",
+                    queue.name, e
+                );
+            }
+        },
+        "signal" => {
+            info!("Queue '{}': received signal notification", queue.name);
+        }
+        _ => {}
+    }
+}
+
+async fn execute_jobs(queue: Arc<Queue>) {
+    match fetch_and_update_jobs(queue.pool.clone(), &queue.name, 10).await {
         Ok(jobs) => {
             info!("Queue: executing {} jobs", jobs.len());
             for job in jobs {
-                let job_pool = pool.clone();
-                tokio::spawn(async move {
-                    let worker = job.worker().unwrap();
+                let job_clone = job.clone();
+                let pool = queue.pool.clone();
 
-                    match worker.perform().await {
+                let queue_clone = Arc::clone(&queue);
+
+                tokio::spawn(async move {
+                    let worker = &job_clone.worker().unwrap();
+                    let context = Context::new(Arc::new(job_clone), queue_clone);
+
+                    match worker.perform(context).await {
                         Ok(result) => match result {
                             Complete(complete) => {
                                 info!("Job completed id={} result={:?}", job.id, complete.0);
-                                complete_job(&job_pool, job.id).await;
+                                complete_job(&pool, job.id).await;
                             }
                             Discard(discard) => {
                                 info!("Job discarded id={} reason={:?}", job.id, discard.0);
-                                discard_job(&job_pool, job.id).await;
+                                discard_job(&pool, job.id).await;
                             }
                             Cancel(cancel) => {
                                 info!("Job cancelled id={} reason={:?}", job.id, cancel.0);
-                                cancel_job(&job_pool, job.id).await;
+                                cancel_job(&pool, job.id).await;
                             }
                             Snooze(snooze) => {
                                 info!("Job snoozed id={} snooze={}", job.id, snooze.0);
-                                snooze_job(&job_pool, job.id, snooze.0).await;
+                                snooze_job(&pool, job.id, snooze.0).await;
                             }
                         },
                         Err(e) => {
@@ -85,7 +146,7 @@ async fn execute_jobs(pool: &PgPool, queue_name: &str, limit: i64) {
                                 job.attempt,
                                 e.to_string()
                             );
-                            error_job(&job_pool, job.id, &e.to_string()).await;
+                            error_job(&pool, job.id, &e.to_string()).await;
                         }
                     }
                 });
@@ -147,7 +208,7 @@ async fn error_job(pool: &sqlx::PgPool, id: i64, error_message: &str) {
 }
 
 async fn fetch_and_update_jobs(
-    pool: &sqlx::PgPool,
+    pool: Arc<sqlx::PgPool>,
     queue: &str,
     demand: i64,
 ) -> Result<Vec<Job>, sqlx::Error> {
@@ -185,5 +246,5 @@ async fn fetch_and_update_jobs(
 
     info!("Fetched {} jobs", jobs.len());
 
-    Ok(jobs.into())
+    Ok(jobs)
 }

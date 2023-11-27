@@ -88,9 +88,3 @@ impl From<Snooze> for PerformResult {
         Ok(Status::Snooze(snooze))
     }
 }
-
-#[typetag::serde(tag = "type")]
-#[async_trait::async_trait]
-pub trait Worker: Send + Sync {
-    async fn perform(&self) -> PerformResult;
-}

@@ -681,6 +681,7 @@ dependencies = [
  "chrono",
  "figment",
  "futures",
+ "ishikari-macros",
  "serde",
  "serde_json",
  "sqlx",
@@ -688,6 +689,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typetag",
+]
+
+[[package]]
+name = "ishikari-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

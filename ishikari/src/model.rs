@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::postgres::{PgHasArrayType, PgTypeInfo};
 
-#[derive(Debug, Serialize, Deserialize, sqlx::Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "job_state", rename_all = "lowercase")]
 pub enum JobState {
@@ -22,7 +22,7 @@ impl PgHasArrayType for JobState {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Job {
     pub id: i64,
     pub state: JobState,
