@@ -8,8 +8,9 @@ use sqlx::PgPool;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, instrument};
 
+#[derive(Debug)]
 pub struct Stager {
     pool: Arc<PgPool>,
 }
@@ -19,33 +20,39 @@ impl Stager {
         Self { pool }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
-        info!("Starting stager");
+    #[instrument(skip(self))]
+    pub fn start(self) -> tokio::task::JoinHandle<Result<(), sqlx::Error>> {
+        let pool = self.pool.clone();
 
-        let mut listener = PgListener::connect_with(&self.pool).await?;
-        listener.listen_all(vec!["stager"]).await?;
-        let mut stream = listener.into_stream();
+        tokio::spawn(async move {
+            info!("Starting stager");
 
-        let mut interval = pin!(tokio::time::interval(Duration::from_secs(2)));
+            let mut listener = PgListener::connect_with(&pool).await?;
+            listener.listen_all(vec!["stager"]).await?;
+            let mut stream = listener.into_stream();
 
-        loop {
-            tokio::select! {
-                res = stream.try_next() => {
-                    if let Some(notification) = res? {
-                        info!("{notification:?}");
-                        let count = stage_jobs(&self.pool, 10).await?;
+            let mut interval = pin!(tokio::time::interval(Duration::from_secs(2)));
+
+            loop {
+                tokio::select! {
+                    res = stream.try_next() => {
+                        if let Some(notification) = res? {
+                            info!("{notification:?}");
+                            let count = stage_jobs(&pool, 10).await?;
+                            info!("Staged {} jobs", count);
+                        }
+                    },
+                    _ = interval.tick() => {
+                        let count = stage_jobs(&pool, 10).await?;
                         info!("Staged {} jobs", count);
                     }
-                },
-                _ = interval.tick() => {
-                    let count = stage_jobs(&self.pool, 10).await?;
-                    info!("Staged {} jobs", count);
                 }
             }
-        }
+        })
     }
 }
 
+#[instrument(skip(pool))]
 async fn stage_jobs(pool: &PgPool, limit: i64) -> Result<usize, sqlx::Error> {
     info!("Staging jobs");
 

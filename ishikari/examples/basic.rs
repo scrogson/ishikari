@@ -1,7 +1,7 @@
 mod workers {
     use ishikari::prelude::*;
     use serde::{Deserialize, Serialize};
-    use tracing::info;
+    use tracing::{info, instrument};
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[ishikari::job]
@@ -12,6 +12,7 @@ mod workers {
 
     #[ishikari::worker]
     impl Worker for Sum {
+        #[instrument]
         async fn perform(&self, _ctx: Context) -> PerformResult {
             let result = self.a + self.b;
             info!("{} + {} = {}", self.a, self.b, &result);
@@ -26,6 +27,11 @@ mod workers {
 
     #[ishikari::worker]
     impl Worker for Fail {
+        fn max_attempts(&self) -> i32 {
+            5
+        }
+
+        #[instrument(skip(ctx))]
         async fn perform(&self, ctx: Context) -> PerformResult {
             let context = ctx.extract::<sqlx::PgPool>()?;
 
@@ -59,8 +65,7 @@ async fn main() -> anyhow::Result<()> {
         .execute(&*pool)
         .await?;
 
-    let stager = Stager::new(pool.clone());
-    tokio::spawn(async move { stager.run().await });
+    let _stager_handle = Stager::new(pool.clone()).start();
 
     let queue = Arc::new(
         Queue::builder()
@@ -74,8 +79,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut tx = pool.begin().await.unwrap();
 
-    let _ = ishikari::insert(&mut *tx, "default", Sum { a: 1, b: 2 }).await?;
-    let _ = ishikari::insert(&mut *tx, "default", Fail).await?;
+    let _ = ishikari::insert(Sum { a: 1, b: 2 }, &mut *tx).await?;
+    let _ = ishikari::insert(Fail, &mut *tx).await?;
 
     tx.commit().await.unwrap();
 

@@ -1,6 +1,5 @@
 pub use serde;
 use serde::Serialize;
-
 use sqlx::FromRow;
 use sqlx::PgExecutor;
 
@@ -22,9 +21,12 @@ pub mod prelude {
 }
 
 use std::any::Any;
+use std::fmt::Debug;
 use std::sync::Arc;
+use tracing::{info, instrument};
 
 /// A context for a worker.
+#[derive(Debug)]
 pub struct Context {
     pub job: Arc<Job>,
     pub queue: Arc<Queue>,
@@ -56,28 +58,55 @@ impl Context {
 #[typetag::serde(tag = "type")]
 #[async_trait::async_trait]
 pub trait Worker: Send + Sync {
+    /// Configure the queue the job should be inserted into. Defaults to `default`.
+    fn queue(&self) -> &'static str {
+        "default"
+    }
+
+    /// Configure the max number of times a job can be retried before discarding.
+    fn max_attempts(&self) -> i32 {
+        20
+    }
+
+    fn cron(&self) -> Option<()> {
+        None
+    }
+
+    /// Control when the next attempt should be scheduled.
+    ///
+    /// Given a current attempt, this should calculate the number of seconds in the future the job
+    /// should be retried.
+    fn backoff(&self, _attempt: u32) -> u32 {
+        // TODO: figure out how this should be done
+        2
+    }
+
+    /// Perform the job.
     async fn perform(&self, context: Context) -> PerformResult;
 }
 
-pub async fn insert<'a, J, E>(executor: E, queue: &str, job: J) -> Result<Job, sqlx::Error>
+// TODO: use an ishikari::Error
+#[instrument(skip(executor))]
+pub async fn insert<'a, J, E>(job: J, executor: E) -> Result<Job, sqlx::Error>
 where
-    J: std::fmt::Debug + Serialize + Worker + Send + Sync + 'static,
+    J: Debug + Serialize + Worker + Send + Sync + 'static,
     E: PgExecutor<'a>,
 {
     // TODO: remove this unwrap
     let args = serde_json::to_value(&job as &dyn Worker).unwrap();
 
     let row =
-        sqlx::query(r#"insert into jobs (queue, worker, args) values ($1, $2, $3) returning *"#)
-            .bind(queue)
+        sqlx::query(r#"insert into jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
+            .bind(&job.queue())
             .bind("NativeWorker")
             .bind(args)
+            .bind(&job.max_attempts())
             .fetch_one(executor)
             .await?;
 
     let inserted = Job::from_row(&row)?;
 
-    tracing::info!("Job inserted id={}, args={:?}", inserted.id, job);
+    info!("Job inserted id={}, args={:?}", inserted.id, job);
 
     Ok(inserted)
 }

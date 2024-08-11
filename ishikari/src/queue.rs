@@ -9,8 +9,9 @@ use std::any::Any;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
+#[derive(Debug)]
 pub struct Queue {
     pub context: Arc<dyn std::any::Any + Send + Sync>,
     pub name: String,
@@ -39,17 +40,18 @@ impl Queue {
         }
     }
 
+    #[instrument(skip(self), fields(queue = self.name))]
     pub fn start(self: Arc<Self>) {
         let queue = self.clone();
 
+        info!("Starting queue '{}'", self.name);
         tokio::spawn(async move {
             queue.run().await.unwrap();
         });
     }
 
+    #[instrument(skip(self), fields(queue = self.name))]
     async fn run(self: Arc<Self>) -> anyhow::Result<()> {
-        info!("Starting queue '{}'", self.name);
-
         let mut listener = PgListener::connect_with(&self.pool).await?;
         listener.listen_all(vec!["insert", "signal"]).await?;
         let mut stream = listener.into_stream();
@@ -83,6 +85,7 @@ impl Queue {
     }
 }
 
+#[instrument(skip(queue, notification), fields(queue = queue.name))]
 async fn handle_notification(queue: Arc<Queue>, notification: &sqlx::postgres::PgNotification) {
     match notification.channel() {
         "insert" => match serde_json::from_str::<QueueNotification>(notification.payload()) {
@@ -106,6 +109,7 @@ async fn handle_notification(queue: Arc<Queue>, notification: &sqlx::postgres::P
     }
 }
 
+#[instrument(skip(queue), fields(queue = queue.name))]
 async fn execute_jobs(queue: Arc<Queue>) {
     match fetch_and_update_jobs(queue.pool.clone(), &queue.name, 10).await {
         Ok(jobs) => {
@@ -156,6 +160,7 @@ async fn execute_jobs(queue: Arc<Queue>) {
     }
 }
 
+#[instrument(skip(pool))]
 async fn snooze_job(pool: &sqlx::PgPool, id: i64, snooze: u64) {
     sqlx::query(r#"UPDATE jobs SET state = 'scheduled', scheduled_at = (now() + $1 * interval '1 second'), max_attempts = max_attempts + 1 WHERE id = $2"#)
         .bind(snooze as i64)
@@ -165,6 +170,7 @@ async fn snooze_job(pool: &sqlx::PgPool, id: i64, snooze: u64) {
         .unwrap();
 }
 
+#[instrument(skip(pool))]
 async fn cancel_job(pool: &sqlx::PgPool, id: i64) {
     sqlx::query(r#"UPDATE jobs SET state = 'cancelled', cancelled_at = now() WHERE id = $1"#)
         .bind(id)
@@ -173,6 +179,7 @@ async fn cancel_job(pool: &sqlx::PgPool, id: i64) {
         .unwrap();
 }
 
+#[instrument(skip(pool))]
 async fn discard_job(pool: &sqlx::PgPool, id: i64) {
     sqlx::query(r#"UPDATE jobs SET state = 'discarded', discarded_at = now() WHERE id = $1"#)
         .bind(id)
@@ -181,14 +188,16 @@ async fn discard_job(pool: &sqlx::PgPool, id: i64) {
         .unwrap();
 }
 
+#[instrument(skip(pool))]
 async fn complete_job(pool: &sqlx::PgPool, id: i64) {
-    sqlx::query(r#"UPDATE jobs SET state = 'completed', completed_at = now() WHERE id = $1 "#)
+    sqlx::query(r#"UPDATE jobs SET state = 'completed', completed_at = now() WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
         .unwrap();
 }
 
+#[instrument(skip(pool))]
 async fn error_job(pool: &sqlx::PgPool, id: i64, error_message: &str) {
     let result = sqlx::query(
         r#"
