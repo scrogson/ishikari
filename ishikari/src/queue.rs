@@ -1,259 +1,175 @@
 //! Ishikari Queue
 
-use crate::{Context, Job, Status::*};
-use buildstructor::buildstructor;
-use futures::TryStreamExt;
-use sqlx::postgres::PgListener;
-use sqlx::PgPool;
-use std::any::Any;
+use crate::{Context, State, Status, Storage};
+use std::marker::PhantomData;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct QueueName(Arc<str>);
+
+impl From<&str> for QueueName {
+    fn from(name: &str) -> Self {
+        Self(name.into())
+    }
+}
+
+impl QueueName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug)]
-pub struct Queue {
-    pub context: Arc<dyn std::any::Any + Send + Sync>,
-    pub name: String,
-    pub pool: Arc<PgPool>,
+pub struct QueueBuilder<S>
+where
+    S: Storage + 'static,
+{
+    pub name: QueueName,
+    pub concurrency: Option<u32>,
+    pub interval: Option<Duration>,
+    pub storage: PhantomData<S>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct QueueNotification {
-    queue: String,
-}
+impl<S> QueueBuilder<S>
+where
+    S: Storage + 'static,
+{
+    pub fn concurrency(mut self, concurrency: u32) -> Self {
+        self.concurrency = Some(concurrency);
+        self
+    }
 
-#[buildstructor]
-impl Queue {
-    #[builder]
-    pub fn new(
-        name: String,
-        pool: Arc<PgPool>,
-        context: Option<Arc<dyn Any + Send + Sync>>,
-    ) -> Self {
-        let context = context.unwrap_or(Arc::new(()));
+    pub fn interval(mut self, interval: Duration) -> Self {
+        self.interval = Some(interval);
+        self
+    }
 
-        Self {
-            context,
+    pub fn build(self, storage: Arc<S>, state: State) -> Queue<S> {
+        let name = self.name.clone();
+        let concurrency = self.concurrency.unwrap_or(10);
+        let interval = self.interval.unwrap_or(Duration::from_secs(1));
+
+        Queue {
+            concurrency,
+            interval,
             name,
-            pool,
+            state,
+            storage,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Queue<S>
+where
+    S: Storage + 'static,
+{
+    pub concurrency: u32,
+    pub interval: Duration,
+    pub name: QueueName,
+    pub state: State,
+    pub storage: Arc<S>,
+}
+
+impl<S> Queue<S>
+where
+    S: Storage + 'static,
+{
+    pub fn builder(name: &str) -> QueueBuilder<S> {
+        QueueBuilder {
+            name: name.into(),
+            concurrency: None,
+            interval: None,
+            storage: PhantomData,
         }
     }
 
-    #[instrument(skip(self), fields(queue = self.name))]
-    pub fn start(self: Arc<Self>) {
-        let queue = self.clone();
-
-        info!("Starting queue '{}'", self.name);
+    #[instrument(skip(self), fields(queue = self.name.as_str()))]
+    pub fn start(self) {
+        info!("starting queue");
         tokio::spawn(async move {
-            queue.run().await.unwrap();
+            self.run().await.unwrap();
         });
     }
 
-    #[instrument(skip(self), fields(queue = self.name))]
-    async fn run(self: Arc<Self>) -> anyhow::Result<()> {
-        let mut listener = PgListener::connect_with(&self.pool).await?;
-        listener.listen_all(vec!["insert", "signal"]).await?;
-        let mut stream = listener.into_stream();
-
-        // TODO: make this configurable
-        let mut interval = pin!(tokio::time::interval(Duration::from_secs(2)));
+    #[instrument(skip(self), fields(queue = self.name.as_str()))]
+    async fn run(self) -> anyhow::Result<()> {
+        let mut interval = pin!(tokio::time::interval(self.interval));
 
         loop {
             tokio::select! {
-                res = stream.try_next() => {
-                    match res {
-                        Ok(Some(notification)) => {
-                            handle_notification(self.clone(), &notification).await;
-                        }
-                        Ok(None) => {
-                            info!("Queue '{}' received EOF", self.name);
-                            break Ok(());
-                        }
-                        Err(e) => {
-                            error!("Queue '{}' received error: {}", self.name, e);
-                            break Ok(());
-                        }
-                    }
-                },
                 _ = interval.tick() => {
-                    info!("Queue {}: checking for jobs", self.name);
-                    execute_jobs(self.clone()).await;
+                    debug!("polling jobs");
+                    execute_jobs(&self).await;
                 }
             }
         }
     }
 }
 
-#[instrument(skip(queue, notification), fields(queue = queue.name))]
-async fn handle_notification(queue: Arc<Queue>, notification: &sqlx::postgres::PgNotification) {
-    match notification.channel() {
-        "insert" => match serde_json::from_str::<QueueNotification>(notification.payload()) {
-            Ok(QueueNotification { queue: name }) => {
-                if name == queue.name {
-                    info!("Queue '{}': insert notification", queue.name);
-                    execute_jobs(queue.clone()).await;
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Queue '{}': received invalid insert notification: {}",
-                    queue.name, e
-                );
-            }
-        },
-        "signal" => {
-            info!("Queue '{}': received signal notification", queue.name);
-        }
-        _ => {}
-    }
-}
-
-#[instrument(skip(queue), fields(queue = queue.name))]
-async fn execute_jobs(queue: Arc<Queue>) {
-    match fetch_and_update_jobs(queue.pool.clone(), &queue.name, 10).await {
+#[instrument(skip(queue), fields(queue = queue.name.as_str()))]
+async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
+    match queue
+        .storage
+        .fetch_and_execute_jobs(&queue.name.as_str(), queue.concurrency as i32)
+        .await
+    {
         Ok(jobs) => {
-            info!("Queue: executing {} jobs", jobs.len());
-            for job in jobs {
-                let job_clone = job.clone();
-                let pool = queue.pool.clone();
+            if jobs.is_empty() {
+                return;
+            }
 
-                let queue_clone = Arc::clone(&queue);
+            info!(count = jobs.len(), "executing jobs");
+
+            for job in jobs {
+                let state = Arc::clone(&queue.state);
+                let storage = Arc::clone(&queue.storage);
 
                 tokio::spawn(async move {
-                    let worker = &job_clone.worker().unwrap();
-                    let context = Context::new(Arc::new(job_clone), queue_clone);
+                    // TODO: remove the unwrap!
+                    // called `Result::unwrap()` on an `Err` value: Failed to deserialize worker: unknown variant `Summoner`, expected `Fail` or `Sum`
+                    let worker = &job.worker().unwrap();
+                    let context = Context::new(job.clone().into(), state);
 
+                    // TODO: handle panics and storage errors.
                     match worker.perform(context).await {
                         Ok(result) => match result {
-                            Complete(complete) => {
-                                info!("Job completed id={} result={:?}", job.id, complete.0);
-                                complete_job(&pool, job.id).await;
+                            Status::Complete(complete) => {
+                                info!(id = job.id, result = complete.0, "job completed");
+                                let _ = storage.complete_job(job.id).await;
                             }
-                            Discard(discard) => {
-                                info!("Job discarded id={} reason={:?}", job.id, discard.0);
-                                discard_job(&pool, job.id).await;
+                            Status::Cancel(cancel) => {
+                                info!(id = job.id, reason = cancel.0, "job cancelled");
+                                let _ = storage.cancel_job(job.id).await;
                             }
-                            Cancel(cancel) => {
-                                info!("Job cancelled id={} reason={:?}", job.id, cancel.0);
-                                cancel_job(&pool, job.id).await;
-                            }
-                            Snooze(snooze) => {
-                                info!("Job snoozed id={} snooze={}", job.id, snooze.0);
-                                snooze_job(&pool, job.id, snooze.0).await;
+                            Status::Snooze(snooze) => {
+                                info!(id = job.id, snooze = snooze.0, "job snoozed");
+                                let _ = storage.snooze_job(job.id, snooze.0).await;
                             }
                         },
                         Err(e) => {
                             error!(
-                                "Job failed id={} attempt={} error={:?}",
-                                job.id,
-                                job.attempt,
-                                e.to_string()
+                                id = job.id,
+                                attempt = job.attempt,
+                                error = e.to_string(),
+                                "job failed",
                             );
-                            error_job(&pool, job.id, &e.to_string()).await;
+                            let _ = storage
+                                .error_job(job.id, &e.to_string(), worker.backoff(job.attempt))
+                                .await;
+
+                            if job.attempt >= job.max_attempts {
+                                info!(id = job.id, "job discarded");
+                                let _ = storage.discard_job(job.id).await;
+                            }
                         }
                     }
                 });
             }
         }
-        Err(e) => error!("Error fetching or updating jobs: {}", e),
+        Err(e) => error!(error = ?e, "failed to fetch jobs"),
     }
-}
-
-#[instrument(skip(pool))]
-async fn snooze_job(pool: &sqlx::PgPool, id: i64, snooze: u64) {
-    sqlx::query(r#"UPDATE jobs SET state = 'scheduled', scheduled_at = (now() + $1 * interval '1 second'), max_attempts = max_attempts + 1 WHERE id = $2"#)
-        .bind(snooze as i64)
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-#[instrument(skip(pool))]
-async fn cancel_job(pool: &sqlx::PgPool, id: i64) {
-    sqlx::query(r#"UPDATE jobs SET state = 'cancelled', cancelled_at = now() WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-#[instrument(skip(pool))]
-async fn discard_job(pool: &sqlx::PgPool, id: i64) {
-    sqlx::query(r#"UPDATE jobs SET state = 'discarded', discarded_at = now() WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-#[instrument(skip(pool))]
-async fn complete_job(pool: &sqlx::PgPool, id: i64) {
-    sqlx::query(r#"UPDATE jobs SET state = 'completed', completed_at = now() WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-#[instrument(skip(pool))]
-async fn error_job(pool: &sqlx::PgPool, id: i64, error_message: &str) {
-    let result = sqlx::query(
-        r#"
-        UPDATE jobs
-        SET state = 'retryable', errors = errors || $2::jsonb
-        WHERE id = $1
-    "#,
-    )
-    .bind(id)
-    .bind(serde_json::to_value(error_message).unwrap())
-    .execute(pool)
-    .await;
-
-    if let Err(e) = result {
-        error!("Failed to update job error: {}", e);
-    }
-}
-
-async fn fetch_and_update_jobs(
-    pool: Arc<sqlx::PgPool>,
-    queue: &str,
-    demand: i64,
-) -> Result<Vec<Job>, sqlx::Error> {
-    info!("Fetching jobs");
-    let mut tx = pool.begin().await?;
-
-    let jobs = sqlx::query_as::<_, Job>(
-        r#"
-        WITH subset AS (
-            SELECT id
-            FROM jobs
-            WHERE state = 'available'
-              AND queue = $1
-              AND attempt < max_attempts
-            ORDER BY priority ASC, scheduled_at ASC, id ASC
-            LIMIT $2
-            FOR UPDATE SKIP LOCKED
-        )
-        UPDATE jobs
-        SET state = 'executing',
-            attempted_at = now(),
-            -- attempted_by = ARRAY[$3, $4],
-            attempt = attempt + 1
-        FROM subset
-        WHERE jobs.id = subset.id
-        RETURNING jobs.*
-        "#,
-    )
-    .bind(queue)
-    .bind(demand)
-    .fetch_all(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    info!("Fetched {} jobs", jobs.len());
-
-    Ok(jobs)
 }
