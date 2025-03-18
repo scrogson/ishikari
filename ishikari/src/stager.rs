@@ -6,7 +6,7 @@ use crate::engine::Storage;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 #[derive(Debug)]
 pub struct Stager<S>
@@ -40,6 +40,7 @@ where
                 tokio::select! {
                     _ = interval.tick() => {
                         let count = self.storage.stage_jobs(self.limit).await?;
+                        debug!(count = count, "staging jobs");
 
                         if count > 0 {
                             info!(count = count, "staged jobs");

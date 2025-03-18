@@ -130,7 +130,8 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
 
                 tokio::spawn(async move {
                     // TODO: remove the unwrap!
-                    // called `Result::unwrap()` on an `Err` value: Failed to deserialize worker: unknown variant `Summoner`, expected `Fail` or `Sum`
+                    // called `Result::unwrap()` on an `Err` value: Failed to deserialize worker:
+                    // unknown variant `Summoner`, expected `Fail` or `Sum`
                     let worker = &job.worker().unwrap();
                     let context = Context::new(job.clone().into(), state);
 

@@ -3,7 +3,7 @@ mod common;
 use crate::common::AppState;
 use ishikari::{Engine, Postgres, Queue};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,7 +23,8 @@ async fn main() -> anyhow::Result<()> {
         .execute(&pool)
         .await?;
 
-    // Set up some application state which will be available to all workers
+    // Set up some application state which will be available to all workers.
+    // This is useful for sharing a database connection pool, configuration, etc.
     let state = AppState { pool: pool.clone() };
 
     // Setup and start the engine
@@ -36,8 +37,14 @@ async fn main() -> anyhow::Result<()> {
     //
     // 10-0-1-162.backend.pod.cluster.local
     let _engine = Engine::builder("ishikari-example")
+        .stager_interval(Duration::from_secs(5))
         .with_queue(Queue::builder("default").concurrency(10))
-        .with_queue(Queue::builder("low_latency").concurrency(20))
+        .with_queue(
+            Queue::builder("low_latency")
+                .concurrency(20)
+                // Poll every 500ms (default is 1s)
+                .interval(Duration::from_millis(500)),
+        )
         .with_state(Arc::new(state))
         .start(Postgres::new(pool.clone()));
 
