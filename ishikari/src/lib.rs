@@ -90,7 +90,7 @@ impl Context {
     /// Return the state which was registered with `Engine::with_state`
     pub fn state<T: Any + Send + Sync + 'static>(&self) -> Result<Arc<T>, &'static str> {
         // Attempt to clone and downcast the Arc
-        if let Some(downcasted) = Arc::clone(&self.state).downcast::<T>().ok() {
+        if let Ok(downcasted) = Arc::clone(&self.state).downcast::<T>() {
             Ok(downcasted)
         } else {
             Err("Failed to extract the specified type from the context")
@@ -144,10 +144,10 @@ where
 
     let row =
         sqlx::query(r#"insert into jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
-            .bind(&job.queue())
-            .bind(&J::worker())
+            .bind(job.queue())
+            .bind(J::worker())
             .bind(args)
-            .bind(&job.max_attempts())
+            .bind(job.max_attempts())
             .fetch_one(executor)
             .await?;
 

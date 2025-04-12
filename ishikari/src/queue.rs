@@ -115,7 +115,7 @@ where
 async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
     match queue
         .storage
-        .fetch_and_execute_jobs(&queue.name.as_str(), queue.concurrency as i32)
+        .fetch_and_execute_jobs(queue.name.as_str(), queue.concurrency as i32)
         .await
     {
         Ok(jobs) => {

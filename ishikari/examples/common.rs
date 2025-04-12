@@ -1,5 +1,4 @@
 use ishikari::prelude::*;
-use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 
 #[derive(Debug)]
@@ -8,7 +7,6 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
 #[ishikari::job]
 pub struct Sum {
     pub a: i32,
@@ -26,7 +24,6 @@ impl Worker for Sum {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
 #[ishikari::job]
 pub struct Fail;
 
