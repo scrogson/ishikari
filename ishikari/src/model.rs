@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::postgres::{PgHasArrayType, PgTypeInfo};
 
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
@@ -14,12 +13,6 @@ pub enum JobState {
     Completed,
     Discarded,
     Cancelled,
-}
-
-impl PgHasArrayType for JobState {
-    fn array_type_info() -> PgTypeInfo {
-        PgTypeInfo::with_name("_job_state")
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]

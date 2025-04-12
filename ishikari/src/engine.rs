@@ -17,6 +17,7 @@ impl From<&str> for EngineName {
 }
 
 impl EngineName {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
