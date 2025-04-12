@@ -1,6 +1,7 @@
 //! Ishikari Queue
 
-use crate::{Context, State, Status, Storage};
+use crate::{Backoff, Context, State, Status, Storage};
+use chrono::Duration as ChronoDuration;
 use std::marker::PhantomData;
 use std::pin::pin;
 use std::sync::Arc;
@@ -129,10 +130,26 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
                 let storage = Arc::clone(&queue.storage);
 
                 tokio::spawn(async move {
-                    // TODO: remove the unwrap!
-                    // called `Result::unwrap()` on an `Err` value: Failed to deserialize worker:
-                    // unknown variant `Summoner`, expected `Fail` or `Sum`
-                    let worker = &job.worker().unwrap();
+                    let worker_result = job.worker();
+                    let worker = match worker_result {
+                        Ok(worker) => worker,
+                        Err(e) => {
+                            error!(
+                                id = job.id,
+                                error = e.to_string(),
+                                "failed to deserialize worker"
+                            );
+                            let _ = storage
+                                .error_job(
+                                    job.id,
+                                    &format!("Failed to deserialize worker: {}", e),
+                                    Backoff::Exponential(ChronoDuration::seconds(5))
+                                        .next_retry(job.attempt),
+                                )
+                                .await;
+                            return;
+                        }
+                    };
                     let context = Context::new(job.clone().into(), state);
 
                     // TODO: handle panics and storage errors.

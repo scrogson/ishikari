@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct AppState {
+    #[allow(dead_code)]
     pub pool: sqlx::PgPool,
 }
 
@@ -30,16 +30,8 @@ impl Worker for Sum {
 #[ishikari::job]
 pub struct Fail;
 
-#[ishikari::worker]
+#[ishikari::worker(queue = "low_latency", max_attempts = 3)]
 impl Worker for Fail {
-    fn queue(&self) -> &'static str {
-        "low_latency"
-    }
-
-    fn max_attempts(&self) -> i32 {
-        3
-    }
-
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
         let state = ctx.state::<AppState>()?;
