@@ -1,3 +1,250 @@
+//! Ishikari - A flexible and reliable job processing framework
+//!
+//! Ishikari is a job processing framework that provides a robust way to handle background
+//! tasks with features like retries, scheduling, and error handling.
+//!
+//! # Job Processing Lifecycle
+//!
+//! The job processing lifecycle consists of several stages:
+//!
+//! 1. **Job Creation**: Define a job type and implement the `Worker` trait
+//! 2. **Job Scheduling**: Insert the job into a queue for processing
+//! 3. **Job Execution**: The job is picked up by a worker and executed
+//! 4. **Job Completion**: The job completes with one of several possible outcomes
+//!
+//! ## Job Types and Workers
+//!
+//! Jobs are defined as types that implement the `Worker` trait. The trait provides methods
+//! for configuring job behavior and handling execution:
+//!
+//! ```rust
+//! use ishikari::{Worker, Context, Status, Complete};
+//! use async_trait::async_trait;
+//!
+//! #[ishikari::job]
+//! struct ProcessDataJob {
+//!     data: String,
+//! }
+//!
+//! #[ishikari::worker]
+//! impl Worker for ProcessDataJob {
+//!     async fn perform(&self, ctx: Context) -> Result<Status, Box<dyn std::error::Error + Send + Sync>> {
+//!         // Process the data
+//!         println!("Processing: {}", self.data);
+//!         
+//!         // Return success
+//!         Ok(Complete::default().into())
+//!     }
+//! }
+//! ```
+//!
+//! ## Job Execution and Status
+//!
+//! When a job is executed, it can complete in several ways:
+//!
+//! ```rust
+//! use ishikari::{Complete, Cancel, Snooze, Status};
+//!
+//! async fn example_job_execution() -> Status {
+//!     // Success case
+//!     Status::Complete(Complete::default()
+//!         .message("Job completed successfully"))
+//! }
+//!
+//! async fn example_job_cancellation() -> Status {
+//!     // Cancellation case
+//!     Status::Cancel(Cancel::default()
+//!         .message("Job cancelled due to invalid data"))
+//! }
+//!
+//! async fn example_job_retry() -> Status {
+//!     // Retry later case
+//!     Status::Snooze(Snooze(300)) // Retry in 5 minutes
+//! }
+//! ```
+//!
+//! ## Queue Management
+//!
+//! Jobs are processed through queues, which handle the scheduling and execution:
+//!
+//! ```rust,no_run
+//! use ishikari::{Queue, Storage, Job};
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//! use async_trait::async_trait;
+//! use chrono::{DateTime, Utc};
+//!
+//! struct MyStorage;
+//!
+//! #[async_trait]
+//! impl Storage for MyStorage {
+//!     type Error = std::io::Error;
+//!     
+//!     async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn complete_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn discard_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn error_job(&self, id: i64, error: &str, next_retry: DateTime<Utc>) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn retry_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn snooze_job(&self, id: i64, seconds: u64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//!     
+//!     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//!     
+//!     async fn stage_jobs(&self, limit: i32) -> Result<usize, Self::Error> {
+//!         Ok(0)
+//!     }
+//!     
+//!     async fn fetch_and_execute_jobs(&self, queue: &str, limit: i32) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//! }
+//!
+//! async fn setup_queue() {
+//!     let storage = Arc::new(MyStorage);
+//!     let state = Arc::new(());
+//!
+//!     let queue = Queue::builder("my_queue")
+//!         .concurrency(5)
+//!         .interval(Duration::from_secs(1))
+//!         .build(storage, state);
+//!
+//!     queue.start();
+//! }
+//! ```
+//!
+//! ## Error Handling
+//!
+//! Jobs can handle errors in several ways:
+//!
+//! ```rust
+//! use ishikari::{Worker, Context, Status, Cancel, Snooze};
+//! use async_trait::async_trait;
+//! use anyhow::Error;
+//!
+//! #[ishikari::job]
+//! struct ErrorHandlingJob;
+//!
+//! #[ishikari::worker]
+//! impl Worker for ErrorHandlingJob {
+//!     async fn perform(&self, ctx: Context) -> Result<Status, Box<dyn std::error::Error + Send + Sync>> {
+//!         match process_data() {
+//!             Ok(_) => Ok(Status::Complete(Default::default())),
+//!             Err(e) if is_retryable(&e) => {
+//!                 // Retry in 5 minutes
+//!                 Ok(Status::Snooze(Snooze(300)))
+//!             }
+//!             Err(e) => {
+//!                 // Cancel the job
+//!                 Ok(Status::Cancel(Cancel::default()
+//!                     .message(format!("Failed: {}", e))))
+//!             }
+//!         }
+//!     }
+//! }
+//!
+//! fn process_data() -> Result<(), Error> {
+//!     // ... implementation ...
+//!     Ok(())
+//! }
+//!
+//! fn is_retryable(_e: &Error) -> bool {
+//!     // ... implementation ...
+//!     true
+//! }
+//! ```
+//!
+//! ## Storage Backends
+//!
+//! Ishikari supports different storage backends through the `Storage` trait:
+//!
+//! ```rust,no_run
+//! use ishikari::{Storage, Job};
+//! use async_trait::async_trait;
+//! use chrono::{DateTime, Utc};
+//!
+//! struct MyStorage;
+//!
+//! #[async_trait]
+//! impl Storage for MyStorage {
+//!     type Error = std::io::Error;
+//!     
+//!     async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn complete_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn discard_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn error_job(&self, id: i64, error: &str, next_retry: DateTime<Utc>) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn retry_job(&self, id: i64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn snooze_job(&self, id: i64, seconds: u64) -> Result<(), Self::Error> {
+//!         Ok(())
+//!     }
+//!     
+//!     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//!     
+//!     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//!     
+//!     async fn stage_jobs(&self, limit: i32) -> Result<usize, Self::Error> {
+//!         Ok(0)
+//!     }
+//!     
+//!     async fn fetch_and_execute_jobs(&self, queue: &str, limit: i32) -> Result<Vec<Job>, Self::Error> {
+//!         Ok(vec![])
+//!     }
+//! }
+//! ```
+//!
+//! # Features
+//!
+//! - **Flexible Job Types**: Define custom job types with the `Worker` trait
+//! - **Configurable Queues**: Control concurrency and polling intervals
+//! - **Robust Error Handling**: Built-in support for retries and error reporting
+//! - **Extensible Storage**: Implement custom storage backends
+//! - **Async Support**: Built on async/await for efficient resource usage
+//!
+//! # Examples
+//!
+//! See the [examples](https://github.com/scrogson/ishikari/tree/main/ishikari/examples) directory
+//! for complete working examples of job processing with Ishikari.
+
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 #[doc(hidden)]
