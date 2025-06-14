@@ -41,3 +41,6 @@ impl Worker for Fail {
         Complete::default().into()
     }
 }
+
+#[allow(dead_code)]
+fn main() {}
