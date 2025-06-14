@@ -1,5 +1,3 @@
-//! Ishikari Queue
-
 use crate::{Backoff, Context, State, Status, Storage};
 use chrono::Duration as ChronoDuration;
 use std::marker::PhantomData;
@@ -23,6 +21,44 @@ impl QueueName {
     }
 }
 
+/// A builder for configuring and creating a new `Queue`.
+///
+/// This struct allows you to set the queue's name, concurrency, and polling interval before building the queue.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ishikari::{Queue, Storage, Job};
+/// use chrono::{DateTime, Utc};
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+/// use std::time::Duration;
+/// #
+/// struct MyStorage;
+/// #
+/// # #[async_trait]
+/// # impl Storage for MyStorage {
+/// #     type Error = std::io::Error;
+/// #     async fn cancel_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn complete_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn discard_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn error_job(&self, _id: i64, _msg: &str, _at: DateTime<Utc>) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn retry_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn snooze_job(&self, _id: i64, _snooze: u64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn stage_jobs(&self, _concurrency: i32) -> Result<usize, Self::Error> { unimplemented!() }
+/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// # }
+///
+/// let storage = Arc::new(MyStorage);
+/// let state = Arc::new(());
+///
+/// let queue = Queue::builder("my_queue")
+///     .concurrency(5)
+///     .interval(Duration::from_secs(2))
+///     .build(storage, state);
+/// ```
 #[derive(Debug)]
 pub struct QueueBuilder<S>
 where
@@ -38,16 +74,32 @@ impl<S> QueueBuilder<S>
 where
     S: Storage + 'static,
 {
+    /// Sets the concurrency level for the queue.
+    ///
+    /// This determines how many jobs can be executed concurrently.
     pub fn concurrency(mut self, concurrency: u32) -> Self {
         self.concurrency = Some(concurrency);
         self
     }
 
+    /// Sets the polling interval for the queue.
+    ///
+    /// This determines how often the queue checks for new jobs.
     pub fn interval(mut self, interval: Duration) -> Self {
         self.interval = Some(interval);
         self
     }
 
+    /// Builds the queue with the specified storage and state.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage backend for job persistence.
+    /// * `state` - The shared state for job execution.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Queue` instance.
     pub fn build(self, storage: Arc<S>, state: State) -> Queue<S> {
         let name = self.name.clone();
         let concurrency = self.concurrency.unwrap_or(10);
@@ -63,6 +115,54 @@ where
     }
 }
 
+/// A queue for processing jobs asynchronously.
+///
+/// This struct manages job execution, polling, and concurrency.
+///
+/// # Fields
+///
+/// * `concurrency` - The number of jobs that can be executed concurrently.
+/// * `interval` - The polling interval for checking new jobs.
+/// * `name` - The name of the queue.
+/// * `state` - The shared state for job execution.
+/// * `storage` - The storage backend for job persistence.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ishikari::{Queue, Storage, Job};
+/// use chrono::{DateTime, Utc};
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+/// use std::time::Duration;
+/// #
+/// struct MyStorage;
+/// #
+/// # #[async_trait]
+/// # impl Storage for MyStorage {
+/// #     type Error = std::io::Error;
+/// #     async fn cancel_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn complete_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn discard_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn error_job(&self, _id: i64, _msg: &str, _at: DateTime<Utc>) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn retry_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn snooze_job(&self, _id: i64, _snooze: u64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn stage_jobs(&self, _concurrency: i32) -> Result<usize, Self::Error> { unimplemented!() }
+/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// # }
+///
+/// let storage = Arc::new(MyStorage);
+/// let state = Arc::new(());
+///
+/// let queue = Queue::builder("my_queue")
+///     .concurrency(5)
+///     .interval(Duration::from_secs(2))
+///     .build(storage, state);
+///
+/// queue.start();
+/// ```
 #[derive(Debug)]
 pub struct Queue<S>
 where
@@ -79,6 +179,15 @@ impl<S> Queue<S>
 where
     S: Storage + 'static,
 {
+    /// Creates a new `QueueBuilder` with the specified queue name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the queue.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `QueueBuilder` instance.
     pub fn builder(name: &str) -> QueueBuilder<S> {
         QueueBuilder {
             name: name.into(),
@@ -88,6 +197,9 @@ where
         }
     }
 
+    /// Starts the queue, polling for jobs at the specified interval.
+    ///
+    /// This method spawns a new task to run the queue asynchronously.
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     pub fn start(self) {
         info!("starting queue");
@@ -96,6 +208,9 @@ where
         });
     }
 
+    /// Runs the queue, polling for jobs at the specified interval.
+    ///
+    /// This method is called internally by `start()`.
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     async fn run(self) -> anyhow::Result<()> {
         let mut interval = pin!(tokio::time::interval(self.interval));
