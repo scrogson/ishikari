@@ -13,7 +13,7 @@ async-trait = "0.1.74"
 chrono = { version = "0.4.31", features = ["serde"] }
 figment = { version = "0.10.12", features = ["env", "yaml"] }
 futures = "0.3.29"
-ishikari-macros = { path = "../ishikari-macros" }
+ishikari-macros = { version = "0.1.0", path = "../ishikari-macros" }
 rand = "0.8.5"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
