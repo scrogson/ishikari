@@ -2,6 +2,10 @@
 name = "ishikari-macros"
 version = "0.1.0"
 edition = "2021"
+description = "Procedural macros for the Ishikari job processing framework. Provides #[worker] and #[job] attribute macros for implementing worker traits and deriving job-related functionality."
+license = "MIT"
+repository = "https://github.com/scrogson/ishikari"
+authors = ["Sonny Scroggin <sonny@scrogg.in>"]
 
 [lib]
 proc-macro = true
