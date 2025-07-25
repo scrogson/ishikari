@@ -72,7 +72,8 @@ impl Storage for Postgres {
         "#,
         )
         .bind(id)
-        .bind(serde_json::to_value(error_message).unwrap())
+        .bind(serde_json::to_value(error_message)
+            .map_err(|e| sqlx::Error::Encode(Box::new(e)))?)
         .bind(schedule_at)
         .execute(&*self.pool)
         .await

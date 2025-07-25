@@ -1,3 +1,5 @@
+#![allow(unused_variables, clippy::uninlined_format_args)]
+
 use ishikari::prelude::*;
 use tracing::{error, info, instrument};
 

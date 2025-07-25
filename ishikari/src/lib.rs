@@ -790,8 +790,9 @@ where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
     E: PgExecutor<'a>,
 {
-    // TODO: remove this unwrap
-    let args = serde_json::to_value(&job as &dyn Worker).unwrap();
+    // Serialize the job args, returning error if serialization fails
+    let args = serde_json::to_value(&job as &dyn Worker)
+        .map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
     let row =
         sqlx::query(r#"insert into jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)

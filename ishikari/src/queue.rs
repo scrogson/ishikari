@@ -242,7 +242,9 @@ where
     pub fn start(self) {
         info!("starting queue");
         tokio::spawn(async move {
-            self.run().await.unwrap();
+            if let Err(e) = self.run().await {
+                error!("Queue run loop failed: {}", e);
+            }
         });
     }
 
