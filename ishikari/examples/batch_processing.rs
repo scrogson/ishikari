@@ -1,4 +1,8 @@
-#![allow(unused_variables, clippy::uninlined_format_args, clippy::manual_div_ceil)]
+#![allow(
+    unused_variables,
+    clippy::uninlined_format_args,
+    clippy::manual_div_ceil
+)]
 
 use ishikari::prelude::*;
 use tracing::{info, instrument};
@@ -14,11 +18,15 @@ pub struct BatchProcessorJob {
 impl Worker for BatchProcessorJob {
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
-        info!("Processing batch {} with {} items", self.batch_id, self.items.len());
+        info!(
+            "Processing batch {} with {} items",
+            self.batch_id,
+            self.items.len()
+        );
 
         // For demonstration, we'll process items in smaller batches
         const BATCH_SIZE: usize = 10;
-        
+
         for (chunk_index, chunk) in self.items.chunks(BATCH_SIZE).enumerate() {
             // Create a sub-job for each chunk
             let chunk_job = ItemProcessorJob {
@@ -26,17 +34,23 @@ impl Worker for BatchProcessorJob {
                 chunk_index,
                 items: chunk.to_vec(),
             };
-            
+
             // In a real implementation, you would insert the job here
             // ishikari::insert(chunk_job, &pool).await?;
-            
-            info!("Would spawn chunk {} with {} items", chunk_index, chunk.len());
+
+            info!(
+                "Would spawn chunk {} with {} items",
+                chunk_index,
+                chunk.len()
+            );
         }
 
         Complete::default()
-            .message(format!("Batch {} split into {} chunks", 
-                           self.batch_id, 
-                           (self.items.len() + BATCH_SIZE - 1) / BATCH_SIZE))
+            .message(format!(
+                "Batch {} split into {} chunks",
+                self.batch_id,
+                (self.items.len() + BATCH_SIZE - 1) / BATCH_SIZE
+            ))
             .into()
     }
 }
@@ -53,8 +67,12 @@ pub struct ItemProcessorJob {
 impl Worker for ItemProcessorJob {
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
-        info!("Processing chunk {} of batch {} with {} items", 
-              self.chunk_index, self.batch_id, self.items.len());
+        info!(
+            "Processing chunk {} of batch {} with {} items",
+            self.chunk_index,
+            self.batch_id,
+            self.items.len()
+        );
 
         let mut processed_count = 0;
         let mut failed_items = Vec::new();
@@ -79,8 +97,12 @@ impl Worker for ItemProcessorJob {
         } else if failed_items.len() < self.items.len() {
             // Partial success - could create a retry job for failed items
             Complete::default()
-                .message(format!("Processed {}/{} items, {} failed", 
-                               processed_count, self.items.len(), failed_items.len()))
+                .message(format!(
+                    "Processed {}/{} items, {} failed",
+                    processed_count,
+                    self.items.len(),
+                    failed_items.len()
+                ))
                 .into()
         } else {
             // All items failed - retry the whole chunk
@@ -100,8 +122,10 @@ pub struct BatchCleanupJob {
 impl Worker for BatchCleanupJob {
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
-        info!("Cleaning up batch {} (processed {} items)", 
-              self.batch_id, self.total_items);
+        info!(
+            "Cleaning up batch {} (processed {} items)",
+            self.batch_id, self.total_items
+        );
 
         // Simulate cleanup operations
         cleanup_temp_files(&self.batch_id).await?;
@@ -124,22 +148,25 @@ pub struct PeriodicBatchJob {
 impl Worker for PeriodicBatchJob {
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
-        info!("Running periodic batch job scheduled for {}", self.schedule_time);
+        info!(
+            "Running periodic batch job scheduled for {}",
+            self.schedule_time
+        );
 
         // Find pending batches to process
         let pending_batches = find_pending_batches().await?;
-        
+
         for batch_id in pending_batches {
             let items = fetch_batch_items(&batch_id).await?;
-            
+
             let batch_job = BatchProcessorJob {
                 batch_id: batch_id.clone(),
                 items,
             };
-            
+
             // In a real implementation, insert the job
             // ishikari::insert(batch_job, &pool).await?;
-            
+
             info!("Queued batch {} for processing", batch_id);
         }
 
@@ -154,7 +181,7 @@ async fn process_item(item: &str) -> Result<(), anyhow::Error> {
     if item.contains("error") {
         return Err(anyhow::anyhow!("Simulated processing error"));
     }
-    
+
     // Simulate processing time
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     Ok(())

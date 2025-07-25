@@ -16,11 +16,11 @@ impl Worker for ErrorHandlingJob {
     /// Custom backoff strategy for this job
     fn backoff(&self, attempt: i32) -> chrono::DateTime<chrono::Utc> {
         use chrono::{Duration, Utc};
-        
+
         // Exponential backoff with jitter: 2^attempt seconds + random jitter
         let base_delay = 2_i64.pow(attempt as u32);
         let jitter = rand::random::<u64>() % 5; // 0-4 seconds of jitter
-        
+
         Utc::now() + Duration::seconds(base_delay + jitter as i64)
     }
 
@@ -78,12 +78,13 @@ impl Worker for SnoozeJob {
     #[instrument(skip(ctx))]
     async fn perform(&self, ctx: Context) -> PerformResult {
         let job = ctx.job();
-        info!("Snooze job attempt {} of {}", self.retry_count, self.max_retries);
+        info!(
+            "Snooze job attempt {} of {}",
+            self.retry_count, self.max_retries
+        );
 
         if self.retry_count >= self.max_retries {
-            Complete::default()
-                .message("Max retries reached")
-                .into()
+            Complete::default().message("Max retries reached").into()
         } else {
             // Snooze for 30 seconds before next attempt
             Snooze(30).into()
@@ -96,27 +97,27 @@ async fn process_data(data: &str) -> Result<String, anyhow::Error> {
     if data.is_empty() {
         return Err(anyhow::anyhow!("Empty data provided"));
     }
-    
+
     if data.contains("poison") {
         return Err(anyhow::anyhow!("Poisoned data - permanent error"));
     }
-    
+
     if data.contains("network") {
         return Err(anyhow::anyhow!("Network error - temporary"));
     }
-    
+
     // Simulate processing
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    
+
     Ok(format!("Processed: {}", data.to_uppercase()))
 }
 
 /// Determine if an error should trigger a retry
 fn is_retryable_error(error: &anyhow::Error) -> bool {
     let error_str = error.to_string().to_lowercase();
-    
+
     // Network errors and timeouts are typically retryable
-    error_str.contains("network") 
+    error_str.contains("network")
         || error_str.contains("timeout")
         || error_str.contains("connection")
         || error_str.contains("temporary")
