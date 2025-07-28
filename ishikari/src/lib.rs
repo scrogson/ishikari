@@ -116,7 +116,7 @@
 //!         Ok(0)
 //!     }
 //!     
-//!     async fn fetch_and_execute_jobs(&self, queue: &str, limit: i32) -> Result<Vec<Job>, Self::Error> {
+//!     async fn fetch_and_execute_jobs(&self, queue: &str, schema: Option<&str>, limit: i32) -> Result<Vec<Job>, Self::Error> {
 //!         Ok(vec![])
 //!     }
 //! }
@@ -226,7 +226,7 @@
 //!         Ok(0)
 //!     }
 //!     
-//!     async fn fetch_and_execute_jobs(&self, queue: &str, limit: i32) -> Result<Vec<Job>, Self::Error> {
+//!     async fn fetch_and_execute_jobs(&self, queue: &str, schema: Option<&str>, limit: i32) -> Result<Vec<Job>, Self::Error> {
 //!         Ok(vec![])
 //!     }
 //! }
@@ -793,14 +793,13 @@ where
     // TODO: remove this unwrap
     let args = serde_json::to_value(&job as &dyn Worker).unwrap();
 
-    let row =
-        sqlx::query(r#"insert into jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
-            .bind(job.queue())
-            .bind(J::worker())
-            .bind(args)
-            .bind(job.max_attempts())
-            .fetch_one(executor)
-            .await?;
+    let row = sqlx::query(r#"insert into ishikari_jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
+        .bind(job.queue())
+        .bind(J::worker())
+        .bind(args)
+        .bind(job.max_attempts())
+        .fetch_one(executor)
+        .await?;
 
     let inserted = Job::from_row(&row)?;
 

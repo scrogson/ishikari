@@ -49,7 +49,7 @@ use crate::Job;
 ///     # async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 ///     # async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 ///     # async fn stage_jobs(&self, _concurrency: i32) -> Result<usize, Self::Error> { unimplemented!() }
-///     # async fn fetch_and_execute_jobs(&self, _queue: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+///     # async fn fetch_and_execute_jobs(&self, _queue: &str, _schema: Option<&str>, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// }
 /// ```
 ///
@@ -220,6 +220,7 @@ pub trait Storage: Send + Sync {
     /// # Arguments
     ///
     /// * `queue_name` - The name of the queue to fetch jobs from
+    /// * `schema` - The schema to query, or None for public schema
     /// * `limit` - The maximum number of jobs to fetch
     ///
     /// # Returns
@@ -229,6 +230,7 @@ pub trait Storage: Send + Sync {
     async fn fetch_and_execute_jobs(
         &self,
         queue_name: &str,
+        schema: Option<&str>,
         limit: i32,
     ) -> Result<Vec<Job>, Self::Error>;
 }

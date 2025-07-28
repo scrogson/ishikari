@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "ishikari",
-  "ishikari-macros"
+  "ishikari-macros",
+  "ishikari-cli"
 ]
 resolver = "2"

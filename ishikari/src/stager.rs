@@ -69,7 +69,7 @@ use tracing::{debug, info, instrument};
 ///         Ok(vec![])
 ///     }
 ///
-///     async fn fetch_and_execute_jobs(&self, _worker_id: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> {
+///     async fn fetch_and_execute_jobs(&self, _worker_id: &str, _schema: Option<&str>, _limit: i32) -> Result<Vec<Job>, Self::Error> {
 ///         Ok(vec![])
 ///     }
 /// }

@@ -48,7 +48,7 @@ impl QueueName {
 /// #     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// #     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// #     async fn stage_jobs(&self, _concurrency: i32) -> Result<usize, Self::Error> { unimplemented!() }
-/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _schema: Option<&str>, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// # }
 ///
 /// let storage = Arc::new(MyStorage);
@@ -67,6 +67,7 @@ where
     pub name: QueueName,
     pub concurrency: Option<u32>,
     pub interval: Option<Duration>,
+    pub schema: Option<String>,
     pub storage: PhantomData<S>,
 }
 
@@ -90,6 +91,14 @@ where
         self
     }
 
+    /// Sets the schema for the queue.
+    ///
+    /// This determines which schema to query for jobs. Defaults to public schema.
+    pub fn schema<T: Into<String>>(mut self, schema: T) -> Self {
+        self.schema = Some(schema.into());
+        self
+    }
+
     /// Builds the queue with the specified storage and state.
     ///
     /// # Arguments
@@ -104,11 +113,13 @@ where
         let name = self.name.clone();
         let concurrency = self.concurrency.unwrap_or(10);
         let interval = self.interval.unwrap_or(Duration::from_secs(1));
+        let schema = self.schema;
 
         Queue {
             concurrency,
             interval,
             name,
+            schema,
             state,
             storage,
         }
@@ -150,7 +161,7 @@ where
 /// #     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// #     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// #     async fn stage_jobs(&self, _concurrency: i32) -> Result<usize, Self::Error> { unimplemented!() }
-/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
+/// #     async fn fetch_and_execute_jobs(&self, _queue: &str, _schema: Option<&str>, _limit: i32) -> Result<Vec<Job>, Self::Error> { unimplemented!() }
 /// # }
 ///
 /// let storage = Arc::new(MyStorage);
@@ -171,6 +182,7 @@ where
     pub concurrency: u32,
     pub interval: Duration,
     pub name: QueueName,
+    pub schema: Option<String>,
     pub state: State,
     pub storage: Arc<S>,
 }
@@ -193,6 +205,7 @@ where
             name: name.into(),
             concurrency: None,
             interval: None,
+            schema: None,
             storage: PhantomData,
         }
     }
@@ -230,7 +243,11 @@ where
 async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
     match queue
         .storage
-        .fetch_and_execute_jobs(queue.name.as_str(), queue.concurrency as i32)
+        .fetch_and_execute_jobs(
+            queue.name.as_str(),
+            queue.schema.as_deref(),
+            queue.concurrency as i32,
+        )
         .await
     {
         Ok(jobs) => {

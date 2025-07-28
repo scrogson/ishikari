@@ -30,6 +30,53 @@ Add to Cargo.toml
 ishikari = "0.1.0"
 ```
 
+### Database Setup
+
+Ishikari requires PostgreSQL. Set up your database using the `ishikari-cli` tool:
+
+```bash
+# 1. Install the CLI tool
+cargo install ishikari-cli
+
+# 2. Generate migration files
+ishikari generate migration
+
+# 3. Apply migrations
+sqlx migrate run --database-url $DATABASE_URL
+```
+
+**Custom schemas** (for multi-tenant applications):
+```bash
+# Generate schema-specific migrations
+ishikari gen migration --schema tenant_a
+ishikari g migration --schema tenant_b
+
+# Apply all migrations
+sqlx migrate run --database-url $DATABASE_URL
+```
+
+**Runtime migrations** (for containers/auto-setup):
+```rust
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = PgPool::connect(&database_url).await?;
+
+    // Run migrations embedded in your binary
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    // Now you can use Ishikari...
+    Ok(())
+}
+```
+
+**CLI Options:**
+- `--output <DIR>` - Output directory (default: `migrations/`)
+- `--schema <NAME>` - Custom schema name (default: public)
+- `--name <PREFIX>` - Migration name prefix
+- `--force` - Overwrite existing files
+
+This approach provides the best of both worlds: CLI-generated migrations with sqlx's embedded runtime migration system.
+
 ## Usage
 
 ### Creating a Job and implementing Worker
@@ -60,6 +107,45 @@ use ishikari::prelude::*;
 async fn schedule_job(worker: MyJob) -> Result<Job, sqlx::Error> {
     let job = ishikari::insert(worker, &pool).await?;
     Ok(job)
+}
+```
+
+### Setting up the Engine
+
+For single-tenant applications (public schema):
+```rust
+use ishikari::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = PgPool::connect(&database_url).await?;
+
+    let engine = Engine::builder()
+        .add_queue(Queue::builder("default").build())
+        .start(PostgresStorage::new(pool.clone()), pool)
+        .await?;
+
+    // Engine is now running...
+    Ok(())
+}
+```
+
+For multi-tenant applications (custom schema):
+```rust
+use ishikari::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = PgPool::connect(&database_url).await?;
+
+    let engine = Engine::builder()
+        .schema("tenant_a")  // All jobs will use tenant_a schema
+        .add_queue(Queue::builder("default").build())
+        .start(PostgresStorage::new(pool.clone()), pool)
+        .await?;
+
+    // Engine is now running with tenant_a schema...
+    Ok(())
 }
 ```
 

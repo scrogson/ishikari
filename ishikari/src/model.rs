@@ -4,7 +4,7 @@ use serde_json::Value as JsonValue;
 
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "job_state", rename_all = "lowercase")]
+#[sqlx(type_name = "ishikari_job_state", rename_all = "lowercase")]
 pub enum JobState {
     Available,
     Scheduled,

@@ -15,11 +15,11 @@ async fn main() -> anyhow::Result<()> {
     let pool = PgPool::connect(&database_url).await.unwrap();
 
     // Run the migrations
-    // TODO: migrations should be generated and placed in the user's application
+    // These migrations were generated using `ishikari migration generate`
     sqlx::migrate!("../migrations").run(&pool).await.unwrap();
 
-    // Clear the jobs table. This is only for demonstration purposes
-    sqlx::query("TRUNCATE jobs RESTART IDENTITY")
+    // Clear the ishikari_jobs table. This is only for demonstration purposes
+    sqlx::query("TRUNCATE ishikari_jobs RESTART IDENTITY")
         .execute(&pool)
         .await?;
 

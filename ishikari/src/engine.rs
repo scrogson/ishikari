@@ -4,8 +4,11 @@ mod storage;
 pub use postgres::Postgres;
 pub use storage::Storage;
 
-use crate::{queue::QueueBuilder, Stager, State};
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use crate::{queue::QueueBuilder, Job, Stager, State, Worker};
+use serde::Serialize;
+use sqlx::{FromRow, PgExecutor};
+use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
+use tracing::instrument;
 
 /// A unique identifier for an engine instance.
 ///
@@ -71,6 +74,7 @@ where
     stager_interval: Option<Duration>,
     stager_limit: Option<i32>,
     state: Option<State>,
+    schema: Option<String>,
     storage: PhantomData<S>,
 }
 
@@ -111,6 +115,15 @@ where
         self
     }
 
+    /// Sets the schema for this engine.
+    ///
+    /// All jobs inserted through this engine and all queues will use this schema.
+    /// If not specified, defaults to the public schema.
+    pub fn schema<T: Into<String>>(mut self, schema: T) -> Self {
+        self.schema = Some(schema.into());
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -127,7 +140,13 @@ where
         let _stager_handle = stager.start();
 
         for queue in self.queues.into_iter() {
-            let queue = queue.build(storage.clone(), state.clone());
+            // If queue doesn't have a schema set, use engine's schema
+            let queue_with_schema = if queue.schema.is_none() && self.schema.is_some() {
+                queue.schema(self.schema.as_ref().unwrap().clone())
+            } else {
+                queue
+            };
+            let queue = queue_with_schema.build(storage.clone(), state.clone());
             queue.start();
         }
 
@@ -136,6 +155,7 @@ where
             stager_interval,
             stager_limit,
             storage,
+            schema: self.schema,
         }
     }
 }
@@ -159,6 +179,7 @@ where
     storage: Arc<S>,
     stager_interval: Duration,
     stager_limit: i32,
+    schema: Option<String>,
 }
 
 impl<S> Engine<S>
@@ -176,7 +197,76 @@ where
             stager_interval: None,
             stager_limit: None,
             state: None,
+            schema: None,
             storage: PhantomData,
         }
+    }
+}
+
+impl Engine<Postgres> {
+    /// Create a new Postgres engine builder.
+    ///
+    /// This is a convenience method for creating an engine with Postgres storage.
+    pub fn postgres() -> EngineBuilder<Postgres> {
+        Self::builder("default")
+    }
+
+    /// Insert a job using this engine's schema configuration.
+    ///
+    /// This method will insert the job into the schema configured for this engine.
+    /// If no schema was configured, it will use the public schema.
+    #[instrument(skip(self))]
+    pub async fn insert<J>(&self, job: J) -> Result<Job, sqlx::Error>
+    where
+        J: Debug + Serialize + Worker + Send + Sync + 'static,
+    {
+        self.insert_impl(job, &*self.storage.pool).await
+    }
+
+    /// Insert a job using this engine's schema configuration within a transaction.
+    ///
+    /// This method will insert the job into the schema configured for this engine
+    /// within the provided transaction.
+    #[instrument(skip(self, executor))]
+    pub async fn insert_tx<'a, J, E>(&self, job: J, executor: E) -> Result<Job, sqlx::Error>
+    where
+        J: Debug + Serialize + Worker + Send + Sync + 'static,
+        E: PgExecutor<'a>,
+    {
+        self.insert_impl(job, executor).await
+    }
+
+    /// Internal implementation for inserting jobs with schema support
+    async fn insert_impl<'a, J, E>(&self, job: J, executor: E) -> Result<Job, sqlx::Error>
+    where
+        J: Debug + Serialize + Worker + Send + Sync + 'static,
+        E: PgExecutor<'a>,
+    {
+        // Build table name based on engine's schema
+        let table_name = match &self.schema {
+            Some(schema) => format!("{}.ishikari_jobs", schema),
+            None => "ishikari_jobs".to_string(),
+        };
+
+        let query = format!(
+            "insert into {} (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *",
+            table_name
+        );
+
+        let args = serde_json::to_value(&job as &dyn Worker).unwrap();
+
+        let row = sqlx::query(&query)
+            .bind(job.queue())
+            .bind(J::worker())
+            .bind(args)
+            .bind(job.max_attempts())
+            .fetch_one(executor)
+            .await?;
+
+        let inserted = Job::from_row(&row)?;
+
+        tracing::info!("Job inserted id={}, args={:?}", inserted.id, job);
+
+        Ok(inserted)
     }
 }
