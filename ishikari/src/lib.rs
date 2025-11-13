@@ -790,8 +790,9 @@ where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
     E: PgExecutor<'a>,
 {
-    // TODO: remove this unwrap
-    let args = serde_json::to_value(&job as &dyn Worker).unwrap();
+    // Serialize the job args, returning error if serialization fails
+    let args =
+        serde_json::to_value(&job as &dyn Worker).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
     let row = sqlx::query(r#"insert into ishikari_jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
         .bind(job.queue())
@@ -806,4 +807,174 @@ where
     info!("Job inserted id={}, args={:?}", inserted.id, job);
 
     Ok(inserted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[tokio::test]
+    async fn test_backoff_fixed() {
+        let backoff = Backoff::Fixed(Duration::seconds(10));
+        let now = Utc::now();
+        let next_retry = backoff.next_retry(1);
+
+        // Should be approximately 10 seconds from now
+        let diff = (next_retry - now).num_seconds();
+        assert!((9..=11).contains(&diff));
+    }
+
+    #[tokio::test]
+    async fn test_backoff_linear() {
+        let backoff = Backoff::Linear(Duration::seconds(5));
+
+        let retry1 = backoff.next_retry(1);
+        let retry2 = backoff.next_retry(2);
+        let retry3 = backoff.next_retry(3);
+
+        // Linear backoff should increase linearly
+        let diff1 = (retry1 - Utc::now()).num_seconds();
+        let diff2 = (retry2 - Utc::now()).num_seconds();
+        let diff3 = (retry3 - Utc::now()).num_seconds();
+
+        assert!((4..=6).contains(&diff1)); // ~5 seconds
+        assert!((9..=11).contains(&diff2)); // ~10 seconds
+        assert!((14..=16).contains(&diff3)); // ~15 seconds
+    }
+
+    #[tokio::test]
+    async fn test_backoff_exponential() {
+        let backoff = Backoff::Exponential(Duration::seconds(2));
+
+        let retry1 = backoff.next_retry(1);
+        let retry2 = backoff.next_retry(2);
+        let retry3 = backoff.next_retry(3);
+
+        // Exponential backoff: 2 * 2^1 = 4, 2 * 2^2 = 8, 2 * 2^3 = 16
+        let diff1 = (retry1 - Utc::now()).num_seconds();
+        let diff2 = (retry2 - Utc::now()).num_seconds();
+        let diff3 = (retry3 - Utc::now()).num_seconds();
+
+        assert!((3..=5).contains(&diff1)); // ~4 seconds
+        assert!((7..=9).contains(&diff2)); // ~8 seconds
+        assert!((15..=17).contains(&diff3)); // ~16 seconds
+    }
+
+    #[tokio::test]
+    async fn test_context_job_access() {
+        use std::sync::Arc;
+
+        let job = Arc::new(Job {
+            id: 123,
+            state: JobState::Executing,
+            queue: "test".to_string(),
+            worker: "TestWorker".to_string(),
+            args: serde_json::json!({}),
+            errors: vec![],
+            attempt: 1,
+            max_attempts: 3,
+            attempted_by: None,
+            priority: 0,
+            tags: vec![],
+            meta: None,
+            inserted_at: Utc::now(),
+            scheduled_at: Utc::now(),
+            attempted_at: Some(Utc::now()),
+            completed_at: None,
+            discarded_at: None,
+            cancelled_at: None,
+        });
+
+        let state = Arc::new(());
+        let context = Context::new(Arc::clone(&job), state);
+
+        let retrieved_job = context.job();
+        assert_eq!(retrieved_job.id, 123);
+        assert_eq!(retrieved_job.queue, "test");
+        assert_eq!(retrieved_job.worker, "TestWorker");
+    }
+
+    #[tokio::test]
+    async fn test_context_state_access() {
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct TestState {
+            value: i32,
+        }
+
+        let job = Arc::new(Job {
+            id: 456,
+            state: JobState::Available,
+            queue: "test".to_string(),
+            worker: "TestWorker".to_string(),
+            args: serde_json::json!({}),
+            errors: vec![],
+            attempt: 0,
+            max_attempts: 5,
+            attempted_by: None,
+            priority: 1,
+            tags: vec![],
+            meta: None,
+            inserted_at: Utc::now(),
+            scheduled_at: Utc::now(),
+            attempted_at: None,
+            completed_at: None,
+            discarded_at: None,
+            cancelled_at: None,
+        });
+
+        let test_state = Arc::new(TestState { value: 42 });
+        let context = Context::new(job, test_state as State);
+
+        let retrieved_state = context.state::<TestState>().unwrap();
+        assert_eq!(retrieved_state.value, 42);
+    }
+
+    #[tokio::test]
+    async fn test_context_wrong_state_type() {
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct TestState {
+            value: i32,
+        }
+
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct WrongState {
+            other: String,
+        }
+
+        let job = Arc::new(Job {
+            id: 789,
+            state: JobState::Available,
+            queue: "test".to_string(),
+            worker: "TestWorker".to_string(),
+            args: serde_json::json!({}),
+            errors: vec![],
+            attempt: 0,
+            max_attempts: 5,
+            attempted_by: None,
+            priority: 2,
+            tags: vec![],
+            meta: None,
+            inserted_at: Utc::now(),
+            scheduled_at: Utc::now(),
+            attempted_at: None,
+            completed_at: None,
+            discarded_at: None,
+            cancelled_at: None,
+        });
+
+        let test_state = Arc::new(TestState { value: 42 });
+        let context = Context::new(job, test_state as State);
+
+        // Trying to get wrong state type should fail
+        let result = context.state::<WrongState>();
+        assert!(result.is_err());
+    }
 }

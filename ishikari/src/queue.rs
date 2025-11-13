@@ -1,3 +1,41 @@
+//! Queue management for job processing.
+//!
+//! This module provides the core queue functionality for Ishikari, including:
+//!
+//! - `Queue` - The main queue processor that handles job execution
+//! - `QueueBuilder` - Builder pattern for configuring queues
+//! - `QueueName` - Type-safe queue name handling
+//!
+//! Queues are responsible for:
+//! - Fetching jobs from storage
+//! - Executing jobs concurrently
+//! - Managing job lifecycle (success, failure, retry)
+//! - Respecting concurrency limits
+//! - Handling backoff strategies for failed jobs
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use ishikari::{Queue, Postgres, Engine};
+//! use std::{sync::Arc, time::Duration};
+//! use sqlx::PgPool;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let database_url = std::env::var("DATABASE_URL")?;
+//!     let pool = PgPool::connect(&database_url).await?;
+//!     let storage = Arc::new(Postgres::new(pool));
+//!     let state = Arc::new(());
+//!
+//!     let queue = Queue::builder("my_queue")
+//!         .concurrency(5)
+//!         .interval(Duration::from_secs(1))
+//!         .build(storage, state);
+//!
+//!     queue.start();
+//! #   Ok(())
+//! # }
+//! ```
+
 use crate::{Backoff, Context, State, Status, Storage};
 use chrono::Duration as ChronoDuration;
 use std::marker::PhantomData;
@@ -217,7 +255,9 @@ where
     pub fn start(self) {
         info!("starting queue");
         tokio::spawn(async move {
-            self.run().await.unwrap();
+            if let Err(e) = self.run().await {
+                error!("Queue run loop failed: {}", e);
+            }
         });
     }
 
@@ -274,7 +314,7 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
                             let _ = storage
                                 .error_job(
                                     job.id,
-                                    &format!("Failed to deserialize worker: {}", e),
+                                    &format!("Failed to deserialize worker: {e}"),
                                     Backoff::Exponential(ChronoDuration::seconds(5))
                                         .next_retry(job.attempt),
                                 )

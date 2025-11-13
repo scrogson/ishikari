@@ -1,6 +1,37 @@
-//! Ishikari Stager
+//! Job staging functionality for scheduled and retryable jobs.
 //!
-//! The Stager is responsible for moving tasks from scheduled/retryable to available.
+//! The Stager is responsible for moving jobs from scheduled/retryable states to available
+//! state when they're ready to be processed. This includes:
+//!
+//! - Moving scheduled jobs to available when their scheduled time arrives
+//! - Moving retryable jobs to available after their backoff period expires
+//! - Pruning old completed/discarded jobs to keep the database clean
+//!
+//! The stager runs on a configurable interval and processes a limited number of jobs
+//! per iteration to avoid overwhelming the database.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use ishikari::{Stager, Postgres};
+//! use std::{sync::Arc, time::Duration};
+//! use sqlx::PgPool;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     let database_url = std::env::var("DATABASE_URL")?;
+//!     let pool = PgPool::connect(&database_url).await?;
+//!     let storage = Arc::new(Postgres::new(pool));
+//!
+//!     let stager = Stager::new(
+//!         storage,
+//!         Duration::from_secs(30),
+//!         100
+//!     );
+//!
+//!     stager.start();
+//! #   Ok(())
+//! # }
+//! ```
 
 use crate::engine::Storage;
 use std::pin::pin;

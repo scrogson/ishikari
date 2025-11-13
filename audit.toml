@@ -1,0 +1,8 @@
+# Configuration for cargo-audit
+[advisories]
+# This crate uses only PostgreSQL and doesn't use MySQL functionality
+# The rsa crate vulnerability (RUSTSEC-2023-0071) is present only in the 
+# transitive dependency tree through sqlx-mysql, which is not used in this project.
+# This is a known issue with sqlx 0.8.x where the meta-crate pulls in all database
+# drivers even when only specific ones are needed.
+ignore = ["RUSTSEC-2023-0071"]
