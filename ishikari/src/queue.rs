@@ -38,7 +38,10 @@
 
 use crate::{Backoff, Context, State, Status, Storage};
 use chrono::Duration as ChronoDuration;
+use futures::FutureExt;
+use std::any::Any;
 use std::marker::PhantomData;
+use std::panic::AssertUnwindSafe;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -279,6 +282,17 @@ where
     }
 }
 
+/// Extracts a human-readable message from a panic payload.
+fn extract_panic_message(panic: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 #[instrument(skip(queue), fields(queue = queue.name.as_str()))]
 async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
     match queue
@@ -311,49 +325,93 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
                                 error = e.to_string(),
                                 "failed to deserialize worker"
                             );
-                            let _ = storage
+                            if let Err(e) = storage
                                 .error_job(
                                     job.id,
                                     &format!("Failed to deserialize worker: {e}"),
                                     Backoff::Exponential(ChronoDuration::seconds(5))
                                         .next_retry(job.attempt),
                                 )
-                                .await;
+                                .await
+                            {
+                                error!(id = job.id, error = %e, "failed to mark job as errored in storage");
+                            }
                             return;
                         }
                     };
                     let context = Context::new(job.clone().into(), state);
 
-                    // TODO: handle panics and storage errors.
-                    match worker.perform(context).await {
-                        Ok(result) => match result {
+                    // Wrap perform in catch_unwind to handle panics gracefully
+                    let result = AssertUnwindSafe(worker.perform(context))
+                        .catch_unwind()
+                        .await;
+
+                    match result {
+                        Ok(Ok(status)) => match status {
                             Status::Complete(complete) => {
                                 info!(id = job.id, result = complete.0, "job completed");
-                                let _ = storage.complete_job(job.id).await;
+                                if let Err(e) = storage.complete_job(job.id).await {
+                                    error!(id = job.id, error = %e, "failed to complete job in storage");
+                                }
                             }
                             Status::Cancel(cancel) => {
                                 info!(id = job.id, reason = cancel.0, "job cancelled");
-                                let _ = storage.cancel_job(job.id).await;
+                                if let Err(e) = storage.cancel_job(job.id).await {
+                                    error!(id = job.id, error = %e, "failed to cancel job in storage");
+                                }
                             }
                             Status::Snooze(snooze) => {
                                 info!(id = job.id, snooze = snooze.0, "job snoozed");
-                                let _ = storage.snooze_job(job.id, snooze.0).await;
+                                if let Err(e) = storage.snooze_job(job.id, snooze.0).await {
+                                    error!(id = job.id, error = %e, "failed to snooze job in storage");
+                                }
                             }
                         },
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             error!(
                                 id = job.id,
                                 attempt = job.attempt,
                                 error = e.to_string(),
                                 "job failed",
                             );
-                            let _ = storage
+                            if let Err(storage_err) = storage
                                 .error_job(job.id, &e.to_string(), worker.backoff(job.attempt))
-                                .await;
+                                .await
+                            {
+                                error!(id = job.id, error = %storage_err, "failed to mark job as errored in storage");
+                            }
 
                             if job.attempt >= job.max_attempts {
                                 info!(id = job.id, "job discarded");
-                                let _ = storage.discard_job(job.id).await;
+                                if let Err(e) = storage.discard_job(job.id).await {
+                                    error!(id = job.id, error = %e, "failed to discard job in storage");
+                                }
+                            }
+                        }
+                        Err(panic_info) => {
+                            let panic_msg = extract_panic_message(&panic_info);
+                            error!(
+                                id = job.id,
+                                attempt = job.attempt,
+                                panic = %panic_msg,
+                                "worker panicked"
+                            );
+                            if let Err(storage_err) = storage
+                                .error_job(
+                                    job.id,
+                                    &format!("Worker panicked: {panic_msg}"),
+                                    worker.backoff(job.attempt),
+                                )
+                                .await
+                            {
+                                error!(id = job.id, error = %storage_err, "failed to mark panicked job as errored in storage");
+                            }
+
+                            if job.attempt >= job.max_attempts {
+                                info!(id = job.id, "job discarded after panic");
+                                if let Err(e) = storage.discard_job(job.id).await {
+                                    error!(id = job.id, error = %e, "failed to discard panicked job in storage");
+                                }
                             }
                         }
                     }

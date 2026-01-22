@@ -141,10 +141,9 @@ where
 
         for queue in self.queues.into_iter() {
             // If queue doesn't have a schema set, use engine's schema
-            let queue_with_schema = if queue.schema.is_none() && self.schema.is_some() {
-                queue.schema(self.schema.as_ref().unwrap().clone())
-            } else {
-                queue
+            let queue_with_schema = match (&queue.schema, &self.schema) {
+                (None, Some(schema)) => queue.schema(schema.clone()),
+                _ => queue,
             };
             let queue = queue_with_schema.build(storage.clone(), state.clone());
             queue.start();
@@ -253,7 +252,8 @@ impl Engine<Postgres> {
             table_name
         );
 
-        let args = serde_json::to_value(&job as &dyn Worker).unwrap();
+        let args = serde_json::to_value(&job as &dyn Worker)
+            .map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
         let row = sqlx::query(&query)
             .bind(job.queue())
