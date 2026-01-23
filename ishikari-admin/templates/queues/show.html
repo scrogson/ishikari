@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}{{ queue_name }} Queue - Ishikari Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Queue: {{ queue_name }}</h1>
+    <p class="page-subtitle">{{ total }} jobs</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Queue Statistics</h2>
+    </div>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value stat-available">{{ stats.available }}</div>
+            <div class="stat-label">Available</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-executing">{{ stats.executing }}</div>
+            <div class="stat-label">Executing</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-scheduled">{{ stats.scheduled }}</div>
+            <div class="stat-label">Scheduled</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-retryable">{{ stats.retryable }}</div>
+            <div class="stat-label">Retryable</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-completed">{{ stats.completed }}</div>
+            <div class="stat-label">Completed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-discarded">{{ stats.discarded }}</div>
+            <div class="stat-label">Discarded</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-cancelled">{{ stats.cancelled }}</div>
+            <div class="stat-label">Cancelled</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.total }}</div>
+            <div class="stat-label">Total</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Jobs in Queue</h2>
+    </div>
+
+    <form class="filters" hx-get="/queues/{{ queue_name }}" hx-target="body" hx-trigger="change" hx-push-url="true">
+        <div class="filter-group">
+            <label class="form-label">State</label>
+            <select name="state" class="form-select">
+                <option value="">All States</option>
+                <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
+                <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
+                <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>
+                <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
+                <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
+                <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+            </select>
+        </div>
+    </form>
+
+    <div id="queue-jobs">
+        {% include "partials/jobs_table.html" %}
+    </div>
+</div>
+
+<div style="margin-top: 1rem;">
+    <a href="/queues" class="btn btn-secondary">&larr; Back to Queues</a>
+</div>
+{% endblock %}

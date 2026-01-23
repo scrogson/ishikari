@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Job #{{ job.id }} - Ishikari Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Job #{{ job.id }}</h1>
+    <p class="page-subtitle">{{ job.worker }}</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Details</h2>
+        <div class="actions">
+            {% if job.state == "discarded" || job.state == "retryable" || job.state == "cancelled" %}
+            <form action="/jobs/{{ job.id }}/retry" method="post" style="display: inline;">
+                <button type="submit" class="btn btn-primary btn-sm">Retry</button>
+            </form>
+            {% endif %}
+            {% if job.state == "available" || job.state == "scheduled" || job.state == "retryable" %}
+            <form action="/jobs/{{ job.id }}/cancel" method="post" style="display: inline;">
+                <button type="submit" class="btn btn-secondary btn-sm">Cancel</button>
+            </form>
+            {% endif %}
+            {% if job.state != "discarded" && job.state != "completed" %}
+            <form action="/jobs/{{ job.id }}/discard" method="post" style="display: inline;">
+                <button type="submit" class="btn btn-danger btn-sm">Discard</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="detail-grid">
+        <div class="detail-label">State</div>
+        <div><span class="badge badge-{{ job.state }}">{{ job.state }}</span></div>
+
+        <div class="detail-label">Queue</div>
+        <div>{{ job.queue }}</div>
+
+        <div class="detail-label">Worker</div>
+        <div>{{ job.worker }}</div>
+
+        <div class="detail-label">Attempts</div>
+        <div>{{ job.attempt }} / {{ job.max_attempts }}</div>
+
+        <div class="detail-label">Inserted At</div>
+        <div>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+
+        <div class="detail-label">Scheduled At</div>
+        <div>{{ job.scheduled_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+
+        {% if let Some(attempted_at) = job.attempted_at %}
+        <div class="detail-label">Attempted At</div>
+        <div>{{ attempted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% endif %}
+
+        {% if let Some(completed_at) = job.completed_at %}
+        <div class="detail-label">Completed At</div>
+        <div>{{ completed_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Arguments</h2>
+    </div>
+    <pre class="code-block">{{ job.args_pretty() }}</pre>
+</div>
+
+{% if job.has_errors() %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Errors</h2>
+    </div>
+    <pre class="code-block">{{ job.errors_pretty() }}</pre>
+</div>
+{% endif %}
+
+<div style="margin-top: 1rem;">
+    <a href="/jobs" class="btn btn-secondary">&larr; Back to Jobs</a>
+</div>
+{% endblock %}

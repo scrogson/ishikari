@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Jobs - Ishikari Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Jobs</h1>
+    <p class="page-subtitle">{{ total }} jobs found</p>
+</div>
+
+<div class="card">
+    <form class="filters" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-push-url="true">
+        <div class="filter-group">
+            <label class="form-label">State</label>
+            <select name="state" class="form-select">
+                <option value="">All States</option>
+                <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
+                <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
+                <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>
+                <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
+                <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
+                <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label class="form-label">Queue</label>
+            <input type="text" name="queue" class="form-input" placeholder="Filter by queue" value="{{ current_queue.as_deref().unwrap_or("") }}">
+        </div>
+        <div class="filter-group">
+            <label class="form-label">Worker</label>
+            <input type="text" name="worker" class="form-input" placeholder="Filter by worker" value="{{ current_worker.as_deref().unwrap_or("") }}">
+        </div>
+    </form>
+
+    <div id="jobs-table">
+        {% include "partials/jobs_table.html" %}
+    </div>
+</div>
+{% endblock %}

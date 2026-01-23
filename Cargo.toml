@@ -2,6 +2,7 @@
 members = [
   "ishikari",
   "ishikari-macros",
-  "ishikari-cli"
+  "ishikari-cli",
+  "ishikari-admin"
 ]
 resolver = "2"

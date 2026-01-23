@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Ishikari Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Job queue overview</p>
+</div>
+
+<div class="card" id="stats-card" hx-get="/api/stats" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "partials/stats.html" %}
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Recent Failures</h2>
+        <a href="/jobs?state=discarded" class="btn btn-secondary btn-sm">View All</a>
+    </div>
+    {% if recent_failures.is_empty() %}
+    <div class="empty-state">
+        <p>No recent failures</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Worker</th>
+                <th>Queue</th>
+                <th>Error</th>
+                <th>Failed At</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for failure in recent_failures %}
+            <tr>
+                <td><a href="/jobs/{{ failure.id }}">{{ failure.id }}</a></td>
+                <td class="text-truncate">{{ failure.worker }}</td>
+                <td>{{ failure.queue }}</td>
+                <td class="text-truncate">{{ failure.error.as_deref().unwrap_or("-") }}</td>
+                <td>{{ failure.failed_at.format("%Y-%m-%d %H:%M:%S") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endblock %}

@@ -55,6 +55,10 @@ build:
 build-release:
     cargo build --release
 
+# Run commands
+admin:
+    cargo run -p ishikari-admin
+
 # Test commands
 test:
     cargo test

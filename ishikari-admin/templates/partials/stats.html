@@ -1,0 +1,38 @@
+<div class="card-header">
+    <h2 class="card-title">Job Statistics</h2>
+    <span class="htmx-indicator"><span class="loading"></span></span>
+</div>
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value stat-available">{{ stats.available }}</div>
+        <div class="stat-label">Available</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-executing">{{ stats.executing }}</div>
+        <div class="stat-label">Executing</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-scheduled">{{ stats.scheduled }}</div>
+        <div class="stat-label">Scheduled</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-retryable">{{ stats.retryable }}</div>
+        <div class="stat-label">Retryable</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-completed">{{ stats.completed }}</div>
+        <div class="stat-label">Completed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-discarded">{{ stats.discarded }}</div>
+        <div class="stat-label">Discarded</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value stat-cancelled">{{ stats.cancelled }}</div>
+        <div class="stat-label">Cancelled</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-label">Total</div>
+    </div>
+</div>

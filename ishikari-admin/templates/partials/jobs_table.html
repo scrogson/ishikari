@@ -1,0 +1,54 @@
+{% if jobs.is_empty() %}
+<div class="empty-state">
+    <p>No jobs found</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Worker</th>
+            <th>Queue</th>
+            <th>State</th>
+            <th>Attempts</th>
+            <th>Inserted At</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in jobs %}
+        <tr>
+            <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+            <td class="text-truncate" title="{{ job.worker }}">{{ job.worker }}</td>
+            <td>{{ job.queue }}</td>
+            <td><span class="badge badge-{{ job.state }}">{{ job.state }}</span></td>
+            <td>{{ job.attempt }}/{{ job.max_attempts }}</td>
+            <td>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>
+                <a href="/jobs/{{ job.id }}" class="btn btn-secondary btn-sm">View</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" hx-get="/api/jobs?page={{ page - 1 }}" hx-target="#jobs-table">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% else %}
+        <a href="?page={{ p }}" hx-get="/api/jobs?page={{ p }}" hx-target="#jobs-table">{{ p }}</a>
+        {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" hx-get="/api/jobs?page={{ page + 1 }}" hx-target="#jobs-table">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

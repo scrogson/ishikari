@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Queues - Ishikari Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Queues</h1>
+    <p class="page-subtitle">{{ queues.len() }} queues</p>
+</div>
+
+<div class="card">
+    {% if queues.is_empty() %}
+    <div class="empty-state">
+        <p>No queues found</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Queue</th>
+                <th>Available</th>
+                <th>Executing</th>
+                <th>Scheduled</th>
+                <th>Retryable</th>
+                <th>Completed</th>
+                <th>Discarded</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for queue in queues %}
+            <tr>
+                <td><a href="/queues/{{ queue.name }}">{{ queue.name }}</a></td>
+                <td><span class="stat-available">{{ queue.available }}</span></td>
+                <td><span class="stat-executing">{{ queue.executing }}</span></td>
+                <td><span class="stat-scheduled">{{ queue.scheduled }}</span></td>
+                <td><span class="stat-retryable">{{ queue.retryable }}</span></td>
+                <td><span class="stat-completed">{{ queue.completed }}</span></td>
+                <td><span class="stat-discarded">{{ queue.discarded }}</span></td>
+                <td>{{ queue.total }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endblock %}
