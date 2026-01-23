@@ -884,6 +884,7 @@ mod tests {
             completed_at: None,
             discarded_at: None,
             cancelled_at: None,
+            workflow_id: None,
         });
 
         let state = Arc::new(());
@@ -924,6 +925,7 @@ mod tests {
             completed_at: None,
             discarded_at: None,
             cancelled_at: None,
+            workflow_id: None,
         });
 
         let test_state = Arc::new(TestState { value: 42 });
@@ -968,6 +970,7 @@ mod tests {
             completed_at: None,
             discarded_at: None,
             cancelled_at: None,
+            workflow_id: None,
         });
 
         let test_state = Arc::new(TestState { value: 42 });
