@@ -16,6 +16,14 @@ Ishikari is a robust job processing system written in Rust, designed for reliabl
 - **State Management**: Context-based state sharing between jobs and workers
 - **PostgreSQL Integration**: Built-in support for PostgreSQL as the job storage backend
 
+### Ishikari Pro
+
+For advanced workflow features, see [Ishikari Pro](https://github.com/scrogson/ishikari-pro) (requires license):
+
+- **Pipelines** - Linear chains of jobs
+- **DAGs** - Directed acyclic graphs for complex job orchestration
+- **Sagas** - Workflows with automatic compensation/rollback on failure
+
 ## Prerequisites
 
 - Rust (latest stable version)
