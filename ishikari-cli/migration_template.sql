@@ -36,6 +36,7 @@ CREATE TABLE {SCHEMA}.ishikari_jobs (
     completed_at timestamptz,
     discarded_at timestamptz,
     cancelled_at timestamptz,
+    workflow_id bigint,
     CONSTRAINT ishikari_jobs_attempt_range CHECK (attempt >= 0 AND attempt <= max_attempts)
 );
 
@@ -49,8 +50,12 @@ ON {SCHEMA}.ishikari_jobs(state, queue, priority, scheduled_at, id);
 CREATE INDEX ishikari_jobs_args_index 
 ON {SCHEMA}.ishikari_jobs USING gin (args);
 
-CREATE INDEX ishikari_jobs_meta_index 
+CREATE INDEX ishikari_jobs_meta_index
 ON {SCHEMA}.ishikari_jobs USING gin (meta);
+
+CREATE INDEX ishikari_jobs_workflow_id_index
+ON {SCHEMA}.ishikari_jobs (workflow_id)
+WHERE workflow_id IS NOT NULL;
 
 -- Create notification function
 CREATE OR REPLACE FUNCTION {SCHEMA}.ishikari_jobs_notify()

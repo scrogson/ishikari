@@ -55,6 +55,9 @@ pub struct Job {
     pub completed_at: Option<DateTime<Utc>>,
     pub discarded_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
+    /// The workflow this job belongs to (if part of a workflow).
+    /// Used by ishikari-pro for pipelines, DAGs, and sagas.
+    pub workflow_id: Option<i64>,
 }
 
 impl Job {
