@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,7 +13,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:15
@@ -29,70 +29,68 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-    
-    - name: Cache dependencies  
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-    
-    - name: Run Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-    
-    - name: Run tests
-      run: cargo test --verbose
-      env:
-        DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
-    
-    - name: Run doc tests
-      run: cargo test --doc
-      env:
-        DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: mise run fmt-check
+
+      - name: Run Clippy
+        run: mise run clippy
+
+      - name: Run tests
+        run: mise run test
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
+
+      - name: Run doc tests
+        run: cargo test --doc
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
 
   check:
     name: Check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache dependencies
-      uses: actions/cache@v4  
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Check compilation
-      run: cargo check --all-targets --all-features
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check compilation
+        run: mise run check
 
   security:
     name: Security audit
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Install cargo-audit
-      run: cargo install cargo-audit
-    
-    - name: Run security audit
-      run: cargo audit --file audit.toml
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit --file audit.toml
