@@ -68,22 +68,32 @@ async fn get_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
         table
     );
 
-    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> =
-        sqlx::query_as(&query).fetch_optional(pool).await.ok().flatten();
+    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
 
     match row {
-        Some((available, scheduled, executing, retryable, completed, discarded, cancelled, total)) => {
-            JobStats {
-                available,
-                scheduled,
-                executing,
-                retryable,
-                completed,
-                discarded,
-                cancelled,
-                total,
-            }
-        }
+        Some((
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        )) => JobStats {
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        },
         None => JobStats::default(),
     }
 }
@@ -143,18 +153,21 @@ async fn get_jobs(
     }
     let total: i64 = count_q.fetch_one(pool).await.unwrap_or(0);
 
-    let mut list_q = sqlx::query_as::<_, (
-        i64,
-        String,
-        String,
-        String,
-        i32,
-        i32,
-        chrono::DateTime<chrono::Utc>,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )>(&list_query);
+    let mut list_q = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(&list_query);
     for p in &params {
         list_q = list_q.bind(p);
     }

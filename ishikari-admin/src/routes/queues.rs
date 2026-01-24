@@ -110,8 +110,10 @@ async fn get_queues(pool: &PgPool, schema: Option<&str>) -> Vec<QueueInfo> {
         table
     );
 
-    let rows: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64)> =
-        sqlx::query_as(&query).fetch_all(pool).await.unwrap_or_default();
+    let rows: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     rows.into_iter()
         .map(|row| QueueInfo {
@@ -165,18 +167,21 @@ async fn get_queue_jobs(
     );
 
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_query).bind(queue_name);
-    let mut list_q = sqlx::query_as::<_, (
-        i64,
-        String,
-        String,
-        String,
-        i32,
-        i32,
-        chrono::DateTime<chrono::Utc>,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )>(&list_query)
+    let mut list_q = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(&list_query)
     .bind(queue_name);
 
     if let Some(s) = state_filter {
@@ -207,7 +212,11 @@ async fn get_queue_jobs(
 }
 
 /// Get statistics for a single queue.
-async fn get_queue_stats(pool: &PgPool, schema: Option<&str>, queue_name: &str) -> Option<QueueInfo> {
+async fn get_queue_stats(
+    pool: &PgPool,
+    schema: Option<&str>,
+    queue_name: &str,
+) -> Option<QueueInfo> {
     let table = match schema {
         Some(s) => format!("{}.ishikari_jobs", s),
         None => "ishikari_jobs".to_string(),
@@ -232,12 +241,11 @@ async fn get_queue_stats(pool: &PgPool, schema: Option<&str>, queue_name: &str) 
         table
     );
 
-    let row: Option<(String, i64, i64, i64, i64, i64, i64, i64, i64)> =
-        sqlx::query_as(&query)
-            .bind(queue_name)
-            .fetch_optional(pool)
-            .await
-            .ok()?;
+    let row: Option<(String, i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .bind(queue_name)
+        .fetch_optional(pool)
+        .await
+        .ok()?;
 
     row.map(|r| QueueInfo {
         name: r.0,

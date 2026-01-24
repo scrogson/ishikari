@@ -54,22 +54,32 @@ async fn get_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
         table
     );
 
-    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> =
-        sqlx::query_as(&query).fetch_optional(pool).await.ok().flatten();
+    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
 
     match row {
-        Some((available, scheduled, executing, retryable, completed, discarded, cancelled, total)) => {
-            JobStats {
-                available,
-                scheduled,
-                executing,
-                retryable,
-                completed,
-                discarded,
-                cancelled,
-                total,
-            }
-        }
+        Some((
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        )) => JobStats {
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        },
         None => JobStats::default(),
     }
 }
@@ -85,7 +95,11 @@ pub struct RecentFailure {
 }
 
 /// Get recent job failures.
-async fn get_recent_failures(pool: &PgPool, schema: Option<&str>, limit: i64) -> Vec<RecentFailure> {
+async fn get_recent_failures(
+    pool: &PgPool,
+    schema: Option<&str>,
+    limit: i64,
+) -> Vec<RecentFailure> {
     let table = match schema {
         Some(s) => format!("{}.ishikari_jobs", s),
         None => "ishikari_jobs".to_string(),
@@ -102,12 +116,17 @@ async fn get_recent_failures(pool: &PgPool, schema: Option<&str>, limit: i64) ->
         table
     );
 
-    let rows: Vec<(i64, String, String, Option<String>, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(&query)
-            .bind(limit)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let rows: Vec<(
+        i64,
+        String,
+        String,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    )> = sqlx::query_as(&query)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     rows.into_iter()
         .map(|(id, worker, queue, error, failed_at)| RecentFailure {

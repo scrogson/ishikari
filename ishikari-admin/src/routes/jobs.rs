@@ -115,36 +115,25 @@ pub async fn show(
 ) -> Result<JobDetailTemplate, Response> {
     let job = get_job(&state.pool, state.schema.as_deref(), id)
         .await
-        .ok_or_else(|| {
-            (axum::http::StatusCode::NOT_FOUND, "Job not found").into_response()
-        })?;
+        .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "Job not found").into_response())?;
 
     Ok(JobDetailTemplate { job })
 }
 
 /// Retry a failed job.
-pub async fn retry(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Redirect {
+pub async fn retry(State(state): State<AppState>, Path(id): Path<i64>) -> Redirect {
     retry_job(&state.pool, state.schema.as_deref(), id).await;
     Redirect::to(&format!("/jobs/{}", id))
 }
 
 /// Cancel a job.
-pub async fn cancel(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Redirect {
+pub async fn cancel(State(state): State<AppState>, Path(id): Path<i64>) -> Redirect {
     cancel_job(&state.pool, state.schema.as_deref(), id).await;
     Redirect::to(&format!("/jobs/{}", id))
 }
 
 /// Discard a job.
-pub async fn discard(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Redirect {
+pub async fn discard(State(state): State<AppState>, Path(id): Path<i64>) -> Redirect {
     discard_job(&state.pool, state.schema.as_deref(), id).await;
     Redirect::to(&format!("/jobs/{}", id))
 }
@@ -206,18 +195,21 @@ async fn get_jobs(
     let total: i64 = count_q.fetch_one(pool).await.unwrap_or(0);
 
     // Build list query
-    let mut list_q = sqlx::query_as::<_, (
-        i64,
-        String,
-        String,
-        String,
-        i32,
-        i32,
-        chrono::DateTime<chrono::Utc>,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    )>(&list_query);
+    let mut list_q = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(&list_query);
     for p in &params {
         list_q = list_q.bind(p);
     }
