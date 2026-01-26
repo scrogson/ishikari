@@ -15,6 +15,7 @@ pub async fn index(State(state): State<AppState>) -> DashboardTemplate {
     DashboardTemplate {
         stats,
         recent_failures: get_recent_failures(&state.pool, state.schema.as_deref(), 5).await,
+        nav_items: state.nav_items().to_vec(),
     }
 }
 

@@ -80,7 +80,7 @@ impl QueueName {
 /// # #[async_trait]
 /// # impl Storage for MyStorage {
 /// #     type Error = std::io::Error;
-/// #     async fn cancel_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn cancel_job(&self, _id: i64, _reason: Option<&str>) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn complete_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn discard_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn error_job(&self, _id: i64, _msg: &str, _at: DateTime<Utc>) -> Result<(), Self::Error> { unimplemented!() }
@@ -193,7 +193,7 @@ where
 /// # #[async_trait]
 /// # impl Storage for MyStorage {
 /// #     type Error = std::io::Error;
-/// #     async fn cancel_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
+/// #     async fn cancel_job(&self, _id: i64, _reason: Option<&str>) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn complete_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn discard_job(&self, _id: i64) -> Result<(), Self::Error> { unimplemented!() }
 /// #     async fn error_job(&self, _id: i64, _msg: &str, _at: DateTime<Utc>) -> Result<(), Self::Error> { unimplemented!() }
@@ -356,7 +356,7 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
                             }
                             Status::Cancel(cancel) => {
                                 info!(id = job.id, reason = cancel.0, "job cancelled");
-                                if let Err(e) = storage.cancel_job(job.id).await {
+                                if let Err(e) = storage.cancel_job(job.id, cancel.0.as_deref()).await {
                                     error!(id = job.id, error = %e, "failed to cancel job in storage");
                                 }
                             }

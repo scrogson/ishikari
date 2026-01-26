@@ -105,6 +105,7 @@ pub async fn list(
         page,
         total,
         total_pages,
+        nav_items: state.nav_items().to_vec(),
     }
 }
 
@@ -117,7 +118,10 @@ pub async fn show(
         .await
         .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "Job not found").into_response())?;
 
-    Ok(JobDetailTemplate { job })
+    Ok(JobDetailTemplate {
+        job,
+        nav_items: state.nav_items().to_vec(),
+    })
 }
 
 /// Retry a failed job.

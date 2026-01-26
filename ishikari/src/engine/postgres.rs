@@ -31,14 +31,34 @@ impl From<Arc<sqlx::PgPool>> for Postgres {
 impl Storage for Postgres {
     type Error = sqlx::Error;
 
-    async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
-        sqlx::query(
-            r#"UPDATE ishikari_jobs SET state = 'cancelled', cancelled_at = now() WHERE id = $1"#,
-        )
-        .bind(id)
-        .execute(&*self.pool)
-        .await
-        .map(|_| ())
+    async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
+        match reason {
+            Some(reason) => {
+                sqlx::query(
+                    r#"
+                    UPDATE ishikari_jobs
+                    SET state = 'cancelled', cancelled_at = now(), errors = errors || $2::jsonb
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(id)
+                .bind(
+                    serde_json::to_value(reason).map_err(|e| sqlx::Error::Encode(Box::new(e)))?,
+                )
+                .execute(&*self.pool)
+                .await
+                .map(|_| ())
+            }
+            None => {
+                sqlx::query(
+                    r#"UPDATE ishikari_jobs SET state = 'cancelled', cancelled_at = now() WHERE id = $1"#,
+                )
+                .bind(id)
+                .execute(&*self.pool)
+                .await
+                .map(|_| ())
+            }
+        }
     }
 
     async fn complete_job(&self, id: i64) -> Result<(), Self::Error> {

@@ -64,7 +64,9 @@
         }
 
         .sidebar-nav a {
-            display: block;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             padding: 0.75rem 1rem;
             color: var(--text-secondary);
             text-decoration: none;
@@ -81,6 +83,12 @@
         .sidebar-nav a.active {
             background-color: var(--accent);
             color: white;
+        }
+
+        .sidebar-nav .nav-icon {
+            width: 1.25rem;
+            height: 1.25rem;
+            flex-shrink: 0;
         }
 
         .main-content {
@@ -387,9 +395,16 @@
             </div>
             <nav>
                 <ul class="sidebar-nav">
-                    <li><a href="/">Dashboard</a></li>
-                    <li><a href="/jobs">Jobs</a></li>
-                    <li><a href="/queues">Queues</a></li>
+                    {% for item in nav_items %}
+                    <li><a href="{{ item.href }}">
+                        {% if let Some(icon) = item.icon %}
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
+                        </svg>
+                        {% endif %}
+                        {{ item.label }}
+                    </a></li>
+                    {% endfor %}
                 </ul>
             </nav>
         </aside>

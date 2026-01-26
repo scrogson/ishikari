@@ -6,6 +6,7 @@ use askama_web::WebTemplate;
 use crate::routes::dashboard::{JobStats, RecentFailure};
 use crate::routes::jobs::{JobDetail, JobInfo};
 use crate::routes::queues::QueueInfo;
+use crate::NavItem;
 
 /// Dashboard page template.
 #[derive(Template, WebTemplate)]
@@ -13,6 +14,7 @@ use crate::routes::queues::QueueInfo;
 pub struct DashboardTemplate {
     pub stats: JobStats,
     pub recent_failures: Vec<RecentFailure>,
+    pub nav_items: Vec<NavItem>,
 }
 
 /// Jobs list page template.
@@ -26,6 +28,7 @@ pub struct JobsListTemplate {
     pub page: i64,
     pub total: i64,
     pub total_pages: i64,
+    pub nav_items: Vec<NavItem>,
 }
 
 /// Job detail page template.
@@ -33,6 +36,7 @@ pub struct JobsListTemplate {
 #[template(path = "jobs/show.html")]
 pub struct JobDetailTemplate {
     pub job: JobDetail,
+    pub nav_items: Vec<NavItem>,
 }
 
 /// Queues list page template.
@@ -40,6 +44,7 @@ pub struct JobDetailTemplate {
 #[template(path = "queues/list.html")]
 pub struct QueuesListTemplate {
     pub queues: Vec<QueueInfo>,
+    pub nav_items: Vec<NavItem>,
 }
 
 /// Queue detail page template.
@@ -53,6 +58,7 @@ pub struct QueueDetailTemplate {
     pub page: i64,
     pub total: i64,
     pub total_pages: i64,
+    pub nav_items: Vec<NavItem>,
 }
 
 /// Jobs table partial for htmx updates.

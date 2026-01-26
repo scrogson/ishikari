@@ -68,7 +68,7 @@ use tracing::{debug, info, instrument};
 ///         Ok(0)
 ///     }
 ///
-///     async fn cancel_job(&self, _id: i64) -> Result<(), Self::Error> {
+///     async fn cancel_job(&self, _id: i64, _reason: Option<&str>) -> Result<(), Self::Error> {
 ///         Ok(())
 ///     }
 ///

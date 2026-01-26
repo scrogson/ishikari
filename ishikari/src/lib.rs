@@ -80,7 +80,7 @@
 //! impl Storage for MyStorage {
 //!     type Error = std::io::Error;
 //!     
-//!     async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
+//!     async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
 //!         Ok(())
 //!     }
 //!     
@@ -190,7 +190,7 @@
 //! impl Storage for MyStorage {
 //!     type Error = std::io::Error;
 //!     
-//!     async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
+//!     async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
 //!         Ok(())
 //!     }
 //!     

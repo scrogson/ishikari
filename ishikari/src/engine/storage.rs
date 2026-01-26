@@ -37,7 +37,7 @@ use crate::Job;
 /// impl Storage for MyStorage {
 ///     type Error = std::io::Error;
 ///
-///     async fn cancel_job(&self, id: i64) -> Result<(), Self::Error> {
+///     async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
 ///         // Implementation
 ///         Ok(())
 ///     }
@@ -71,12 +71,13 @@ pub trait Storage: Send + Sync {
     /// # Arguments
     ///
     /// * `id` - The ID of the job to cancel
+    /// * `reason` - An optional reason for the cancellation
     ///
     /// # Returns
     ///
     /// Returns `Ok(())` if the job was successfully cancelled, or an error if
     /// the operation failed.
-    async fn cancel_job(&self, id: i64) -> Result<(), Self::Error>;
+    async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error>;
 
     /// Record that a job completed successfully.
     ///
