@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_new %}New Definition{% else %}Edit {{ name }}{% endif %} - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<style>
+    /* Override main content padding for full-bleed builder */
+    .main-content {
+        padding: 0 !important;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Builder container fills available space */
+    #workflow-builder-root {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: calc(100vh - 0px);
+    }
+</style>
+
+<div id="workflow-builder-root">
+    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary);">
+        Loading workflow builder...
+    </div>
+</div>
+
+<!-- Pass data to React -->
+<script>
+    window.__WORKFLOW_BUILDER__ = {
+        definitionId: {% match definition_id %}{% when Some with (id) %}{{ id }}{% when None %}null{% endmatch %},
+        isNew: {{ is_new }},
+        apiBase: '/api'
+    };
+</script>
+
+<!-- Load React app from embedded assets -->
+<link rel="stylesheet" href="/builder/assets/index.css">
+<script type="module" src="/builder/assets/index.js"></script>
+{% endblock %}

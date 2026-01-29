@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+
+{% block title %}Run {{ definition.name }} - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h1 class="page-title">Run {{ definition.name }}</h1>
+            <p class="page-subtitle">Version {{ definition.version }}</p>
+        </div>
+        <a href="/definitions/{{ definition.id }}" class="btn btn-secondary">Back to Definition</a>
+    </div>
+</div>
+
+{% match error %}
+{% when Some with (e) %}
+<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
+    <p style="color: var(--danger);">{{ e }}</p>
+</div>
+{% when None %}
+{% endmatch %}
+
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 class="card-title">Workflow Inputs</h2>
+        {% if !definition.input_fields().is_empty() %}
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <label style="font-size: 0.875rem; color: var(--text-secondary);">Mode:</label>
+            <button type="button" id="mode-form" class="btn btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="setMode('form')">Form</button>
+            <button type="button" id="mode-json" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="setMode('json')">JSON</button>
+        </div>
+        {% endif %}
+    </div>
+
+    <form method="post" action="/definitions/{{ definition.id }}/run" id="run-form" onsubmit="return prepareSubmit()">
+        {% if definition.input_fields().is_empty() %}
+        <div style="background-color: var(--bg-tertiary); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+            <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">
+                This workflow has no input parameters defined.
+            </p>
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+                You can run the workflow as-is, or add inputs to make it configurable.
+            </p>
+            <a href="/definitions/{{ definition.id }}/edit" class="btn btn-secondary" style="font-size: 0.875rem;">
+                + Add Inputs in Workflow Builder
+            </a>
+        </div>
+        <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
+        {% else %}
+
+        <!-- Form Mode -->
+        <div id="form-mode">
+            <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
+                {% for (name, field) in definition.input_fields() %}
+                <div class="form-field">
+                    <label class="form-label" for="field-{{ name }}">
+                        {{ name }}
+                        {% if field.required %}<span style="color: var(--danger);">*</span>{% endif %}
+                    </label>
+                    {% if field.field_type == "boolean" %}
+                    <select
+                        id="field-{{ name }}"
+                        name="field-{{ name }}"
+                        class="form-select"
+                        data-field-name="{{ name }}"
+                        data-field-type="{{ field.field_type }}"
+                    >
+                        <option value="">-- Select --</option>
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                    </select>
+                    {% else if field.field_type == "integer" || field.field_type == "number" %}
+                    <input
+                        type="number"
+                        id="field-{{ name }}"
+                        name="field-{{ name }}"
+                        class="form-input"
+                        data-field-name="{{ name }}"
+                        data-field-type="{{ field.field_type }}"
+                        {% if field.field_type == "number" %}step="any"{% endif %}
+                        placeholder="Enter {{ field.field_type }}"
+                    >
+                    {% else if field.field_type == "object" || field.field_type == "array" %}
+                    <textarea
+                        id="field-{{ name }}"
+                        name="field-{{ name }}"
+                        class="form-input"
+                        data-field-name="{{ name }}"
+                        data-field-type="{{ field.field_type }}"
+                        style="font-family: monospace; min-height: 80px;"
+                        placeholder="Enter JSON {{ field.field_type }}"
+                    ></textarea>
+                    {% else %}
+                    <input
+                        type="text"
+                        id="field-{{ name }}"
+                        name="field-{{ name }}"
+                        class="form-input"
+                        data-field-name="{{ name }}"
+                        data-field-type="{{ field.field_type }}"
+                        placeholder="Enter {{ field.field_type }}"
+                    >
+                    {% endif %}
+                    {% match field.description %}
+                    {% when Some with (desc) %}
+                    <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">{{ desc }}</p>
+                    {% when None %}
+                    {% endmatch %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- JSON Mode -->
+        <div id="json-mode" style="display: none;">
+            <div style="margin-bottom: 1rem;">
+                <label class="form-label">Input JSON</label>
+                <textarea
+                    id="json-input"
+                    class="form-input"
+                    style="min-height: 200px; font-family: monospace; resize: vertical;"
+                    placeholder="{}"
+                >{}</textarea>
+                <p style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.5rem;">
+                    Enter inputs as a JSON object.
+                </p>
+            </div>
+        </div>
+
+        <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
+        {% endif %}
+
+        <button type="submit" class="btn btn-primary">Run Workflow</button>
+    </form>
+</div>
+
+{% if !definition.input_fields().is_empty() %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Input Schema Reference</h2>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Required</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for (name, field) in definition.input_fields() %}
+            <tr>
+                <td><code>{{ name }}</code></td>
+                <td>{{ field.field_type }}</td>
+                <td>{% if field.required %}<span style="color: var(--success);">Yes</span>{% else %}<span style="color: var(--text-muted);">No</span>{% endif %}</td>
+                <td>{{ field.description.as_deref().unwrap_or("-") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if !runs.is_empty() %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Recent Runs</h2>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Run ID</th>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Completed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in runs %}
+            <tr>
+                <td>{{ run.id }}</td>
+                <td><a href="/workflows/{{ run.workflow_id }}">#{{ run.workflow_id }}</a></td>
+                <td><span class="badge {{ run.status_class() }}">{{ run.status }}</span></td>
+                <td>{{ run.created_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td>
+                    {% match run.completed_at %}
+                    {% when Some with (completed) %}
+                    {{ completed.format("%Y-%m-%d %H:%M") }}
+                    {% when None %}
+                    <span style="color: var(--text-muted);">-</span>
+                    {% endmatch %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<script>
+let currentMode = 'form';
+
+function setMode(mode) {
+    currentMode = mode;
+    const formMode = document.getElementById('form-mode');
+    const jsonMode = document.getElementById('json-mode');
+    const formBtn = document.getElementById('mode-form');
+    const jsonBtn = document.getElementById('mode-json');
+
+    if (mode === 'form') {
+        formMode.style.display = 'block';
+        jsonMode.style.display = 'none';
+        formBtn.className = 'btn btn-primary';
+        jsonBtn.className = 'btn btn-secondary';
+        // Sync JSON to form fields
+        syncJsonToForm();
+    } else {
+        formMode.style.display = 'none';
+        jsonMode.style.display = 'block';
+        formBtn.className = 'btn btn-secondary';
+        jsonBtn.className = 'btn btn-primary';
+        // Sync form fields to JSON
+        syncFormToJson();
+    }
+
+    // Update button styles
+    formBtn.style.padding = '0.25rem 0.75rem';
+    formBtn.style.fontSize = '0.875rem';
+    jsonBtn.style.padding = '0.25rem 0.75rem';
+    jsonBtn.style.fontSize = '0.875rem';
+}
+
+function syncFormToJson() {
+    const inputs = {};
+    document.querySelectorAll('[data-field-name]').forEach(field => {
+        const name = field.dataset.fieldName;
+        const type = field.dataset.fieldType;
+        const value = field.value;
+
+        if (value === '') return;
+
+        if (type === 'integer') {
+            inputs[name] = parseInt(value, 10);
+        } else if (type === 'number') {
+            inputs[name] = parseFloat(value);
+        } else if (type === 'boolean') {
+            inputs[name] = value === 'true';
+        } else if (type === 'object' || type === 'array') {
+            try {
+                inputs[name] = JSON.parse(value);
+            } catch (e) {
+                inputs[name] = value;
+            }
+        } else {
+            inputs[name] = value;
+        }
+    });
+
+    document.getElementById('json-input').value = JSON.stringify(inputs, null, 2);
+}
+
+function syncJsonToForm() {
+    try {
+        const json = document.getElementById('json-input').value;
+        const inputs = JSON.parse(json || '{}');
+
+        document.querySelectorAll('[data-field-name]').forEach(field => {
+            const name = field.dataset.fieldName;
+            const type = field.dataset.fieldType;
+
+            if (inputs.hasOwnProperty(name)) {
+                const value = inputs[name];
+                if (type === 'object' || type === 'array') {
+                    field.value = JSON.stringify(value, null, 2);
+                } else if (type === 'boolean') {
+                    field.value = value ? 'true' : 'false';
+                } else {
+                    field.value = value;
+                }
+            }
+        });
+    } catch (e) {
+        // Invalid JSON, don't sync
+    }
+}
+
+function prepareSubmit() {
+    if (currentMode === 'form') {
+        syncFormToJson();
+    }
+
+    const jsonInput = document.getElementById('json-input');
+    const hiddenInput = document.getElementById('inputs_json');
+
+    if (jsonInput) {
+        try {
+            // Validate JSON
+            JSON.parse(jsonInput.value || '{}');
+            hiddenInput.value = jsonInput.value || '{}';
+        } catch (e) {
+            alert('Invalid JSON: ' + e.message);
+            return false;
+        }
+    }
+
+    return true;
+}
+</script>
+{% endblock %}

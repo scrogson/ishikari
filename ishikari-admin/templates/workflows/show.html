@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block title %}Workflow #{{ workflow.id }} - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ workflow.name }}</h1>
+    <p class="page-subtitle">Workflow #{{ workflow.id }}</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Details</h2>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <span class="badge {{ workflow.state_class() }}">{{ workflow.state }}</span>
+            {% if workflow.state == "running" || workflow.state == "failed" %}
+            <form method="post" action="/workflows/{{ workflow.id }}/cancel" style="margin: 0;">
+                <button type="submit" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="return confirm('Cancel this workflow?')">Cancel</button>
+            </form>
+            {% endif %}
+            {% if workflow.state == "failed" %}
+            <form method="post" action="/workflows/{{ workflow.id }}/retry" style="margin: 0;">
+                <button type="submit" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Retry</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/workflows/{{ workflow.id }}/clone" style="margin: 0;">
+                <button type="submit" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Clone</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="detail-grid">
+        <div class="detail-label">ID</div>
+        <div>{{ workflow.id }}</div>
+
+        <div class="detail-label">Name</div>
+        <div>{{ workflow.name }}</div>
+
+        <div class="detail-label">State</div>
+        <div><span class="badge {{ workflow.state_class() }}">{{ workflow.state }}</span></div>
+
+        <div class="detail-label">Created</div>
+        <div>{{ workflow.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+
+        {% match workflow.completed_at %}
+        {% when Some with (completed) %}
+        <div class="detail-label">Completed</div>
+        <div>{{ completed.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% when None %}
+        {% endmatch %}
+    </div>
+</div>
+
+{% if workflow.has_run_inputs() || workflow.has_run_outputs() %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Workflow I/O</h2>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+        {% if workflow.has_run_inputs() %}
+        <div>
+            <h3 style="font-size: 0.875rem; color: var(--info); margin-bottom: 0.5rem;">Input</h3>
+            <pre class="code-block" style="border-left: 3px solid var(--info); margin: 0;">{{ workflow.run_inputs_pretty() }}</pre>
+        </div>
+        {% endif %}
+
+        {% if workflow.has_run_outputs() %}
+        <div>
+            <h3 style="font-size: 0.875rem; color: var(--success); margin-bottom: 0.5rem;">Output</h3>
+            <pre class="code-block" style="border-left: 3px solid var(--success); margin: 0;">{{ workflow.run_outputs_pretty() }}</pre>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if workflow.has_node_executions() %}
+<details class="card" style="cursor: pointer;">
+    <summary class="card-header" style="list-style: none;">
+        <h2 class="card-title" style="display: flex; align-items: center; gap: 0.5rem;">
+            <span style="font-size: 0.75rem; color: var(--text-muted);">▶</span>
+            Node Executions ({{ workflow.node_executions.len() }})
+        </h2>
+    </summary>
+    <div style="display: flex; flex-direction: column; gap: 1rem; padding: 1rem;">
+        {% for exec in workflow.node_executions %}
+        <div style="background: var(--bg-tertiary); border-radius: 0.5rem; padding: 1rem; border-left: 3px solid {% if exec.status == "completed" %}var(--success){% elif exec.status == "failed" %}var(--error){% else %}var(--text-muted){% endif %};">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <code style="font-size: 0.875rem; color: var(--text-primary);">{{ exec.node_id }}</code>
+                    <span class="badge {{ exec.status_class() }}" style="font-size: 0.625rem;">{{ exec.status }}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">{{ exec.node_type }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    {% if let Some(duration) = exec.duration_ms %}
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">{{ duration }}ms</span>
+                    {% endif %}
+                    {% if let Some(completed) = exec.completed_at %}
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">{{ completed.format("%H:%M:%S") }}</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if exec.has_inputs() %}
+            <div style="margin-bottom: 0.5rem;">
+                <span style="font-size: 0.75rem; color: var(--info);">Inputs:</span>
+                <pre class="code-block" style="margin: 0.25rem 0 0 0; font-size: 0.75rem; border-left: 2px solid var(--info); padding-left: 0.5rem;">{{ exec.inputs_pretty() }}</pre>
+            </div>
+            {% endif %}
+
+            {% if exec.has_output() %}
+            <div>
+                <span style="font-size: 0.75rem; color: var(--success);">Output:</span>
+                <pre class="code-block" style="margin: 0.25rem 0 0 0; font-size: 0.75rem; border-left: 2px solid var(--success); padding-left: 0.5rem;">{{ exec.output_pretty() }}</pre>
+            </div>
+            {% endif %}
+
+            {% if let Some(error) = exec.error.as_ref() %}
+            <div>
+                <span style="font-size: 0.75rem; color: var(--error);">Error:</span>
+                <pre class="code-block" style="margin: 0.25rem 0 0 0; font-size: 0.75rem; border-left: 2px solid var(--error); padding-left: 0.5rem; color: var(--error);">{{ error }}</pre>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</details>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Metadata</h2>
+    </div>
+    <pre class="code-block">{{ workflow.metadata_pretty() }}</pre>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Jobs ({{ jobs.len() }})</h2>
+    </div>
+
+    {% if jobs.is_empty() %}
+    <div class="empty-state">No jobs in this workflow</div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Worker</th>
+                <th>State</th>
+                <th>Attempt</th>
+                <th>Dependencies</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+                <td>{{ job.worker }}</td>
+                <td><span class="badge {{ job.state_class() }}">{{ job.state }}</span></td>
+                <td>{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td>
+                    {% if job.dependencies.is_empty() %}
+                    <span style="color: var(--text-muted)">None</span>
+                    {% else %}
+                    {% for dep_id in job.dependencies %}
+                    <a href="/jobs/{{ dep_id }}">#{{ dep_id }}</a>{% if !loop.last %}, {% endif %}
+                    {% endfor %}
+                    {% endif %}
+                </td>
+                <td>{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="workflow-graph">
+        <h3 style="margin-bottom: 1rem; color: var(--text-secondary);">Job Graph</h3>
+        <div>
+            {% for job in jobs %}
+            <div class="job-node">
+                <span class="badge {{ job.state_class() }}" style="min-width: 1.5rem; text-align: center;">{{ job.id }}</span>
+                <span style="font-size: 0.875rem;">{{ job.worker }}</span>
+                {% if !job.dependencies.is_empty() %}
+                <span style="color: var(--text-muted); font-size: 0.75rem;">
+                    &larr; {% for dep in job.dependencies %}{{ dep }}{% if !loop.last %}, {% endif %}{% endfor %}
+                </span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

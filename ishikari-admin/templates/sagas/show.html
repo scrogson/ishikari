@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Saga #{{ saga.id }} - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ saga.name }}</h1>
+    <p class="page-subtitle">
+        Saga #{{ saga.id }}
+        <span class="badge {{ saga.state_class() }}" style="margin-left: 0.5rem;">{{ saga.state }}</span>
+    </p>
+</div>
+
+<!-- Saga Info -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Saga Details</h2>
+    </div>
+    <div class="detail-grid">
+        <div class="detail-label">ID</div>
+        <div>{{ saga.id }}</div>
+        <div class="detail-label">Name</div>
+        <div>{{ saga.name }}</div>
+        <div class="detail-label">State</div>
+        <div><span class="badge {{ saga.state_class() }}">{{ saga.state }}</span></div>
+        <div class="detail-label">Inserted</div>
+        <div>{{ saga.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% if let Some(completed_at) = saga.completed_at %}
+        <div class="detail-label">Completed</div>
+        <div>{{ completed_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% endif %}
+    </div>
+    {% if !saga.metadata.is_null() %}
+    <div style="margin-top: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Metadata</h3>
+        <pre class="code-block">{{ saga.metadata_pretty() }}</pre>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Compensation Alert -->
+{% if saga.is_compensating() %}
+<div class="card" style="border-color: var(--warning); background: rgba(234, 179, 8, 0.1);">
+    <div class="card-header">
+        <h2 class="card-title" style="color: var(--warning);">Compensation In Progress</h2>
+    </div>
+    <p style="color: var(--text-secondary);">
+        This saga is rolling back. Compensation jobs are running in reverse order to undo previous steps.
+    </p>
+</div>
+{% endif %}
+
+<!-- Steps Timeline -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Steps ({{ steps.len() }})</h2>
+    </div>
+
+    {% if steps.is_empty() %}
+    <div class="empty-state">
+        <p>No steps found for this saga.</p>
+    </div>
+    {% else %}
+    <div class="saga-timeline" style="position: relative; padding-left: 2rem;">
+        <!-- Timeline line -->
+        <div style="position: absolute; left: 0.75rem; top: 0; bottom: 0; width: 2px; background: var(--border);"></div>
+
+        {% for step in steps.iter() %}
+        <div class="saga-step" style="position: relative; padding-bottom: 1.5rem;">
+            <!-- Timeline dot -->
+            <div style="position: absolute; left: -1.5rem; width: 12px; height: 12px; border-radius: 50%;
+                {% if step.state == "completed" %}background: var(--success);
+                {% else if step.state == "failed" %}background: var(--danger);
+                {% else if step.state == "compensating" || step.state == "compensated" %}background: var(--warning);
+                {% else if step.state == "running" %}background: var(--accent);
+                {% else %}background: var(--text-muted);{% endif %}"></div>
+
+            <div style="background: var(--bg-tertiary); border-radius: 0.5rem; padding: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                    <div>
+                        <span style="color: var(--text-muted); font-size: 0.875rem;">Step {{ step.step_order + 1 }}</span>
+                        <span class="badge {{ step.state_class() }}" style="margin-left: 0.5rem;">{{ step.state }}</span>
+                    </div>
+                </div>
+
+                <!-- Forward Job -->
+                <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                    <div style="color: var(--text-secondary); width: 80px; font-size: 0.875rem;">Forward:</div>
+                    <a href="/jobs/{{ step.job_id }}" style="color: var(--text-primary);">{{ step.job_worker }}</a>
+                    <span class="badge {{ step.job_state_class() }}">{{ step.job_state }}</span>
+                    <a href="/jobs/{{ step.job_id }}" style="color: var(--text-muted); font-size: 0.875rem;">#{{ step.job_id }}</a>
+                </div>
+
+                <!-- Compensation Job (if exists) -->
+                {% if let Some(comp_id) = step.compensation_job_id %}
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div style="color: var(--text-secondary); width: 80px; font-size: 0.875rem;">Compensate:</div>
+                    {% if let Some(worker) = step.compensation_worker.as_ref() %}
+                    <a href="/jobs/{{ comp_id }}" style="color: var(--text-primary);">{{ worker }}</a>
+                    {% endif %}
+                    {% if let Some(state) = step.compensation_state.as_ref() %}
+                    <span class="badge {{ step.compensation_state_class() }}">{{ state }}</span>
+                    {% endif %}
+                    <a href="/jobs/{{ comp_id }}" style="color: var(--text-muted); font-size: 0.875rem;">#{{ comp_id }}</a>
+                </div>
+                {% else %}
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <div style="color: var(--text-secondary); width: 80px; font-size: 0.875rem;">Compensate:</div>
+                    <span style="color: var(--text-muted); font-style: italic;">No compensation</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Links -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Related</h2>
+    </div>
+    <div style="display: flex; gap: 1rem;">
+        <a href="/workflows/{{ saga.id }}" class="btn btn-secondary">View as Workflow</a>
+        <a href="/dependencies?workflow_id={{ saga.id }}" class="btn btn-secondary">View Dependencies</a>
+    </div>
+</div>
+{% endblock %}

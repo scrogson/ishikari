@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Workflows - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Workflows</h1>
+    <p class="page-subtitle">{{ total }} workflows found</p>
+</div>
+
+<div class="card">
+    <form class="filters" hx-get="/api/workflows" hx-target="#workflows-table" hx-trigger="change">
+        <div class="filter-group">
+            <label class="form-label">State</label>
+            <select name="state" class="form-select">
+                <option value="">All States</option>
+                <option value="running" {% if current_state.as_deref() == Some("running") %}selected{% endif %}>Running</option>
+                <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                <option value="failed" {% if current_state.as_deref() == Some("failed") %}selected{% endif %}>Failed</option>
+                <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+                <option value="compensating" {% if current_state.as_deref() == Some("compensating") %}selected{% endif %}>Compensating</option>
+                <option value="compensated" {% if current_state.as_deref() == Some("compensated") %}selected{% endif %}>Compensated</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label class="form-label">Name</label>
+            <input type="text" name="name" class="form-input" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
+        </div>
+    </form>
+
+    <div id="workflows-table">
+        {% include "partials/workflows_table.html" %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Job #{{ job.id }} Dependencies - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Job #{{ job.id }} Dependencies</h1>
+    <p class="page-subtitle">
+        <span class="badge {{ job.state_class() }}">{{ job.state }}</span>
+        {{ job.worker }}
+        {% if job.is_blocked() %}
+        <span class="badge badge-warning" style="margin-left: 0.5rem;">BLOCKED</span>
+        {% endif %}
+    </p>
+</div>
+
+<!-- Job Info -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Job Details</h2>
+        <a href="/jobs/{{ job.id }}" class="btn btn-secondary">View Full Job</a>
+    </div>
+    <div class="detail-grid">
+        <div class="detail-label">Worker</div>
+        <div>{{ job.worker }}</div>
+        <div class="detail-label">Queue</div>
+        <div>{{ job.queue }}</div>
+        <div class="detail-label">State</div>
+        <div><span class="badge {{ job.state_class() }}">{{ job.state }}</span></div>
+        <div class="detail-label">Attempt</div>
+        <div>{{ job.attempt }} / {{ job.max_attempts }}</div>
+        {% if let Some(wf_id) = job.workflow_id %}
+        <div class="detail-label">Workflow</div>
+        <div><a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a></div>
+        {% endif %}
+        <div class="detail-label">Inserted</div>
+        <div>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+    </div>
+</div>
+
+<!-- Dependency Graph -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Dependency Graph</h2>
+    </div>
+
+    <div class="dependency-graph" style="display: flex; flex-direction: column; align-items: center; gap: 2rem; padding: 2rem;">
+        <!-- Upstream Dependencies (jobs this job depends on) -->
+        {% if !job.dependencies.is_empty() %}
+        <div class="graph-section">
+            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
+                Depends On ({{ job.dependencies.len() }})
+            </div>
+            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
+                {% for dep in job.dependencies.iter() %}
+                <a href="/dependencies/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
+                    <span class="badge {{ dep.state_class() }}">{{ dep.state }}</span>
+                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
+                    <span style="color: var(--text-muted);">#{{ dep.job_id }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Arrow -->
+        <div style="color: var(--text-muted); font-size: 1.5rem;">
+            {% if job.is_blocked() %}
+            <span style="color: var(--warning);">&#x25BC; BLOCKED</span>
+            {% else %}
+            &#x25BC;
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Current Job -->
+        <div class="current-job" style="padding: 1rem 2rem; background: var(--bg-tertiary); border: 2px solid var(--accent); border-radius: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span class="badge {{ job.state_class() }}">{{ job.state }}</span>
+                <span style="font-weight: 600;">{{ job.worker }}</span>
+                <span style="color: var(--text-muted);">#{{ job.id }}</span>
+            </div>
+        </div>
+
+        <!-- Downstream Dependents (jobs that depend on this job) -->
+        {% if !job.dependents.is_empty() %}
+        <!-- Arrow -->
+        <div style="color: var(--text-muted); font-size: 1.5rem;">&#x25BC;</div>
+
+        <div class="graph-section">
+            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
+                Dependents ({{ job.dependents.len() }})
+            </div>
+            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
+                {% for dep in job.dependents.iter() %}
+                <a href="/dependencies/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
+                    <span class="badge {{ dep.state_class() }}">{{ dep.state }}</span>
+                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
+                    <span style="color: var(--text-muted);">#{{ dep.job_id }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if job.dependencies.is_empty() && job.dependents.is_empty() %}
+        <div class="empty-state">
+            <p>This job has no dependencies or dependents.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Blocking Dependencies Alert -->
+{% if job.is_blocked() %}
+<div class="card" style="border-color: var(--warning);">
+    <div class="card-header">
+        <h2 class="card-title" style="color: var(--warning);">Blocking Dependencies</h2>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        This job cannot proceed until the following dependencies complete:
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Job ID</th>
+                <th>Worker</th>
+                <th>State</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dep in job.blocking_dependencies() %}
+            <tr>
+                <td><a href="/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                <td>{{ dep.worker }}</td>
+                <td><span class="badge {{ dep.state_class() }}">{{ dep.state }}</span></td>
+                <td><a href="/dependencies/{{ dep.job_id }}" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">View Dependencies</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

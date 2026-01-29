@@ -1,0 +1,57 @@
+{% if workflows.is_empty() %}
+<div class="empty-state">No workflows found</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>State</th>
+            <th>Progress</th>
+            <th>Jobs</th>
+            <th>Created</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for workflow in workflows %}
+        <tr>
+            <td><a href="/workflows/{{ workflow.id }}">{{ workflow.id }}</a></td>
+            <td><a href="/workflows/{{ workflow.id }}">{{ workflow.name }}</a></td>
+            <td><span class="badge {{ workflow.state_class() }}">{{ workflow.state }}</span></td>
+            <td style="min-width: 100px;">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{ workflow.progress() }}%"></div>
+                </div>
+            </td>
+            <td>
+                {{ workflow.completed_jobs + workflow.failed_jobs }}/{{ workflow.job_count }}
+                {% if workflow.failed_jobs > 0 %}
+                <span style="color: var(--danger);">({{ workflow.failed_jobs }} failed)</span>
+                {% endif %}
+            </td>
+            <td>{{ workflow.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+    {% if p == page %}
+    <span class="active">{{ p }}</span>
+    {% else %}
+    <a href="?page={{ p }}">{{ p }}</a>
+    {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

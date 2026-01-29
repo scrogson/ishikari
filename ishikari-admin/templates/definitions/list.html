@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Workflow Definitions - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h1 class="page-title">Workflow Definitions</h1>
+            <p class="page-subtitle">{{ total }} definitions found</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="/definitions/new" class="btn btn-primary">New Definition</a>
+            <a href="/definitions/import" class="btn btn-secondary">Import YAML</a>
+        </div>
+    </div>
+</div>
+
+{% match error %}
+{% when Some with (e) %}
+<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
+    <p style="color: var(--danger);">{{ e }}</p>
+</div>
+{% when None %}
+{% endmatch %}
+
+<div class="card">
+    <form class="filters" hx-get="/api/definitions" hx-target="#definitions-table" hx-trigger="change, keyup delay:300ms from:input[name=name]">
+        <div class="filter-group">
+            <label class="form-label">Name</label>
+            <input type="text" name="name" class="form-input" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
+        </div>
+    </form>
+
+    <div id="definitions-table">
+        {% include "partials/definitions_table.html" %}
+    </div>
+</div>
+{% endblock %}
