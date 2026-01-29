@@ -6,9 +6,38 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use crate::routes::jobs::JobInfo;
 use crate::templates::{QueueDetailTemplate, QueuesListTemplate};
 use crate::AppState;
+
+/// Job info for queue listings.
+#[derive(Debug)]
+pub struct QueueJobInfo {
+    pub id: i64,
+    pub queue: String,
+    pub worker: String,
+    pub state: String,
+    pub attempt: i32,
+    pub max_attempts: i32,
+    pub inserted_at: chrono::DateTime<chrono::Utc>,
+    pub scheduled_at: chrono::DateTime<chrono::Utc>,
+    pub attempted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl QueueJobInfo {
+    /// Get CSS class for state badge.
+    pub fn state_class(&self) -> &'static str {
+        match self.state.as_str() {
+            "available" => "badge-primary",
+            "scheduled" => "badge-secondary",
+            "executing" => "badge-info",
+            "completed" => "badge-success",
+            "discarded" | "cancelled" => "badge-error",
+            "retryable" => "badge-warning",
+            _ => "badge-ghost",
+        }
+    }
+}
 
 /// Query parameters for queue page.
 #[derive(Debug, Deserialize, Default)]
@@ -34,10 +63,7 @@ pub struct QueueInfo {
 /// List queues page.
 pub async fn list(State(state): State<AppState>) -> QueuesListTemplate {
     let queues = get_queues(&state.pool, state.schema.as_deref()).await;
-    QueuesListTemplate {
-        queues,
-        nav_items: state.nav_items().to_vec(),
-    }
+    QueuesListTemplate { queues }
 }
 
 /// Show single queue.
@@ -84,7 +110,6 @@ pub async fn show(
         page,
         total,
         total_pages,
-        nav_items: state.nav_items().to_vec(),
     }
 }
 
@@ -142,7 +167,7 @@ async fn get_queue_jobs(
     state_filter: Option<&str>,
     limit: i64,
     offset: i64,
-) -> (Vec<JobInfo>, i64) {
+) -> (Vec<QueueJobInfo>, i64) {
     let table = match schema {
         Some(s) => format!("{}.ishikari_jobs", s),
         None => "ishikari_jobs".to_string(),
@@ -198,7 +223,7 @@ async fn get_queue_jobs(
 
     let jobs = rows
         .into_iter()
-        .map(|row| JobInfo {
+        .map(|row| QueueJobInfo {
             id: row.0,
             queue: row.1,
             worker: row.2,

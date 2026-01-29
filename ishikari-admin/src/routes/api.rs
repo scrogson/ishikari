@@ -20,11 +20,136 @@ use super::dependencies::{DependenciesQuery, DependencyInfo};
 use super::jobs::{EnhancedJobInfo, EnhancedJobsQuery};
 use super::sagas::{SagaInfo, SagasQuery};
 use super::workflows::{WorkflowInfo, WorkflowJobInfo, WorkflowsQuery};
+use crate::routes::dashboard::{JobStats, WorkflowStats};
 use crate::templates::{
     DefinitionsTablePartial, DependenciesTablePartial, EnhancedJobsTablePartial, SagasTablePartial,
     WorkflowJobsPartial, WorkflowsTablePartial,
 };
 use crate::AppState;
+
+/// Stats response for the API.
+#[derive(Debug, Serialize)]
+pub struct StatsResponse {
+    pub jobs: JobStats,
+    pub workflows: WorkflowStats,
+}
+
+/// Get job and workflow statistics.
+pub async fn stats(State(state): State<AppState>) -> Json<StatsResponse> {
+    let jobs = get_job_stats(&state.pool, state.schema()).await;
+    let workflows = get_workflow_stats_api(&state.pool, state.schema()).await;
+    Json(StatsResponse { jobs, workflows })
+}
+
+async fn get_job_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
+    let table = match schema {
+        Some(s) => format!("{}.ishikari_jobs", s),
+        None => "ishikari_jobs".to_string(),
+    };
+
+    let query = format!(
+        r#"
+        SELECT
+            COUNT(*) FILTER (WHERE state = 'available') as available,
+            COUNT(*) FILTER (WHERE state = 'scheduled') as scheduled,
+            COUNT(*) FILTER (WHERE state = 'executing') as executing,
+            COUNT(*) FILTER (WHERE state = 'retryable') as retryable,
+            COUNT(*) FILTER (WHERE state = 'completed') as completed,
+            COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
+            COUNT(*) FILTER (WHERE state = 'cancelled') as cancelled,
+            COUNT(*) as total
+        FROM {}
+        "#,
+        table
+    );
+
+    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+    match row {
+        Some((available, scheduled, executing, retryable, completed, discarded, cancelled, total)) => {
+            JobStats {
+                available,
+                scheduled,
+                executing,
+                retryable,
+                completed,
+                discarded,
+                cancelled,
+                total,
+            }
+        }
+        None => JobStats::default(),
+    }
+}
+
+async fn get_workflow_stats_api(pool: &PgPool, schema: Option<&str>) -> WorkflowStats {
+    let table = match schema {
+        Some(s) => format!("{}.ishikari_workflows", s),
+        None => "ishikari_workflows".to_string(),
+    };
+
+    // Check if table exists first
+    let table_exists: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = $1 AND table_name = 'ishikari_workflows'
+        )
+        "#,
+    )
+    .bind(schema.unwrap_or("public"))
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    if !table_exists.unwrap_or(false) {
+        return WorkflowStats::default();
+    }
+
+    let query = format!(
+        r#"
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE state = 'running') as running,
+            COUNT(*) FILTER (WHERE state = 'completed') as completed,
+            COUNT(*) FILTER (WHERE state = 'failed') as failed,
+            COUNT(*) FILTER (WHERE state = 'cancelled') as cancelled
+        FROM {}
+        "#,
+        table
+    );
+
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+    match row {
+        Some((total, running, completed, failed, cancelled)) => {
+            let finished = completed + failed;
+            let success_rate = if finished > 0 {
+                completed as f64 / finished as f64
+            } else {
+                0.0
+            };
+            WorkflowStats {
+                total,
+                running,
+                completed,
+                failed,
+                cancelled,
+                success_rate,
+            }
+        }
+        None => WorkflowStats::default(),
+    }
+}
 
 /// Workflows table partial for htmx updates.
 pub async fn workflows_table(

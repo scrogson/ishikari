@@ -4,13 +4,19 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::templates::{EnhancedJobDetailTemplate, EnhancedJobsListTemplate};
 use crate::AppState;
+
+/// Type alias for backward compatibility.
+pub type JobInfo = EnhancedJobInfo;
+
+/// Type alias for backward compatibility.
+pub type JobDetail = EnhancedJobDetail;
 
 /// Query parameters for enhanced jobs listing.
 #[derive(Debug, Deserialize, Default)]
@@ -797,4 +803,24 @@ async fn check_table_exists(pool: &PgPool, schema: Option<&str>, table_name: &st
     .flatten();
 
     result.unwrap_or(false)
+}
+
+/// Discard a job (mark it as discarded).
+pub async fn discard(State(state): State<AppState>, Path(id): Path<i64>) -> Redirect {
+    let table = match state.schema() {
+        Some(s) => format!("{}.ishikari_jobs", s),
+        None => "ishikari_jobs".to_string(),
+    };
+
+    let query = format!(
+        "UPDATE {} SET state = 'discarded', completed_at = NOW() WHERE id = $1 AND state NOT IN ('completed', 'discarded')",
+        table
+    );
+
+    let _ = sqlx::query(&query)
+        .bind(id)
+        .execute(&state.pool)
+        .await;
+
+    Redirect::to(&format!("/jobs/{}", id))
 }
