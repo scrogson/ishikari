@@ -51,3 +51,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+async-trait = "0.1"
+handlebars = "6"
+typetag = "0.2"
