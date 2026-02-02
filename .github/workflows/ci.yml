@@ -35,7 +35,9 @@ jobs:
         uses: jdx/mise-action@v2
 
       - name: Install tools
-        run: mise install
+        run: |
+          mise install
+          rustup component add rustfmt clippy
 
       - name: Cache dependencies
         uses: actions/cache@v4
