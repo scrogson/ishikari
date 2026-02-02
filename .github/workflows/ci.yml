@@ -44,7 +44,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
-        run: mise run fmt-check
+        run: mise run fmt --check
 
       - name: Run Clippy
         run: mise run clippy
