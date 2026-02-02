@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Tail PostgreSQL logs"
+
+PGDATA="${PGDATA:-.postgres}"
+
+if [ ! -f "$PGDATA/postgresql.log" ]; then
+  echo "No log file found at $PGDATA/postgresql.log"
+  exit 1
+fi
+
+tail -f "$PGDATA/postgresql.log"

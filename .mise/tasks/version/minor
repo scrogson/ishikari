@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Bump minor version and sync dependencies"
+set -e
+scripts/version-bump.sh minor

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Run both frontend and backend for workflow builder development"
+#MISE depends=["_check-db-url"]
+set -e
+
+echo "Starting development servers..."
+echo ""
+echo "Backend: http://127.0.0.1:3000 (admin + API)"
+echo "Frontend: http://localhost:5173 (Vite dev server)"
+echo ""
+echo "Open http://localhost:5173/builder/definitions/new to use the workflow builder"
+echo ""
+echo "Press Ctrl+C to stop both servers"
+echo ""
+
+# Start backend in background
+cargo run -p ishikari-admin --example demo &
+BACKEND_PID=$!
+
+# Wait for backend to start
+sleep 3
+
+# Start frontend
+cd ishikari-admin/frontend
+npm run dev &
+FRONTEND_PID=$!
+
+# Handle cleanup
+cleanup() {
+  echo ""
+  echo "Stopping servers..."
+  kill $BACKEND_PID 2>/dev/null
+  kill $FRONTEND_PID 2>/dev/null
+  exit 0
+}
+trap cleanup SIGINT SIGTERM
+
+# Wait for both processes
+wait

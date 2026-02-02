@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Full release workflow"
+#MISE depends=["fmt", "clippy", "test"]
+set -e
+
+cargo build --release

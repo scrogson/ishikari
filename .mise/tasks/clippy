@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run clippy with warnings as errors"
+set -e
+cargo clippy -- -D warnings

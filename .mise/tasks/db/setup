@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Create database and run migrations"
+set -e
+
+sqlx db create
+rm -rf test_migrations
+cargo run -p ishikari-cli -- generate migration --output test_migrations
+sqlx migrate run --source test_migrations

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Generate ishikari migrations"
+set -e
+cargo run -p ishikari-cli -- generate migration

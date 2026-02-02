@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run cargo check"
+set -e
+cargo check

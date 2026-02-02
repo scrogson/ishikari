@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Start local PostgreSQL server"
+set -e
+
+PGDATA="${PGDATA:-.postgres}"
+
+if [ ! -d "$PGDATA" ]; then
+  echo "PostgreSQL data directory not found at $PGDATA"
+  echo "Run 'mise run pg-init' first"
+  exit 1
+fi
+
+if [ -f "$PGDATA/postmaster.pid" ]; then
+  echo "PostgreSQL appears to be already running"
+  echo "Run 'mise run pg-stop' to stop it first"
+  exit 1
+fi
+
+echo "Starting PostgreSQL..."
+pg_ctl -D "$PGDATA" -l "$PGDATA/postgresql.log" start
+
+echo "PostgreSQL started!"
+echo "Socket: $PWD/$PGDATA/.s.PGSQL.5432"
+echo "Connect with: psql -h $PWD/$PGDATA -d postgres"

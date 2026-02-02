@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Publish crates to crates.io"
+#USAGE flag "-n --dry-run" help="Perform a dry run without publishing"
+set -e
+
+args=()
+if [ "${usage_dry_run:-false}" = "true" ]; then
+  args+=(--dry-run --allow-dirty)
+fi
+
+echo "Publishing ishikari-macros..."
+(cd ishikari-macros && cargo publish "${args[@]}")
+
+echo "Publishing ishikari..."
+(cd ishikari && cargo publish "${args[@]}")

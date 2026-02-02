@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Development workflow: format, lint, test"
+#MISE depends=["fmt", "clippy", "test"]
+set -e

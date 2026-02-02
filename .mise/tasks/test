@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Run tests"
+#USAGE flag "-w --watch" help="Run tests in watch mode"
+#USAGE flag "--integration" help="Run integration tests only"
+#USAGE arg "[filter]" help="Test name filter"
+set -e
+
+args=()
+
+if [ "${usage_integration:-false}" = "true" ]; then
+  args+=(--test integration -- --test-threads=1)
+fi
+
+if [ -n "${usage_filter:-}" ]; then
+  args+=("$usage_filter")
+fi
+
+if [ "${usage_watch:-false}" = "true" ]; then
+  cargo watch -x "test ${args[*]}"
+else
+  cargo test "${args[@]}"
+fi

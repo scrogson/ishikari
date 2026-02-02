@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Execute a SQL query against the database"
+
+if [ -z "$1" ]; then
+  echo "Usage: mise run db-query 'SELECT * FROM table'"
+  exit 1
+fi
+
+psql "$DATABASE_URL" -c "$1"

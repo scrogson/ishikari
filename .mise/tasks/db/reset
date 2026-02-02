@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Reset database (drop, create, and run migrations)"
+set -e
+
+echo "Dropping database..."
+sqlx db drop -fy || true
+
+echo "Creating database..."
+sqlx db create
+
+echo "Running migrations..."
+sqlx migrate run --source test_migrations
+
+echo "Database reset complete!"
