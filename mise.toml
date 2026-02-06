@@ -1,6 +1,6 @@
 [tools]
 "aqua:theseus-rs/postgresql-binaries" = "latest"
-rust = { version = "latest", components = "rustfmt,clippy" }
+rust = { version = "latest", profile = "default", components = "rustfmt,clippy" }
 node = "22"
 
 [env]
