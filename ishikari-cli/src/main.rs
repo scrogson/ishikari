@@ -84,9 +84,10 @@ async fn handle_generate(target: GenerateTarget) -> Result<()> {
             database_url,
             force,
         } => generate_migration(output, schema, version, database_url, force).await,
-        GenerateTarget::Version { database_url, schema } => {
-            check_version(&database_url, schema.as_deref()).await
-        }
+        GenerateTarget::Version {
+            database_url,
+            schema,
+        } => check_version(&database_url, schema.as_deref()).await,
     }
 }
 
@@ -133,11 +134,9 @@ async fn migrated_version(pool: &PgPool, prefix: &str) -> Result<i32> {
         .context("Failed to query table comment")?;
 
     match result {
-        Some((Some(version_str),)) => {
-            version_str.parse::<i32>().map_err(|_| {
-                anyhow::anyhow!("Invalid version in table comment: {}", version_str)
-            })
-        }
+        Some((Some(version_str),)) => version_str
+            .parse::<i32>()
+            .map_err(|_| anyhow::anyhow!("Invalid version in table comment: {}", version_str)),
         _ => Ok(0), // Table doesn't exist or no comment
     }
 }
@@ -205,7 +204,10 @@ async fn generate_migration(
     // Concatenate all version migrations
     for version in start_version..=target {
         let version_sql = get_version_sql(version)?;
-        migration_sql.push_str(&format!("-- ============ Version {} ============\n\n", version));
+        migration_sql.push_str(&format!(
+            "-- ============ Version {} ============\n\n",
+            version
+        ));
         migration_sql.push_str(&version_sql);
         migration_sql.push_str("\n\n");
     }

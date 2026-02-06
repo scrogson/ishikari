@@ -7,8 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::types::{ExecutableWorkflow, ExecutableNode, NodeData};
 use super::interpolation::contains_expression;
+use super::types::{ExecutableNode, ExecutableWorkflow, NodeData};
 
 /// Validation error with context.
 #[derive(Debug, Clone)]
@@ -27,7 +27,11 @@ impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(node_id) = &self.node_id {
             if let Some(field) = &self.field {
-                write!(f, "[{}] Node '{}', field '{}': {}", self.code, node_id, field, self.message)
+                write!(
+                    f,
+                    "[{}] Node '{}', field '{}': {}",
+                    self.code, node_id, field, self.message
+                )
             } else {
                 write!(f, "[{}] Node '{}': {}", self.code, node_id, self.message)
             }
@@ -191,7 +195,9 @@ impl<'a> Validator<'a> {
 
         for node_id in self.workflow.nodes.keys() {
             if !visited.contains(node_id) {
-                if let Err(cycle) = self.dfs_cycle_check(node_id, &mut visited, &mut rec_stack, &mut path) {
+                if let Err(cycle) =
+                    self.dfs_cycle_check(node_id, &mut visited, &mut rec_stack, &mut path)
+                {
                     return Err(cycle);
                 }
             }
@@ -269,11 +275,7 @@ impl<'a> Validator<'a> {
         // Check for unreachable nodes
         for node_id in self.workflow.nodes.keys() {
             if !reachable.contains(node_id.as_str()) {
-                result.node_error(
-                    "E006",
-                    node_id,
-                    "Node is unreachable from entry nodes",
-                );
+                result.node_error("E006", node_id, "Node is unreachable from entry nodes");
             }
         }
     }
@@ -320,11 +322,7 @@ impl<'a> Validator<'a> {
             let mut seen_deps = HashSet::new();
             for dep_id in &node.depends_on {
                 if !seen_deps.insert(dep_id) {
-                    result.node_error(
-                        "E022",
-                        node_id,
-                        format!("Duplicate dependency: {}", dep_id),
-                    );
+                    result.node_error("E022", node_id, format!("Duplicate dependency: {}", dep_id));
                 }
             }
         }
@@ -333,7 +331,12 @@ impl<'a> Validator<'a> {
     /// Validate expressions in node inputs.
     fn validate_expressions(&self, result: &mut ValidationResult) {
         let node_ids: HashSet<&str> = self.workflow.nodes.keys().map(|s| s.as_str()).collect();
-        let input_names: HashSet<&str> = self.workflow.input_schema.keys().map(|s| s.as_str()).collect();
+        let input_names: HashSet<&str> = self
+            .workflow
+            .input_schema
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
 
         for (node_id, node) in &self.workflow.nodes {
             // Check expressions in inputs
@@ -380,7 +383,13 @@ impl<'a> Validator<'a> {
             serde_json::Value::String(s) => {
                 if contains_expression(s) {
                     self.validate_expression_references(
-                        result, node_id, field_name, s, node_ids, input_names, node,
+                        result,
+                        node_id,
+                        field_name,
+                        s,
+                        node_ids,
+                        input_names,
+                        node,
                     );
                 }
             }
@@ -388,7 +397,13 @@ impl<'a> Validator<'a> {
                 for (i, v) in arr.iter().enumerate() {
                     let indexed_field = format!("{}[{}]", field_name, i);
                     self.validate_expression_in_value(
-                        result, node_id, &indexed_field, v, node_ids, input_names, node,
+                        result,
+                        node_id,
+                        &indexed_field,
+                        v,
+                        node_ids,
+                        input_names,
+                        node,
                     );
                 }
             }
@@ -396,7 +411,13 @@ impl<'a> Validator<'a> {
                 for (k, v) in obj {
                     let nested_field = format!("{}.{}", field_name, k);
                     self.validate_expression_in_value(
-                        result, node_id, &nested_field, v, node_ids, input_names, node,
+                        result,
+                        node_id,
+                        &nested_field,
+                        v,
+                        node_ids,
+                        input_names,
+                        node,
                     );
                 }
             }
@@ -592,10 +613,7 @@ mod tests {
 
     #[test]
     fn test_missing_dependency() {
-        let workflow = make_workflow(vec![
-            make_node("a", &[]),
-            make_node("b", &["missing"]),
-        ]);
+        let workflow = make_workflow(vec![make_node("a", &[]), make_node("b", &["missing"])]);
 
         let inputs = HashMap::new();
         let validator = Validator::new(&workflow, &inputs);
@@ -629,7 +647,8 @@ mod tests {
     #[test]
     fn test_expression_references_non_dependency() {
         let mut node = make_node("b", &[]);
-        node.inputs.insert("value".to_string(), json!("{{nodes.a.result}}"));
+        node.inputs
+            .insert("value".to_string(), json!("{{nodes.a.result}}"));
 
         let workflow = make_workflow(vec![make_node("a", &[]), node]);
 

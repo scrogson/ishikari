@@ -309,7 +309,9 @@ impl Saga {
             let compensation_job_id = if let Some(ref comp) = step.compensation {
                 // Compensation jobs are scheduled to year 3000 so they won't be
                 // picked up by the Stager. Only released explicitly during rollback.
-                let comp_job = comp.insert_as_compensation(pool, workflow.id, schema).await?;
+                let comp_job = comp
+                    .insert_as_compensation(pool, workflow.id, schema)
+                    .await?;
 
                 info!(
                     workflow_id = workflow.id,

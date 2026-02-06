@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::context::NodeContext;
 use super::dag::ExecutionLevels;
 use super::events::{EventSender, ExecutionEvent};
-use super::interpolation::{Interpolator, InterpolationError};
+use super::interpolation::{InterpolationError, Interpolator};
 use super::storage::ExecutionStorage;
 use super::types::*;
 use super::validation::{ValidationResult, Validator};
@@ -186,8 +186,8 @@ impl WorkflowExecutor {
         }
 
         // Compute execution levels
-        let levels = ExecutionLevels::compute(&workflow)
-            .map_err(ExecutionError::ValidationFailed)?;
+        let levels =
+            ExecutionLevels::compute(&workflow).map_err(ExecutionError::ValidationFailed)?;
 
         // Create workflow run in database if persistence is enabled
         let workflow_run_id = if self.persist {
@@ -302,9 +302,8 @@ impl WorkflowExecutor {
                                         .await;
                                 }
                                 Err(NodeError::ConditionError(reason)) => {
-                                    let _ = storage
-                                        .skip_node_execution(run_id, &node.id, reason)
-                                        .await;
+                                    let _ =
+                                        storage.skip_node_execution(run_id, &node.id, reason).await;
                                 }
                                 Err(e) => {
                                     let _ = storage
@@ -340,8 +339,11 @@ impl WorkflowExecutor {
                     }
                     Ok(Err(e)) => {
                         let duration_ms = start_time.elapsed().as_millis() as i64;
-                        self.event_sender
-                            .workflow_failed(execution_id, &e.to_string(), duration_ms);
+                        self.event_sender.workflow_failed(
+                            execution_id,
+                            &e.to_string(),
+                            duration_ms,
+                        );
 
                         // Mark workflow as failed in DB
                         if self.persist {

@@ -91,7 +91,10 @@ impl ExecutionLevels {
             level.sort();
         }
 
-        Ok(Self { levels, node_depths })
+        Ok(Self {
+            levels,
+            node_depths,
+        })
     }
 
     /// Get the total number of levels.
@@ -114,7 +117,10 @@ impl ExecutionLevels {
 
     /// Iterate over levels.
     pub fn iter(&self) -> impl Iterator<Item = (usize, &[String])> {
-        self.levels.iter().enumerate().map(|(i, v)| (i, v.as_slice()))
+        self.levels
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, v.as_slice()))
     }
 }
 
@@ -154,11 +160,7 @@ mod tests {
     #[test]
     fn test_linear_chain() {
         // a -> b -> c
-        let workflow = make_workflow(vec![
-            ("a", vec![]),
-            ("b", vec!["a"]),
-            ("c", vec!["b"]),
-        ]);
+        let workflow = make_workflow(vec![("a", vec![]), ("b", vec!["a"]), ("c", vec!["b"])]);
 
         let levels = ExecutionLevels::compute(&workflow).unwrap();
 
@@ -171,11 +173,7 @@ mod tests {
     #[test]
     fn test_parallel_nodes() {
         // a, b both entry -> c depends on both
-        let workflow = make_workflow(vec![
-            ("a", vec![]),
-            ("b", vec![]),
-            ("c", vec!["a", "b"]),
-        ]);
+        let workflow = make_workflow(vec![("a", vec![]), ("b", vec![]), ("c", vec!["a", "b"])]);
 
         let levels = ExecutionLevels::compute(&workflow).unwrap();
 
@@ -236,11 +234,7 @@ mod tests {
     #[test]
     fn test_cycle_detection() {
         // a -> b -> c -> a (cycle)
-        let workflow = make_workflow(vec![
-            ("a", vec!["c"]),
-            ("b", vec!["a"]),
-            ("c", vec!["b"]),
-        ]);
+        let workflow = make_workflow(vec![("a", vec!["c"]), ("b", vec!["a"]), ("c", vec!["b"])]);
 
         let result = ExecutionLevels::compute(&workflow);
         assert!(result.is_err());

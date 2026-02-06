@@ -114,9 +114,10 @@ impl<'a> Interpolator<'a> {
         // Split into input name and optional nested path
         let (input_name, nested_path) = split_first_segment(path);
 
-        let input_data = self.inputs.get(input_name).ok_or_else(|| {
-            InterpolationError::MissingInput(input_name.to_string())
-        })?;
+        let input_data = self
+            .inputs
+            .get(input_name)
+            .ok_or_else(|| InterpolationError::MissingInput(input_name.to_string()))?;
 
         if let Some(nested) = nested_path {
             input_data
@@ -135,9 +136,10 @@ impl<'a> Interpolator<'a> {
         // Split into node ID and field path
         let (node_id, field_path) = split_first_segment(path);
 
-        let node_data = self.node_outputs.get(node_id).ok_or_else(|| {
-            InterpolationError::MissingNodeOutput(node_id.to_string())
-        })?;
+        let node_data = self
+            .node_outputs
+            .get(node_id)
+            .ok_or_else(|| InterpolationError::MissingNodeOutput(node_id.to_string()))?;
 
         if let Some(field) = field_path {
             node_data
@@ -240,7 +242,9 @@ mod tests {
         let outputs = HashMap::new();
         let interp = Interpolator::new(&inputs, &outputs);
 
-        let result = interp.interpolate(&json!("{{inputs.config.timeout}}")).unwrap();
+        let result = interp
+            .interpolate(&json!("{{inputs.config.timeout}}"))
+            .unwrap();
         assert_eq!(result, json!(30));
     }
 
@@ -250,7 +254,9 @@ mod tests {
         let outputs = make_node_outputs();
         let interp = Interpolator::new(&inputs, &outputs);
 
-        let result = interp.interpolate(&json!("{{nodes.fetch_user.name}}")).unwrap();
+        let result = interp
+            .interpolate(&json!("{{nodes.fetch_user.name}}"))
+            .unwrap();
         assert_eq!(result, json!("Alice"));
     }
 
@@ -260,7 +266,9 @@ mod tests {
         let outputs = make_node_outputs();
         let interp = Interpolator::new(&inputs, &outputs);
 
-        let result = interp.interpolate(&json!("{{nodes.fetch_user.roles[0]}}")).unwrap();
+        let result = interp
+            .interpolate(&json!("{{nodes.fetch_user.roles[0]}}"))
+            .unwrap();
         assert_eq!(result, json!("admin"));
     }
 
@@ -271,7 +279,9 @@ mod tests {
         let interp = Interpolator::new(&inputs, &outputs);
 
         let result = interp
-            .interpolate(&json!("Hello {{nodes.fetch_user.name}}, your ID is {{inputs.user_id}}"))
+            .interpolate(&json!(
+                "Hello {{nodes.fetch_user.name}}, your ID is {{inputs.user_id}}"
+            ))
             .unwrap();
         assert_eq!(result, json!("Hello Alice, your ID is 42"));
     }
@@ -315,7 +325,10 @@ mod tests {
         let interp = Interpolator::new(&inputs, &outputs);
 
         let result = interp.interpolate(&json!("{{nodes.missing.field}}"));
-        assert!(matches!(result, Err(InterpolationError::MissingNodeOutput(_))));
+        assert!(matches!(
+            result,
+            Err(InterpolationError::MissingNodeOutput(_))
+        ));
     }
 
     #[test]

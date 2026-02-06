@@ -35,9 +35,7 @@ jobs:
         uses: jdx/mise-action@v2
 
       - name: Install tools
-        run: |
-          mise install
-          rustup component add rustfmt clippy
+        run: mise install
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -47,12 +45,6 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Check formatting
-        run: mise run fmt --check
-
-      - name: Run Clippy
-        run: mise run clippy
 
       - name: Run tests
         run: mise run test
@@ -84,6 +76,12 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: mise run fmt --check
+
+      - name: Run Clippy
+        run: mise run clippy
 
       - name: Check compilation
         run: mise run check

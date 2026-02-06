@@ -109,7 +109,9 @@ impl WorkflowDetail {
 
     /// Check if workflow has run inputs.
     pub fn has_run_inputs(&self) -> bool {
-        self.run_inputs.as_ref().map_or(false, |v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+        self.run_inputs.as_ref().map_or(false, |v| {
+            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
+        })
     }
 
     /// Format run inputs as pretty JSON.
@@ -127,7 +129,9 @@ impl WorkflowDetail {
 
     /// Check if workflow has run outputs.
     pub fn has_run_outputs(&self) -> bool {
-        self.run_outputs.as_ref().map_or(false, |v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+        self.run_outputs.as_ref().map_or(false, |v| {
+            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
+        })
     }
 
     /// Format run outputs as pretty JSON.
@@ -429,18 +433,20 @@ async fn get_workflow(pool: &PgPool, schema: Option<&str>, id: i64) -> Option<Wo
             .unwrap_or_default();
 
         rows.into_iter()
-            .map(|(node_id, node_type, status, inputs, output, error, duration_ms, completed_at)| {
-                NodeExecution {
-                    node_id,
-                    node_type,
-                    status,
-                    inputs,
-                    output,
-                    error,
-                    duration_ms,
-                    completed_at,
-                }
-            })
+            .map(
+                |(node_id, node_type, status, inputs, output, error, duration_ms, completed_at)| {
+                    NodeExecution {
+                        node_id,
+                        node_type,
+                        status,
+                        inputs,
+                        output,
+                        error,
+                        duration_ms,
+                        completed_at,
+                    }
+                },
+            )
             .collect()
     } else {
         vec![]

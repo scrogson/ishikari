@@ -173,9 +173,18 @@ pub fn app(state: AppState) -> Router {
         // Workflows
         .route("/workflows", get(routes::workflows::list))
         .route("/workflows/{id}", get(routes::workflows::show))
-        .route("/workflows/{id}/cancel", post(routes::actions::cancel_workflow))
-        .route("/workflows/{id}/retry", post(routes::actions::retry_workflow))
-        .route("/workflows/{id}/clone", post(routes::actions::clone_workflow))
+        .route(
+            "/workflows/{id}/cancel",
+            post(routes::actions::cancel_workflow),
+        )
+        .route(
+            "/workflows/{id}/retry",
+            post(routes::actions::retry_workflow),
+        )
+        .route(
+            "/workflows/{id}/clone",
+            post(routes::actions::clone_workflow),
+        )
         // Workflow Definitions
         .route("/definitions", get(routes::definitions::list))
         .route("/definitions/new", get(routes::definitions::new_definition))
@@ -185,8 +194,14 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/definitions/{id}", get(routes::definitions::show))
         .route("/definitions/{id}/edit", get(routes::definitions::edit))
-        .route("/definitions/{id}/export", get(routes::definitions::export_yaml))
-        .route("/definitions/{id}/delete", post(routes::definitions::delete))
+        .route(
+            "/definitions/{id}/export",
+            get(routes::definitions::export_yaml),
+        )
+        .route(
+            "/definitions/{id}/delete",
+            post(routes::definitions::delete),
+        )
         .route(
             "/definitions/{id}/run",
             get(routes::definitions::run_form).post(routes::definitions::run),
@@ -198,14 +213,20 @@ pub fn app(state: AppState) -> Router {
         .route("/api/sagas", get(routes::api::sagas_table))
         .route("/api/workflows", get(routes::api::workflows_table))
         .route("/api/workflows/{id}/jobs", get(routes::api::workflow_jobs))
-        .route("/api/definitions", get(routes::api::definitions_table).post(routes::api::create_definition))
+        .route(
+            "/api/definitions",
+            get(routes::api::definitions_table).post(routes::api::create_definition),
+        )
         // API endpoints for workflow builder (JSON)
         .route("/api/node-types", get(routes::api::node_types))
         .route(
             "/api/definitions/{id}",
             get(routes::api::get_definition).put(routes::api::update_definition),
         )
-        .route("/api/definitions/validate", post(routes::api::validate_definition))
+        .route(
+            "/api/definitions/validate",
+            post(routes::api::validate_definition),
+        )
         // Visual workflow builder (React SPA)
         .route("/builder/{*path}", get(routes::frontend::serve_builder))
         .route("/builder", get(routes::frontend::serve_builder))

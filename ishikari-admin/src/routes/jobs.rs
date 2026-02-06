@@ -290,7 +290,9 @@ impl EnhancedJobDetail {
 
     /// Check if job has node inputs.
     pub fn has_node_inputs(&self) -> bool {
-        self.node_inputs.as_ref().map_or(false, |v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+        self.node_inputs.as_ref().map_or(false, |v| {
+            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
+        })
     }
 
     /// Get node inputs as formatted JSON.
@@ -303,7 +305,9 @@ impl EnhancedJobDetail {
 
     /// Check if job has raw node inputs (templates).
     pub fn has_raw_node_inputs(&self) -> bool {
-        self.raw_node_inputs.as_ref().map_or(false, |v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+        self.raw_node_inputs.as_ref().map_or(false, |v| {
+            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
+        })
     }
 
     /// Get raw node inputs as formatted JSON.
@@ -665,8 +669,14 @@ async fn get_enhanced_job(
     let node_output = fetch_node_output(pool, schema, args).await;
 
     // Extract node job metadata from args
-    let node_id = args.get("node_id").and_then(|v| v.as_str()).map(String::from);
-    let node_type = args.get("node_type").and_then(|v| v.as_str()).map(String::from);
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let node_type = args
+        .get("node_type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let raw_node_inputs = args.get("raw_inputs").cloned();
 
     // Fetch resolved inputs from node_executions table
@@ -817,10 +827,7 @@ pub async fn discard(State(state): State<AppState>, Path(id): Path<i64>) -> Redi
         table
     );
 
-    let _ = sqlx::query(&query)
-        .bind(id)
-        .execute(&state.pool)
-        .await;
+    let _ = sqlx::query(&query).bind(id).execute(&state.pool).await;
 
     Redirect::to(&format!("/jobs/{}", id))
 }

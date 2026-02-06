@@ -855,7 +855,11 @@ impl DependencyResolver {
                 info!(workflow_id = workflow_id, "marking workflow as failed");
                 Workflow::fail(self.pool.as_ref(), workflow_id, schema).await?;
             } else {
-                info!(workflow_id = workflow_id, is_saga = is_saga.0, "marking workflow as completed");
+                info!(
+                    workflow_id = workflow_id,
+                    is_saga = is_saga.0,
+                    "marking workflow as completed"
+                );
                 Workflow::complete(self.pool.as_ref(), workflow_id, schema).await?;
             }
         }

@@ -275,10 +275,7 @@ mod tests {
             }
         });
 
-        assert_eq!(
-            get_nested_field(&data, "user.name"),
-            Some(json!("Alice"))
-        );
+        assert_eq!(get_nested_field(&data, "user.name"), Some(json!("Alice")));
         assert_eq!(
             get_nested_field(&data, "user.addresses[0].city"),
             Some(json!("NYC"))

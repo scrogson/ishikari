@@ -70,18 +70,25 @@ async fn get_job_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
         .flatten();
 
     match row {
-        Some((available, scheduled, executing, retryable, completed, discarded, cancelled, total)) => {
-            JobStats {
-                available,
-                scheduled,
-                executing,
-                retryable,
-                completed,
-                discarded,
-                cancelled,
-                total,
-            }
-        }
+        Some((
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        )) => JobStats {
+            available,
+            scheduled,
+            executing,
+            retryable,
+            completed,
+            discarded,
+            cancelled,
+            total,
+        },
         None => JobStats::default(),
     }
 }
@@ -1446,8 +1453,7 @@ pub async fn update_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate()
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    def.validate().map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Update in database
     let updated = update_definition_in_db(&state.pool, state.schema(), id, &def)
@@ -1463,8 +1469,7 @@ pub async fn create_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate()
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    def.validate().map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Save to database
     let created = save_new_definition(&state.pool, state.schema(), &def)
@@ -1490,9 +1495,7 @@ pub struct ValidationResponse {
 }
 
 /// Validate a workflow definition without saving.
-pub async fn validate_definition(
-    Json(def): Json<WorkflowDefinition>,
-) -> Json<ValidationResponse> {
+pub async fn validate_definition(Json(def): Json<WorkflowDefinition>) -> Json<ValidationResponse> {
     match def.validate() {
         Ok(()) => Json(ValidationResponse {
             valid: true,

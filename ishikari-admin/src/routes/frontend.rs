@@ -57,7 +57,9 @@ pub async fn serve_builder(uri: Uri) -> impl IntoResponse {
 
     Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(Body::from("Frontend not found. Run `npm run build` in the frontend directory."))
+        .body(Body::from(
+            "Frontend not found. Run `npm run build` in the frontend directory.",
+        ))
         .unwrap()
 }
 
@@ -72,14 +74,17 @@ pub async fn serve_builder(uri: Uri) -> impl IntoResponse {
         return Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("Assets not embedded. Run with --features embed-frontend or use Vite dev server."))
+            .body(Body::from(
+                "Assets not embedded. Run with --features embed-frontend or use Vite dev server.",
+            ))
             .unwrap();
     }
 
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html")
-        .body(Body::from(r#"<!DOCTYPE html>
+        .body(Body::from(
+            r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -134,7 +139,8 @@ pub async fn serve_builder(uri: Uri) -> impl IntoResponse {
         </p>
     </div>
 </body>
-</html>"#))
+</html>"#,
+        ))
         .unwrap()
 }
 

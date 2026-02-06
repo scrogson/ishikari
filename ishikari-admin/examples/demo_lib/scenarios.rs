@@ -7,9 +7,7 @@ use ishikari::workflows::{Dag, Pipeline, Saga};
 use sqlx::PgPool;
 
 /// Create an email notification pipeline
-pub async fn create_email_pipeline(
-    pool: &PgPool,
-) -> Result<i64, ishikari::workflows::Error> {
+pub async fn create_email_pipeline(pool: &PgPool) -> Result<i64, ishikari::workflows::Error> {
     let workflow = Pipeline::new("email-notification")
         .metadata(serde_json::json!({
             "triggered_by": "user_signup",
@@ -140,9 +138,7 @@ pub async fn create_order_saga(pool: &PgPool) -> Result<i64, ishikari::workflows
 }
 
 /// Create a failing order saga to test compensation
-pub async fn create_failing_order_saga(
-    pool: &PgPool,
-) -> Result<i64, ishikari::workflows::Error> {
+pub async fn create_failing_order_saga(pool: &PgPool) -> Result<i64, ishikari::workflows::Error> {
     let order_id = format!("fail_ord_{}", uuid::Uuid::new_v4().simple());
 
     let workflow = Saga::new("process-order-failing")

@@ -36,9 +36,9 @@ mod types;
 mod validation;
 
 pub use context::NodeContext;
-pub use events::{ExecutionEvent, EventSender};
+pub use events::{EventSender, ExecutionEvent};
 pub use executor::{ExecutionError, NodeError, NodeHandler, WorkflowExecutor};
-pub use interpolation::{Interpolator, InterpolationError};
+pub use interpolation::{InterpolationError, Interpolator};
 pub use storage::{ExecutionStorage, NodeExecutionRow, WorkflowRunRow};
 pub use types::*;
 pub use validation::{ValidationError, ValidationResult, Validator};

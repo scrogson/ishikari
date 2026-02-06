@@ -356,7 +356,9 @@ async fn execute_jobs<S: Storage + 'static>(queue: &Queue<S>) {
                             }
                             Status::Cancel(cancel) => {
                                 info!(id = job.id, reason = cancel.0, "job cancelled");
-                                if let Err(e) = storage.cancel_job(job.id, cancel.0.as_deref()).await {
+                                if let Err(e) =
+                                    storage.cancel_job(job.id, cancel.0.as_deref()).await
+                                {
                                     error!(id = job.id, error = %e, "failed to cancel job in storage");
                                 }
                             }

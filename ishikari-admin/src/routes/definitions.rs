@@ -27,7 +27,6 @@ use crate::templates::{
 };
 use crate::AppState;
 
-
 /// Query parameters for definition listing.
 #[derive(Debug, Deserialize, Default)]
 pub struct DefinitionsQuery {

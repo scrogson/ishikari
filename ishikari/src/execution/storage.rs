@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::types::{ExecutionStatus, NodeData, NodeStatus, WorkflowExecution, NodeExecution};
+use super::types::{ExecutionStatus, NodeData, NodeExecution, NodeStatus, WorkflowExecution};
 
 /// Storage for workflow executions.
 pub struct ExecutionStorage {
@@ -497,13 +497,19 @@ mod tests {
     async fn test_table_name_without_schema() {
         let pool = sqlx::PgPool::connect_lazy("postgres://invalid").unwrap();
         let storage = ExecutionStorage::new(pool);
-        assert_eq!(storage.table_name("ishikari_workflow_runs"), "ishikari_workflow_runs");
+        assert_eq!(
+            storage.table_name("ishikari_workflow_runs"),
+            "ishikari_workflow_runs"
+        );
     }
 
     #[tokio::test]
     async fn test_table_name_with_schema() {
         let pool = sqlx::PgPool::connect_lazy("postgres://invalid").unwrap();
         let storage = ExecutionStorage::new(pool).schema("tenant_1");
-        assert_eq!(storage.table_name("ishikari_workflow_runs"), "tenant_1.ishikari_workflow_runs");
+        assert_eq!(
+            storage.table_name("ishikari_workflow_runs"),
+            "tenant_1.ishikari_workflow_runs"
+        );
     }
 }

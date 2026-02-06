@@ -446,9 +446,15 @@ impl Worker for NodeJob {
         // Calculate duration and save the execution record
         let duration_ms = start_time.elapsed().as_millis() as i64;
 
-        self.save_node_execution(&state.pool, schema, &resolved_inputs_json, &output, duration_ms)
-            .await
-            .map_err(|e| format!("Failed to save node execution: {}", e))?;
+        self.save_node_execution(
+            &state.pool,
+            schema,
+            &resolved_inputs_json,
+            &output,
+            duration_ms,
+        )
+        .await
+        .map_err(|e| format!("Failed to save node execution: {}", e))?;
 
         tracing::info!(node_id = %self.node_id, output = ?output, duration_ms = duration_ms, "Node execution saved");
 
