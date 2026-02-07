@@ -31,11 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup mise
-        uses: jdx/mise-action@v2
-
-      - name: Install tools
-        run: mise install
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -47,7 +44,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: mise run test
+        run: cargo test
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
 
@@ -62,11 +59,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup mise
-        uses: jdx/mise-action@v2
-
-      - name: Install tools
-        run: mise install
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -78,13 +74,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
-        run: mise run fmt --check
+        run: cargo fmt --check
 
       - name: Run Clippy
-        run: mise run clippy
+        run: cargo clippy -- -D warnings
 
       - name: Check compilation
-        run: mise run check
+        run: cargo check
 
   security:
     name: Security audit
@@ -92,8 +88,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup mise
-        uses: jdx/mise-action@v2
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
