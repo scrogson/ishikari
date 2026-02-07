@@ -109,9 +109,9 @@ impl WorkflowDetail {
 
     /// Check if workflow has run inputs.
     pub fn has_run_inputs(&self) -> bool {
-        self.run_inputs.as_ref().map_or(false, |v| {
-            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
-        })
+        self.run_inputs
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && v.as_object().is_some_and(|o| !o.is_empty()))
     }
 
     /// Format run inputs as pretty JSON.
@@ -129,9 +129,9 @@ impl WorkflowDetail {
 
     /// Check if workflow has run outputs.
     pub fn has_run_outputs(&self) -> bool {
-        self.run_outputs.as_ref().map_or(false, |v| {
-            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
-        })
+        self.run_outputs
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && v.as_object().is_some_and(|o| !o.is_empty()))
     }
 
     /// Format run outputs as pretty JSON.
@@ -167,7 +167,7 @@ impl NodeExecution {
 
     /// Check if has inputs.
     pub fn has_inputs(&self) -> bool {
-        self.inputs.as_ref().map_or(false, |v| !v.is_null())
+        self.inputs.as_ref().is_some_and(|v| !v.is_null())
     }
 
     /// Get status badge class.

@@ -290,9 +290,9 @@ impl EnhancedJobDetail {
 
     /// Check if job has node inputs.
     pub fn has_node_inputs(&self) -> bool {
-        self.node_inputs.as_ref().map_or(false, |v| {
-            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
-        })
+        self.node_inputs
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && v.as_object().is_some_and(|o| !o.is_empty()))
     }
 
     /// Get node inputs as formatted JSON.
@@ -305,9 +305,9 @@ impl EnhancedJobDetail {
 
     /// Check if job has raw node inputs (templates).
     pub fn has_raw_node_inputs(&self) -> bool {
-        self.raw_node_inputs.as_ref().map_or(false, |v| {
-            !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty())
-        })
+        self.raw_node_inputs
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && v.as_object().is_some_and(|o| !o.is_empty()))
     }
 
     /// Get raw node inputs as formatted JSON.

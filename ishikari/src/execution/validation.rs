@@ -195,11 +195,7 @@ impl<'a> Validator<'a> {
 
         for node_id in self.workflow.nodes.keys() {
             if !visited.contains(node_id) {
-                if let Err(cycle) =
-                    self.dfs_cycle_check(node_id, &mut visited, &mut rec_stack, &mut path)
-                {
-                    return Err(cycle);
-                }
+                self.dfs_cycle_check(node_id, &mut visited, &mut rec_stack, &mut path)?
             }
         }
 
@@ -284,13 +280,12 @@ impl<'a> Validator<'a> {
     fn validate_inputs(&self, result: &mut ValidationResult) {
         // E010: Check required inputs are provided
         for (input_name, schema) in &self.workflow.input_schema {
-            if schema.required && !self.inputs.contains_key(input_name) {
-                if schema.default.is_none() {
-                    result.error(
-                        "E010",
-                        format!("Required input '{}' not provided", input_name),
-                    );
-                }
+            if schema.required && !self.inputs.contains_key(input_name) && schema.default.is_none()
+            {
+                result.error(
+                    "E010",
+                    format!("Required input '{}' not provided", input_name),
+                );
             }
         }
 

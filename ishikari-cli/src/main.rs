@@ -151,7 +151,7 @@ async fn generate_migration(
     let prefix = schema.as_deref().unwrap_or(DEFAULT_PREFIX);
     let target = target_version.unwrap_or(CURRENT_VERSION);
 
-    if target < 1 || target > CURRENT_VERSION {
+    if !(1..=CURRENT_VERSION).contains(&target) {
         anyhow::bail!(
             "Invalid target version: {}. Valid range is 1-{}",
             target,

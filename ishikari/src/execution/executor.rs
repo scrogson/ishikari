@@ -239,11 +239,8 @@ impl WorkflowExecutor {
         // Execute level by level
         for (level_idx, node_ids) in levels.iter() {
             let level_start = Instant::now();
-            self.event_sender.level_started(
-                execution_id,
-                level_idx,
-                node_ids.iter().cloned().collect(),
-            );
+            self.event_sender
+                .level_started(execution_id, level_idx, node_ids.to_vec());
 
             // Execute all nodes in this level in parallel
             let mut handles = Vec::new();
