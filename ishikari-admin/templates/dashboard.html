@@ -8,14 +8,14 @@
     <p class="page-subtitle">Job queue overview</p>
 </div>
 
-<div class="card" id="stats-card" hx-get="/api/stats" hx-trigger="every 5s" hx-swap="innerHTML">
+<div class="card" id="stats-card" hx-get="{{ base_path }}/api/stats" hx-trigger="every 5s" hx-swap="innerHTML">
     {% include "partials/stats.html" %}
 </div>
 
 <div class="card">
     <div class="card-header">
         <h2 class="card-title">Recent Failures</h2>
-        <a href="/jobs?state=discarded" class="btn btn-secondary btn-sm">View All</a>
+        <a href="{{ base_path }}/jobs?state=discarded" class="btn btn-secondary btn-sm">View All</a>
     </div>
     {% if recent_failures.is_empty() %}
     <div class="empty-state">
@@ -35,7 +35,7 @@
         <tbody>
             {% for failure in recent_failures %}
             <tr>
-                <td><a href="/jobs/{{ failure.id }}">{{ failure.id }}</a></td>
+                <td><a href="{{ base_path }}/jobs/{{ failure.id }}">{{ failure.id }}</a></td>
                 <td class="text-truncate">{{ failure.worker }}</td>
                 <td>{{ failure.queue }}</td>
                 <td class="text-truncate">{{ failure.error.as_deref().unwrap_or("-") }}</td>

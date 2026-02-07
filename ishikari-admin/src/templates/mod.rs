@@ -14,11 +14,14 @@ use crate::routes::resolver::{
 };
 use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
+use crate::NavItem;
 
 /// Dashboard page template.
 #[derive(Template, WebTemplate)]
 #[template(path = "dashboard.html")]
 pub struct DashboardTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub stats: JobStats,
     pub workflow_stats: WorkflowStats,
     pub recent_failures: Vec<RecentFailure>,
@@ -28,6 +31,8 @@ pub struct DashboardTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "queues/list.html")]
 pub struct QueuesListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub queues: Vec<QueueInfo>,
 }
 
@@ -35,6 +40,8 @@ pub struct QueuesListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "queues/show.html")]
 pub struct QueueDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub queue_name: String,
     pub stats: QueueInfo,
     pub jobs: Vec<QueueJobInfo>,
@@ -48,6 +55,8 @@ pub struct QueueDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "workflows/list.html")]
 pub struct WorkflowsListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub workflows: Vec<WorkflowInfo>,
     pub current_state: Option<String>,
     pub current_name: Option<String>,
@@ -60,6 +69,8 @@ pub struct WorkflowsListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "workflows/show.html")]
 pub struct WorkflowDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub workflow: WorkflowDetail,
     pub jobs: Vec<WorkflowJobInfo>,
 }
@@ -84,6 +95,8 @@ pub struct WorkflowJobsPartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "dependencies/list.html")]
 pub struct DependenciesListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub dependencies: Vec<DependencyInfo>,
     pub stats: DependencyStats,
     pub show_blocked_only: bool,
@@ -97,6 +110,8 @@ pub struct DependenciesListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "dependencies/show.html")]
 pub struct DependencyDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub job: JobWithDependencies,
 }
 
@@ -113,6 +128,8 @@ pub struct DependenciesTablePartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "sagas/list.html")]
 pub struct SagasListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub sagas: Vec<SagaInfo>,
     pub current_state: Option<String>,
     pub page: i64,
@@ -124,6 +141,8 @@ pub struct SagasListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "sagas/show.html")]
 pub struct SagaDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub saga: SagaDetail,
     pub steps: Vec<SagaStepInfo>,
 }
@@ -141,6 +160,8 @@ pub struct SagasTablePartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "resolver/status.html")]
 pub struct ResolverStatusTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub stats: ResolverStats,
     pub pending_releases: Vec<PendingRelease>,
     pub blocked_jobs: Vec<BlockedJob>,
@@ -152,6 +173,8 @@ pub struct ResolverStatusTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "jobs/list.html")]
 pub struct EnhancedJobsListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub jobs: Vec<EnhancedJobInfo>,
     pub current_state: Option<String>,
     pub current_queue: Option<String>,
@@ -169,6 +192,8 @@ pub struct EnhancedJobsListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "jobs/show.html")]
 pub struct EnhancedJobDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub job: EnhancedJobDetail,
 }
 
@@ -185,6 +210,8 @@ pub struct EnhancedJobsTablePartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "analytics/index.html")]
 pub struct AnalyticsTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub analytics: Analytics,
 }
 
@@ -192,6 +219,8 @@ pub struct AnalyticsTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "definitions/list.html")]
 pub struct DefinitionsListTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub definitions: Vec<DefinitionInfo>,
     pub current_name: Option<String>,
     pub page: i64,
@@ -204,6 +233,8 @@ pub struct DefinitionsListTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "definitions/show.html")]
 pub struct DefinitionDetailTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub definition: DefinitionDetail,
 }
 
@@ -211,6 +242,8 @@ pub struct DefinitionDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "definitions/import.html")]
 pub struct DefinitionImportTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub error: Option<String>,
     pub yaml: String,
 }
@@ -219,6 +252,8 @@ pub struct DefinitionImportTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "definitions/run.html")]
 pub struct DefinitionRunTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub definition: DefinitionDetail,
     pub runs: Vec<WorkflowRunInfo>,
     pub error: Option<String>,
@@ -237,6 +272,8 @@ pub struct DefinitionsTablePartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "definitions/edit.html")]
 pub struct DefinitionEditTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
     pub definition_id: Option<i64>,
     pub name: String,
     pub is_new: bool,

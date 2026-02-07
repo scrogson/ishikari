@@ -30,7 +30,7 @@
         <tbody>
             {% for queue in queues %}
             <tr>
-                <td><a href="/queues/{{ queue.name }}">{{ queue.name }}</a></td>
+                <td><a href="{{ base_path }}/queues/{{ queue.name }}">{{ queue.name }}</a></td>
                 <td><span class="stat-available">{{ queue.available }}</span></td>
                 <td><span class="stat-executing">{{ queue.executing }}</span></td>
                 <td><span class="stat-scheduled">{{ queue.scheduled }}</span></td>

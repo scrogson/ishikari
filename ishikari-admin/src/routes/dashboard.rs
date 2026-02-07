@@ -17,6 +17,8 @@ pub async fn index(State(state): State<AppState>) -> DashboardTemplate {
     let workflow_stats = get_workflow_stats(&state.pool, state.schema.as_deref()).await;
 
     DashboardTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         stats,
         workflow_stats,
         recent_failures: get_recent_failures(&state.pool, state.schema.as_deref(), 5).await,

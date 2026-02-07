@@ -63,7 +63,11 @@ pub struct QueueInfo {
 /// List queues page.
 pub async fn list(State(state): State<AppState>) -> QueuesListTemplate {
     let queues = get_queues(&state.pool, state.schema.as_deref()).await;
-    QueuesListTemplate { queues }
+    QueuesListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        queues,
+    }
 }
 
 /// Show single queue.
@@ -103,6 +107,8 @@ pub async fn show(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     QueueDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         queue_name: name,
         stats,
         jobs,

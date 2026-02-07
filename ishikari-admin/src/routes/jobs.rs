@@ -366,6 +366,8 @@ pub async fn list(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     EnhancedJobsListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         jobs,
         current_state: query.state,
         current_queue: query.queue,
@@ -386,7 +388,11 @@ pub async fn show(
     Path(id): Path<i64>,
 ) -> Result<EnhancedJobDetailTemplate, Response> {
     match get_enhanced_job(&state.pool, state.schema(), id).await {
-        Ok(Some(job)) => Ok(EnhancedJobDetailTemplate { job }),
+        Ok(Some(job)) => Ok(EnhancedJobDetailTemplate {
+            base_path: state.base_path.to_string(),
+            nav_items: state.nav_items.to_vec(),
+            job,
+        }),
         Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Job not found").into_response()),
         Err(e) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,

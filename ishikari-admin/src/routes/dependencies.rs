@@ -145,6 +145,8 @@ pub async fn list(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     DependenciesListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         dependencies,
         stats,
         show_blocked_only: query.blocked.unwrap_or(false),
@@ -164,7 +166,11 @@ pub async fn show(
         .await
         .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "Job not found").into_response())?;
 
-    Ok(DependencyDetailTemplate { job })
+    Ok(DependencyDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        job,
+    })
 }
 
 /// Get all dependency relationships with filtering.

@@ -171,6 +171,8 @@ pub async fn list(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     SagasListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         sagas,
         current_state: query.state,
         page,
@@ -190,7 +192,12 @@ pub async fn show(
 
     let steps = get_saga_steps(&state.pool, state.schema(), id).await;
 
-    Ok(SagaDetailTemplate { saga, steps })
+    Ok(SagaDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        saga,
+        steps,
+    })
 }
 
 /// Get sagas (workflows that have saga steps).

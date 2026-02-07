@@ -236,6 +236,8 @@ pub async fn list(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     WorkflowsListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         workflows,
         current_state: query.state,
         current_name: query.name,
@@ -256,7 +258,12 @@ pub async fn show(
 
     let jobs = get_workflow_jobs(&state.pool, state.schema(), id).await;
 
-    Ok(WorkflowDetailTemplate { workflow, jobs })
+    Ok(WorkflowDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        workflow,
+        jobs,
+    })
 }
 
 /// Get workflows with filtering and pagination.

@@ -107,7 +107,11 @@ impl Analytics {
 /// Analytics dashboard page.
 pub async fn index(State(state): State<AppState>) -> AnalyticsTemplate {
     let analytics = fetch_analytics(&state.pool, state.schema()).await;
-    AnalyticsTemplate { analytics }
+    AnalyticsTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        analytics,
+    }
 }
 
 async fn fetch_analytics(pool: &PgPool, schema: Option<&str>) -> Analytics {
