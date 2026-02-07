@@ -6,6 +6,10 @@ description = "Admin dashboard for ishikari job queue"
 license = "MIT"
 repository = "https://github.com/scrogson/ishikari"
 
+[features]
+default = ["embed-frontend"]
+embed-frontend = ["rust-embed", "mime_guess"]
+
 [dependencies]
 # Core ishikari
 ishikari = { path = "../ishikari" }
@@ -19,7 +23,7 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 tokio = { version = "1", features = ["full"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 
 # Templating
 askama = "0.14"
@@ -28,9 +32,17 @@ askama_web = { version = "0.14", features = ["axum-0.8"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Frontend embedding (optional)
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
 
 # Utilities
 thiserror = "2"
@@ -39,3 +51,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+async-trait = "0.1"
+handlebars = "6"
+typetag = "0.2"

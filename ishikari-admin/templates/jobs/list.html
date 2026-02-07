@@ -1,40 +1,72 @@
 {% extends "base.html" %}
 
-{% block title %}Jobs - Ishikari Admin{% endblock %}
+{% block title %}Jobs - Ishikari Pro Admin{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Jobs</h1>
-    <p class="page-subtitle">{{ total }} jobs found</p>
+    <p class="page-subtitle">{{ total }} jobs</p>
 </div>
 
 <div class="card">
-    <form class="filters" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-push-url="true">
+    <div class="card-header">
+        <h2 class="card-title">Filters</h2>
+    </div>
+
+    <form id="jobs-filter-form" class="filters" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem;">
         <div class="filter-group">
             <label class="form-label">State</label>
-            <select name="state" class="form-select">
+            <select name="state" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">All States</option>
                 <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
                 <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
                 <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>
-                <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
                 <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
                 <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
                 <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
             </select>
         </div>
+
         <div class="filter-group">
             <label class="form-label">Queue</label>
-            <input type="text" name="queue" class="form-input" placeholder="Filter by queue" value="{{ current_queue.as_deref().unwrap_or("") }}">
+            <input type="text" name="queue" class="form-input" placeholder="Filter by queue" value="{{ current_queue.as_deref().unwrap_or("") }}" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="input changed delay:300ms, change" hx-include="#jobs-filter-form">
         </div>
+
         <div class="filter-group">
             <label class="form-label">Worker</label>
-            <input type="text" name="worker" class="form-input" placeholder="Filter by worker" value="{{ current_worker.as_deref().unwrap_or("") }}">
+            <input type="text" name="worker" class="form-input" placeholder="Filter by worker" value="{{ current_worker.as_deref().unwrap_or("") }}" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="input changed delay:300ms, change" hx-include="#jobs-filter-form">
+        </div>
+
+        <div class="filter-group">
+            <label class="form-label">Has Dependencies</label>
+            <select name="has_deps" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+                <option value="">Any</option>
+                <option value="true" {% if has_deps_filter == Some(true) %}selected{% endif %}>Yes</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label class="form-label">Is Blocking</label>
+            <select name="is_blocking" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+                <option value="">Any</option>
+                <option value="true" {% if is_blocking_filter == Some(true) %}selected{% endif %}>Yes</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label class="form-label">In Workflow</label>
+            <select name="in_workflow" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+                <option value="">Any</option>
+                <option value="true" {% if in_workflow_filter == Some(true) %}selected{% endif %}>Yes</option>
+            </select>
         </div>
     </form>
+</div>
 
+<div class="card">
     <div id="jobs-table">
-        {% include "partials/jobs_table.html" %}
+        {% include "partials/enhanced_jobs_table.html" %}
     </div>
 </div>
 {% endblock %}

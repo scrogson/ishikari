@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Drop database"
+set -e
+sqlx database drop -y

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Job Dependencies - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Job Dependencies</h1>
+    <p class="page-subtitle">View and manage job dependency relationships</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700;">{{ stats.total_dependencies }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Total Dependencies</div>
+    </div>
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--warning);">{{ stats.blocked_jobs }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Blocked Jobs</div>
+    </div>
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--success);">{{ stats.ready_jobs }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Ready Jobs</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Dependency Relationships</h2>
+    </div>
+
+    <!-- Filters -->
+    <form class="filters" hx-get="/api/dependencies" hx-target="#dependencies-table" hx-trigger="change">
+        <div class="filter-group">
+            <label class="form-label">Filter</label>
+            <select name="blocked" class="form-select">
+                <option value="">All Dependencies</option>
+                <option value="true" {% if show_blocked_only %}selected{% endif %}>Blocking Only</option>
+            </select>
+        </div>
+        {% if workflow_id.is_some() %}
+        <input type="hidden" name="workflow_id" value="{{ workflow_id.unwrap() }}">
+        <div class="filter-group" style="display: flex; align-items: flex-end;">
+            <a href="/dependencies" class="btn btn-secondary">Clear Workflow Filter</a>
+        </div>
+        {% endif %}
+    </form>
+
+    <div id="dependencies-table">
+        {% include "partials/dependencies_table.html" %}
+    </div>
+</div>
+{% endblock %}

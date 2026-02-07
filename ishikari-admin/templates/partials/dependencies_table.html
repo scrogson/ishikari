@@ -1,0 +1,70 @@
+{% if dependencies.is_empty() %}
+<div class="empty-state">
+    <p>No job dependencies found.</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>Job</th>
+            <th>Worker</th>
+            <th>State</th>
+            <th></th>
+            <th>Depends On</th>
+            <th>Dependency Worker</th>
+            <th>Dependency State</th>
+            <th>Workflow</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for dep in dependencies.iter() %}
+        <tr>
+            <td><a href="/dependencies/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+            <td>{{ dep.job_worker }}</td>
+            <td><span class="badge {{ dep.job_state_class() }}">{{ dep.job_state }}</span></td>
+            <td style="color: var(--text-muted);">
+                {% if dep.is_blocking() %}
+                <span style="color: var(--warning);" title="Blocking">&#x25C0;</span>
+                {% else %}
+                <span style="color: var(--success);" title="Satisfied">&#x2714;</span>
+                {% endif %}
+            </td>
+            <td><a href="/dependencies/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
+            <td>{{ dep.depends_on_worker }}</td>
+            <td><span class="badge {{ dep.depends_on_state_class() }}">{{ dep.depends_on_state }}</span></td>
+            <td>
+                {% if let Some(wf_id) = dep.workflow_id %}
+                <a href="/workflows/{{ wf_id }}">{% if let Some(name) = dep.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                {% else %}
+                <span style="color: var(--text-muted);">-</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" hx-get="/api/dependencies?page={{ page - 1 }}" hx-target="#dependencies-table">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
+        <a href="?page={{ p }}" hx-get="/api/dependencies?page={{ p }}" hx-target="#dependencies-table">{{ p }}</a>
+        {% else if p == 4 && page > 5 %}
+        <span>...</span>
+        {% else if p == total_pages - 2 && page < total_pages - 4 %}
+        <span>...</span>
+        {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" hx-get="/api/dependencies?page={{ page + 1 }}" hx-target="#dependencies-table">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,79 @@
+{% if jobs.is_empty() %}
+<div class="empty-state">
+    <p>No jobs found matching your filters.</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Worker</th>
+            <th>Queue</th>
+            <th>State</th>
+            <th>Deps</th>
+            <th>Blocking</th>
+            <th>Workflow</th>
+            <th>Inserted</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in jobs.iter() %}
+        <tr>
+            <td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+            <td>{{ job.worker }}</td>
+            <td>{{ job.queue }}</td>
+            <td><span class="badge {{ job.state_class() }}">{{ job.state }}</span></td>
+            <td>
+                {% if job.has_dependencies() %}
+                <span class="badge {{ job.dep_status_class() }}">{{ job.dep_status_text() }}</span>
+                <span style="color: var(--text-muted); font-size: 0.75rem;">
+                    ({{ job.satisfied_deps }}/{{ job.dependency_count }})
+                </span>
+                {% else %}
+                <span style="color: var(--text-muted);">-</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if job.is_blocking() %}
+                <span style="color: var(--accent);">{{ job.blocking_count }}</span>
+                {% else %}
+                <span style="color: var(--text-muted);">-</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if let Some(wf_id) = job.workflow_id %}
+                <a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                {% else %}
+                <span style="color: var(--text-muted);">-</span>
+                {% endif %}
+            </td>
+            <td>{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" hx-get="/api/jobs?page={{ page - 1 }}" hx-target="#jobs-table">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
+        <a href="?page={{ p }}" hx-get="/api/jobs?page={{ p }}" hx-target="#jobs-table">{{ p }}</a>
+        {% else if p == 4 && page > 5 %}
+        <span>...</span>
+        {% else if p == total_pages - 2 && page < total_pages - 4 %}
+        <span>...</span>
+        {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" hx-get="/api/jobs?page={{ page + 1 }}" hx-target="#jobs-table">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

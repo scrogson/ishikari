@@ -259,6 +259,15 @@ mod queue;
 mod result;
 mod stager;
 
+// Pro features: workflow orchestration patterns
+pub mod workflows;
+
+// Pro features: job dependency management
+pub mod dependencies;
+
+// Pro features: advanced workflow execution
+pub mod execution;
+
 pub use ishikari_macros::{job, worker};
 
 pub use engine::{Engine, EngineBuilder, Postgres, Storage};
@@ -266,6 +275,10 @@ pub use model::{Job, JobState};
 pub use queue::Queue;
 pub use result::{Cancel, Complete, PerformError, PerformResult, Snooze, Status};
 pub use stager::Stager;
+
+// Re-export workflow types for convenience
+pub use dependencies::Dependencies;
+pub use workflows::{Workflow, WorkflowState};
 
 /// A prelude for building Ishikari workers.
 pub mod prelude {

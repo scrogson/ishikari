@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build admin with embedded frontend assets"
+#MISE depends=["frontend:build"]
+#USAGE flag "-r --release" help="Build in release mode"
+set -e
+
+args=()
+if [ "${usage_release:-false}" = "true" ]; then
+  args+=(--release)
+fi
+
+cargo build -p ishikari-admin --features embed-frontend "${args[@]}"

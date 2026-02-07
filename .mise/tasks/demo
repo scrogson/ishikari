@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Run live demo with sample jobs, workflows, and admin UI"
+#MISE depends=["_check-db-url", "db:reset"]
+set -e
+
+echo "Starting Ishikari Demo on http://127.0.0.1:3000"
+echo "Database: $DATABASE_URL"
+echo ""
+echo "This demo will:"
+echo "  - Create sample jobs in various states"
+echo "  - Create an email pipeline, ETL DAG, and order saga"
+echo "  - Start workers to process jobs in real-time"
+echo "  - Serve the admin UI for monitoring"
+echo ""
+cargo run -p ishikari-admin --example demo

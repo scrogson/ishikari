@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Import Definition - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Import Workflow Definition</h1>
+    <p class="page-subtitle">Paste your YAML workflow definition below</p>
+</div>
+
+{% match error %}
+{% when Some with (e) %}
+<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
+    <p style="color: var(--danger);">{{ e }}</p>
+</div>
+{% when None %}
+{% endmatch %}
+
+<div class="card">
+    <form method="post" action="/definitions/import">
+        <div style="margin-bottom: 1rem;">
+            <label class="form-label">YAML Definition</label>
+            <textarea
+                name="yaml"
+                class="form-input"
+                style="min-height: 400px; font-family: monospace; resize: vertical;"
+                placeholder="name: my-workflow
+description: My workflow description
+
+inputs:
+  api_url:
+    type: string
+    required: true
+
+nodes:
+  greet:
+    type: echo
+    inputs:
+      message: Hello, world!"
+            >{{ yaml }}</textarea>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <button type="submit" class="btn btn-primary">Import Definition</button>
+            <a href="/definitions" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">YAML Format Reference</h2>
+    </div>
+    <div style="color: var(--text-secondary); line-height: 1.8;">
+        <p><strong>Required fields:</strong></p>
+        <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
+            <li><code>name</code> - Unique workflow identifier</li>
+            <li><code>nodes</code> - Map of node definitions</li>
+        </ul>
+
+        <p><strong>Optional fields:</strong></p>
+        <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
+            <li><code>description</code> - Human-readable description</li>
+            <li><code>version</code> - Version number (auto-incremented if omitted)</li>
+            <li><code>inputs</code> - Input schema with type/description/required</li>
+            <li><code>outputs</code> - Output expressions referencing node outputs</li>
+            <li><code>metadata</code> - Custom key-value metadata</li>
+        </ul>
+
+        <p><strong>Node fields:</strong></p>
+        <ul style="margin-left: 1.5rem;">
+            <li><code>type</code> - Node type (e.g., "http/get", "transform/json")</li>
+            <li><code>depends_on</code> - List of node IDs this node depends on</li>
+            <li><code>inputs</code> - Input values (can use mustache-style expressions)</li>
+            <li><code>when</code> - Conditional execution expression</li>
+            <li><code>timeout_seconds</code> - Execution timeout</li>
+            <li><code>max_retries</code> - Maximum retry attempts</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

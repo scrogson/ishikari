@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}Resolver Status - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dependency Resolver</h1>
+    <p class="page-subtitle">Real-time status of the dependency resolution service</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="stats-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700;">{{ stats.total_dependencies }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Total Dependencies</div>
+    </div>
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--warning);">{{ stats.pending_dependencies }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Pending</div>
+    </div>
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--success);">{{ stats.satisfied_dependencies }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Satisfied</div>
+    </div>
+    <div class="card">
+        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--danger);">{{ stats.failed_dependencies }}</div>
+        <div class="stat-label" style="color: var(--text-secondary);">Failed</div>
+    </div>
+</div>
+
+<!-- Pending Releases -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Ready for Release ({{ pending_releases.len() }})</h2>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Jobs with all dependencies satisfied, waiting to be released by the resolver.
+    </p>
+
+    {% if pending_releases.is_empty() %}
+    <div class="empty-state">
+        <p>No jobs waiting to be released.</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Worker</th>
+                <th>Workflow</th>
+                <th>Dependencies</th>
+                <th>Progress</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in pending_releases.iter() %}
+            <tr>
+                <td><a href="/jobs/{{ job.job_id }}">#{{ job.job_id }}</a></td>
+                <td>{{ job.worker }}</td>
+                <td>
+                    {% if let Some(wf_id) = job.workflow_id %}
+                    <a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                    {% else %}
+                    <span style="color: var(--text-muted);">-</span>
+                    {% endif %}
+                </td>
+                <td>{{ job.satisfied_deps }}/{{ job.total_deps }} satisfied</td>
+                <td style="min-width: 100px;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ job.progress() }}%;"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<!-- Pending Dependencies Detail -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Pending Dependencies ({{ pending_dependencies.len() }})</h2>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Individual pending dependency records with job state information.
+    </p>
+
+    {% if pending_dependencies.is_empty() %}
+    <div class="empty-state">
+        <p>No pending dependencies.</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Job State</th>
+                <th>Depends On</th>
+                <th>Depends On State</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dep in pending_dependencies.iter() %}
+            <tr>
+                <td><a href="/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                <td>
+                    {% if let Some(state) = dep.job_state.as_ref() %}
+                    <span class="badge badge-{{ state }}">{{ state }}</span>
+                    {% else %}
+                    <span style="color: var(--danger);">NOT FOUND</span>
+                    {% endif %}
+                </td>
+                <td><a href="/jobs/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
+                <td>
+                    {% if let Some(state) = dep.depends_on_state.as_ref() %}
+                    <span class="badge badge-{{ state }}">{{ state }}</span>
+                    {% else %}
+                    <span style="color: var(--danger);">NOT FOUND</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<!-- Blocked Jobs -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Blocked Jobs ({{ blocked_jobs.len() }})</h2>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Jobs in <code>scheduled</code> state waiting on pending or failed dependencies.
+    </p>
+
+    {% if blocked_jobs.is_empty() %}
+    <div class="empty-state">
+        <p>No blocked jobs in scheduled state.</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Worker</th>
+                <th>Workflow</th>
+                <th>Pending</th>
+                <th>Failed</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in blocked_jobs.iter() %}
+            <tr>
+                <td><a href="/dependencies/{{ job.job_id }}">#{{ job.job_id }}</a></td>
+                <td>{{ job.worker }}</td>
+                <td>
+                    {% if let Some(wf_id) = job.workflow_id %}
+                    <a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                    {% else %}
+                    <span style="color: var(--text-muted);">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if job.pending_deps > 0 %}
+                    <span style="color: var(--warning);">{{ job.pending_deps }}</span>
+                    {% else %}
+                    0
+                    {% endif %}
+                </td>
+                <td>
+                    {% if job.failed_deps > 0 %}
+                    <span style="color: var(--danger);">{{ job.failed_deps }}</span>
+                    {% else %}
+                    0
+                    {% endif %}
+                </td>
+                <td>
+                    {% if job.is_failed() %}
+                    <span class="badge badge-error">Will Cancel</span>
+                    {% else %}
+                    <span class="badge badge-warning">Waiting</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<!-- Compensating Sagas -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Compensating Sagas ({{ compensating_sagas.len() }})</h2>
+    </div>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        Sagas currently rolling back via compensation jobs.
+    </p>
+
+    {% if compensating_sagas.is_empty() %}
+    <div class="empty-state">
+        <p>No sagas currently compensating.</p>
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>Saga</th>
+                <th>Name</th>
+                <th>Total Steps</th>
+                <th>Compensating</th>
+                <th>Compensated</th>
+                <th>Progress</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for saga in compensating_sagas.iter() %}
+            <tr>
+                <td><a href="/sagas/{{ saga.workflow_id }}">#{{ saga.workflow_id }}</a></td>
+                <td>{{ saga.workflow_name }}</td>
+                <td>{{ saga.total_steps }}</td>
+                <td><span style="color: var(--warning);">{{ saga.compensating_steps }}</span></td>
+                <td><span style="color: var(--success);">{{ saga.compensated_steps }}</span></td>
+                <td style="min-width: 100px;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ saga.progress() }}%; background: var(--warning);"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<!-- About Section -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">About the Resolver</h2>
+    </div>
+    <div style="color: var(--text-secondary); line-height: 1.8;">
+        <p>The <strong>Dependency Resolver</strong> is a background service that manages job dependencies:</p>
+        <ul style="margin: 1rem 0; padding-left: 1.5rem;">
+            <li>Monitors completed jobs and marks their dependencies as <em>satisfied</em></li>
+            <li>Releases jobs to <em>available</em> state when all dependencies are satisfied</li>
+            <li>Handles failed jobs by marking their dependencies as <em>failed</em></li>
+            <li>Cancels jobs with failed dependencies</li>
+            <li>Manages saga compensation when forward jobs fail</li>
+        </ul>
+        <p>The resolver runs at a configurable interval (typically every second).</p>
+    </div>
+</div>
+{% endblock %}

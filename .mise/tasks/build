@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Build all crates"
+#USAGE flag "-r --release" help="Build in release mode"
+set -e
+
+args=()
+if [ "${usage_release:-false}" = "true" ]; then
+  args+=(--release)
+fi
+
+cargo build "${args[@]}"

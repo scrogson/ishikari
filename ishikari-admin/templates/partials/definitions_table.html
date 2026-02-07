@@ -1,0 +1,52 @@
+{% if definitions.is_empty() %}
+<div class="empty-state">No workflow definitions found</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Version</th>
+            <th>Description</th>
+            <th>Nodes</th>
+            <th>Created</th>
+            <th>Updated</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for def in definitions %}
+        <tr>
+            <td><a href="/definitions/{{ def.id }}">{{ def.name }}</a></td>
+            <td><span class="badge badge-info">v{{ def.version }}</span></td>
+            <td>{{ def.description.as_deref().unwrap_or("-") }}</td>
+            <td>{{ def.node_count }}</td>
+            <td>{{ def.created_at.format("%Y-%m-%d %H:%M") }}</td>
+            <td>{{ def.updated_at.format("%Y-%m-%d %H:%M") }}</td>
+            <td>
+                <a href="/definitions/{{ def.id }}/export" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Export</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" hx-get="/api/definitions?page={{ page - 1 }}" hx-target="#definitions-table">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+    {% if p == page %}
+    <span class="active">{{ p }}</span>
+    {% else %}
+    <a href="?page={{ p }}" hx-get="/api/definitions?page={{ p }}" hx-target="#definitions-table">{{ p }}</a>
+    {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" hx-get="/api/definitions?page={{ page + 1 }}" hx-target="#definitions-table">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

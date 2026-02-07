@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Bump major version and sync dependencies"
+set -e
+scripts/version-bump.sh major

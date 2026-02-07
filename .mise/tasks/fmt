@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Format code"
+#USAGE flag "-c --check" help="Check formatting without making changes"
+set -e
+
+args=()
+if [ "${usage_check:-false}" = "true" ]; then
+  args+=(-- --check)
+fi
+
+cargo fmt "${args[@]}"

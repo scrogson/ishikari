@@ -1,83 +1,233 @@
 {% extends "base.html" %}
 
-{% block title %}Job #{{ job.id }} - Ishikari Admin{% endblock %}
+{% block title %}Job #{{ job.id }} - Ishikari Pro Admin{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Job #{{ job.id }}</h1>
-    <p class="page-subtitle">{{ job.worker }}</p>
+    <p class="page-subtitle">
+        {{ job.worker }}
+        <span class="badge {{ job.state_class() }}" style="margin-left: 0.5rem;">{{ job.state }}</span>
+        {% if job.is_blocked() %}
+        <span class="badge badge-warning" style="margin-left: 0.25rem;">BLOCKED</span>
+        {% endif %}
+    </p>
 </div>
 
+<!-- Job Details -->
 <div class="card">
     <div class="card-header">
-        <h2 class="card-title">Details</h2>
-        <div class="actions">
-            {% if job.state == "discarded" || job.state == "retryable" || job.state == "cancelled" %}
-            <form action="/jobs/{{ job.id }}/retry" method="post" style="display: inline;">
-                <button type="submit" class="btn btn-primary btn-sm">Retry</button>
+        <h2 class="card-title">Job Details</h2>
+        <div style="display: flex; gap: 0.5rem;">
+            {% if job.state == "discarded" || job.state == "cancelled" || job.state == "retryable" %}
+            <form method="post" action="/jobs/{{ job.id }}/retry" style="margin: 0;">
+                <button type="submit" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Retry</button>
             </form>
             {% endif %}
             {% if job.state == "available" || job.state == "scheduled" || job.state == "retryable" %}
-            <form action="/jobs/{{ job.id }}/cancel" method="post" style="display: inline;">
-                <button type="submit" class="btn btn-secondary btn-sm">Cancel</button>
-            </form>
-            {% endif %}
-            {% if job.state != "discarded" && job.state != "completed" %}
-            <form action="/jobs/{{ job.id }}/discard" method="post" style="display: inline;">
-                <button type="submit" class="btn btn-danger btn-sm">Discard</button>
+            <form method="post" action="/jobs/{{ job.id }}/cancel" style="margin: 0;">
+                <button type="submit" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="return confirm('Cancel this job?')">Cancel</button>
             </form>
             {% endif %}
         </div>
     </div>
-
     <div class="detail-grid">
-        <div class="detail-label">State</div>
-        <div><span class="badge badge-{{ job.state }}">{{ job.state }}</span></div>
-
-        <div class="detail-label">Queue</div>
-        <div>{{ job.queue }}</div>
-
+        <div class="detail-label">ID</div>
+        <div>{{ job.id }}</div>
         <div class="detail-label">Worker</div>
         <div>{{ job.worker }}</div>
-
-        <div class="detail-label">Attempts</div>
-        <div>{{ job.attempt }} / {{ job.max_attempts }}</div>
-
-        <div class="detail-label">Inserted At</div>
-        <div>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
-
-        <div class="detail-label">Scheduled At</div>
-        <div>{{ job.scheduled_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
-
-        {% if let Some(attempted_at) = job.attempted_at %}
-        <div class="detail-label">Attempted At</div>
-        <div>{{ attempted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        {% if let Some(node_id) = job.node_id.as_ref() %}
+        <div class="detail-label">Node</div>
+        <div>
+            <code>{{ node_id }}</code>
+            {% if let Some(node_type) = job.node_type.as_ref() %}
+            <span class="badge badge-info" style="margin-left: 0.5rem;">{{ node_type }}</span>
+            {% endif %}
+        </div>
         {% endif %}
-
+        <div class="detail-label">Queue</div>
+        <div>{{ job.queue }}</div>
+        <div class="detail-label">State</div>
+        <div><span class="badge {{ job.state_class() }}">{{ job.state }}</span></div>
+        <div class="detail-label">Attempt</div>
+        <div>{{ job.attempt }} / {{ job.max_attempts }}</div>
+        <div class="detail-label">Priority</div>
+        <div>{{ job.priority }}</div>
+        {% if let Some(wf_id) = job.workflow_id %}
+        <div class="detail-label">Workflow</div>
+        <div>
+            <a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+            <span class="badge" style="background: var(--pro); margin-left: 0.5rem; font-size: 0.625rem;">PRO</span>
+        </div>
+        {% endif %}
+        <div class="detail-label">Inserted</div>
+        <div>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
+        <div class="detail-label">Scheduled</div>
+        <div>{{ job.scheduled_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
         {% if let Some(completed_at) = job.completed_at %}
-        <div class="detail-label">Completed At</div>
+        <div class="detail-label">Completed</div>
         <div>{{ completed_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
         {% endif %}
     </div>
+
+    {% if job.is_node_job() %}
+    <!-- Node Job: Show inputs/outputs prominently -->
+    {% if job.has_node_inputs() %}
+    <div style="margin-top: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--info);">Inputs (Resolved)</h3>
+        <pre class="code-block" style="border-left: 3px solid var(--info);">{{ job.node_inputs_pretty() }}</pre>
+        {% if job.has_raw_node_inputs() %}
+        <details style="margin-top: 0.5rem;">
+            <summary style="cursor: pointer; font-size: 0.75rem; color: var(--text-muted);">Show raw inputs (with expressions)</summary>
+            <pre class="code-block" style="margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.8;">{{ job.raw_node_inputs_pretty() }}</pre>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if job.has_output() %}
+    <div style="margin-top: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem; color: var(--success);">Output</h3>
+        <pre class="code-block" style="border-left: 3px solid var(--success);">{{ job.output_pretty() }}</pre>
+    </div>
+    {% endif %}
+
+    <details style="margin-top: 1.5rem;">
+        <summary style="cursor: pointer; font-size: 0.875rem; color: var(--text-secondary);">Full Job Arguments</summary>
+        <pre class="code-block" style="margin-top: 0.5rem;">{{ job.args_pretty() }}</pre>
+    </details>
+    {% else %}
+    <!-- Regular Job: Show arguments -->
+    <div style="margin-top: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Arguments</h3>
+        <pre class="code-block">{{ job.args_pretty() }}</pre>
+    </div>
+    {% endif %}
+
+    {% if job.has_errors() %}
+    <div style="margin-top: 1.5rem;">
+        <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Error History</h3>
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            {% for (attempt, error) in job.error_history() %}
+            <div style="display: flex; gap: 0.75rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: 0.375rem; border-left: 3px solid var(--error);">
+                <span class="badge badge-error" style="flex-shrink: 0;">Attempt {{ attempt }}</span>
+                <code style="color: var(--error); word-break: break-word; font-size: 0.875rem;">{{ error }}</code>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 
-<div class="card">
+<!-- Blocking Alert -->
+{% if job.is_blocked() %}
+<div class="card" style="border-color: var(--warning);">
     <div class="card-header">
-        <h2 class="card-title">Arguments</h2>
+        <h2 class="card-title" style="color: var(--warning);">Blocked by Dependencies</h2>
     </div>
-    <pre class="code-block">{{ job.args_pretty() }}</pre>
-</div>
-
-{% if job.has_errors() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Errors</h2>
-    </div>
-    <pre class="code-block">{{ job.errors_pretty() }}</pre>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        This job cannot proceed until the following dependencies complete:
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Worker</th>
+                <th>Job State</th>
+                <th>Dependency</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dep in job.blocking_deps() %}
+            <tr>
+                <td><a href="/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                <td>{{ dep.worker }}</td>
+                <td><span class="badge {{ dep.job_state_class() }}">{{ dep.job_state }}</span></td>
+                <td><span class="badge {{ dep.dep_state_class() }}">{{ dep.state }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endif %}
 
-<div style="margin-top: 1rem;">
-    <a href="/jobs" class="btn btn-secondary">&larr; Back to Jobs</a>
+<!-- Dependencies Graph -->
+{% if !job.dependencies.is_empty() || !job.dependents.is_empty() %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Dependency Graph</h2>
+    </div>
+
+    <div class="dependency-graph" style="display: flex; flex-direction: column; align-items: center; gap: 2rem; padding: 2rem;">
+        <!-- Upstream Dependencies -->
+        {% if !job.dependencies.is_empty() %}
+        <div class="graph-section">
+            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
+                Depends On ({{ job.dependencies.len() }})
+            </div>
+            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
+                {% for dep in job.dependencies.iter() %}
+                <a href="/jobs/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
+                    <span class="badge {{ dep.job_state_class() }}">{{ dep.job_state }}</span>
+                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
+                    <span class="badge {{ dep.dep_state_class() }}" style="font-size: 0.625rem;">{{ dep.state }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div style="color: var(--text-muted); font-size: 1.5rem;">
+            {% if job.is_blocked() %}
+            <span style="color: var(--warning);">&#x25BC; BLOCKED</span>
+            {% else %}
+            &#x25BC;
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Current Job -->
+        <div class="current-job" style="padding: 1rem 2rem; background: var(--bg-tertiary); border: 2px solid var(--accent); border-radius: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span class="badge {{ job.state_class() }}">{{ job.state }}</span>
+                <span style="font-weight: 600;">{{ job.worker }}</span>
+                <span style="color: var(--text-muted);">#{{ job.id }}</span>
+            </div>
+        </div>
+
+        <!-- Downstream Dependents -->
+        {% if !job.dependents.is_empty() %}
+        <div style="color: var(--text-muted); font-size: 1.5rem;">&#x25BC;</div>
+
+        <div class="graph-section">
+            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
+                Blocking ({{ job.dependents.len() }})
+            </div>
+            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
+                {% for dep in job.dependents.iter() %}
+                <a href="/jobs/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
+                    <span class="badge {{ dep.job_state_class() }}">{{ dep.job_state }}</span>
+                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
+                    <span class="badge {{ dep.dep_state_class() }}" style="font-size: 0.625rem;">{{ dep.state }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Related Links -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Related</h2>
+    </div>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        <a href="/jobs/{{ job.id }}" class="btn btn-secondary">View in Base Admin</a>
+        <a href="/dependencies/{{ job.id }}" class="btn btn-secondary">Dependency View</a>
+        {% if let Some(wf_id) = job.workflow_id %}
+        <a href="/workflows/{{ wf_id }}" class="btn btn-secondary">View Workflow</a>
+        {% endif %}
+    </div>
 </div>
 {% endblock %}

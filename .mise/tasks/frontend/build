@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build frontend for production"
+#MISE dir="ishikari-admin/frontend"
+set -e
+npm run build

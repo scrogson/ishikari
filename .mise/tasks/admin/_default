@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Run the admin dashboard"
+#MISE depends=["_check-db-url"]
+set -e
+
+echo "Starting Ishikari Admin on http://127.0.0.1:3000"
+echo "Database: $DATABASE_URL"
+cargo run -p ishikari-admin --example demo

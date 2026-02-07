@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Stop local PostgreSQL server"
+set -e
+
+PGDATA="${PGDATA:-.postgres}"
+
+if [ ! -f "$PGDATA/postmaster.pid" ]; then
+  echo "PostgreSQL does not appear to be running"
+  exit 0
+fi
+
+echo "Stopping PostgreSQL..."
+pg_ctl -D "$PGDATA" stop
+
+echo "PostgreSQL stopped"

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Check that DATABASE_URL is set"
+#MISE hide=true
+
+if [ -z "$DATABASE_URL" ]; then
+  echo "Error: DATABASE_URL is not set"
+  echo "Run 'mise run pg-start' to start the local PostgreSQL server"
+  exit 1
+fi

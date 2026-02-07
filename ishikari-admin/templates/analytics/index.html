@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Analytics Dashboard</h1>
+    <p class="page-subtitle">Workflow and job performance metrics</p>
+</div>
+
+<!-- Summary Cards -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+    <!-- Workflow Success Rate -->
+    <div class="card" style="text-align: center;">
+        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Workflow Success Rate</h3>
+        <div style="font-size: 2.5rem; font-weight: 700;">
+            <span class="badge {{ analytics.workflow_success_class() }}" style="font-size: 1.5rem; padding: 0.5rem 1rem;">
+                {{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}%
+            </span>
+        </div>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+            {{ analytics.workflow_stats.completed }} / {{ analytics.workflow_stats.completed + analytics.workflow_stats.failed }} completed
+        </p>
+    </div>
+
+    <!-- Job Success Rate -->
+    <div class="card" style="text-align: center;">
+        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Job Success Rate</h3>
+        <div style="font-size: 2.5rem; font-weight: 700;">
+            <span class="badge {{ analytics.job_success_class() }}" style="font-size: 1.5rem; padding: 0.5rem 1rem;">
+                {{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%
+            </span>
+        </div>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+            {{ analytics.job_stats.completed }} / {{ analytics.job_stats.completed + analytics.job_stats.discarded }} completed
+        </p>
+    </div>
+
+    <!-- Active Work -->
+    <div class="card" style="text-align: center;">
+        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Active Work</h3>
+        <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent);">
+            {{ analytics.workflow_stats.running }}
+        </div>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+            workflows running
+        </p>
+    </div>
+
+    <!-- Blocked Jobs -->
+    <div class="card" style="text-align: center;">
+        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Blocked Jobs</h3>
+        <div style="font-size: 2.5rem; font-weight: 700; color: {% if analytics.dependency_stats.blocked_jobs > 0 %}var(--warning){% else %}var(--text-primary){% endif %};">
+            {{ analytics.dependency_stats.blocked_jobs }}
+        </div>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+            waiting on dependencies
+        </p>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+    <!-- Workflow Overview -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Workflow Overview</h2>
+        </div>
+        <div class="detail-grid">
+            <div class="detail-label">Total</div>
+            <div>{{ analytics.workflow_stats.total }}</div>
+            <div class="detail-label">Running</div>
+            <div><span class="badge badge-warning">{{ analytics.workflow_stats.running }}</span></div>
+            <div class="detail-label">Completed</div>
+            <div><span class="badge badge-success">{{ analytics.workflow_stats.completed }}</span></div>
+            <div class="detail-label">Failed</div>
+            <div><span class="badge badge-error">{{ analytics.workflow_stats.failed }}</span></div>
+            <div class="detail-label">Cancelled</div>
+            <div><span class="badge badge-secondary">{{ analytics.workflow_stats.cancelled }}</span></div>
+        </div>
+    </div>
+
+    <!-- Job Overview -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Job Overview</h2>
+        </div>
+        <div class="detail-grid">
+            <div class="detail-label">Total</div>
+            <div>{{ analytics.job_stats.total }}</div>
+            <div class="detail-label">Available</div>
+            <div><span class="badge badge-info">{{ analytics.job_stats.available }}</span></div>
+            <div class="detail-label">Executing</div>
+            <div><span class="badge badge-warning">{{ analytics.job_stats.executing }}</span></div>
+            <div class="detail-label">Completed</div>
+            <div><span class="badge badge-success">{{ analytics.job_stats.completed }}</span></div>
+            <div class="detail-label">Discarded</div>
+            <div><span class="badge badge-error">{{ analytics.job_stats.discarded }}</span></div>
+            <div class="detail-label">Retryable</div>
+            <div><span class="badge badge-secondary">{{ analytics.job_stats.retryable }}</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- Dependency Stats -->
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <h2 class="card-title">Dependency Resolution</h2>
+    </div>
+    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
+        <div>
+            <span style="color: var(--text-secondary);">Total Dependencies:</span>
+            <strong>{{ analytics.dependency_stats.total_deps }}</strong>
+        </div>
+        <div>
+            <span style="color: var(--text-secondary);">Pending:</span>
+            <span class="badge badge-warning">{{ analytics.dependency_stats.pending }}</span>
+        </div>
+        <div>
+            <span style="color: var(--text-secondary);">Satisfied:</span>
+            <span class="badge badge-success">{{ analytics.dependency_stats.satisfied }}</span>
+        </div>
+        <div>
+            <span style="color: var(--text-secondary);">Failed:</span>
+            <span class="badge badge-error">{{ analytics.dependency_stats.failed }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Workflow Type Breakdown -->
+{% if !analytics.workflow_types.is_empty() %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <h2 class="card-title">Workflow Types</h2>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Total</th>
+                <th>Completed</th>
+                <th>Failed</th>
+                <th>Success Rate</th>
+                <th>Avg Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for wf in analytics.workflow_types.iter() %}
+            <tr>
+                <td>{{ wf.name }}</td>
+                <td>{{ wf.total }}</td>
+                <td><span class="badge badge-success">{{ wf.completed }}</span></td>
+                <td><span class="badge badge-error">{{ wf.failed }}</span></td>
+                <td>
+                    <span class="badge {% if wf.success_rate >= 0.95 %}badge-success{% elif wf.success_rate >= 0.80 %}badge-warning{% else %}badge-error{% endif %}">
+                        {{ "{:.1}"|format(wf.success_rate * 100.0) }}%
+                    </span>
+                </td>
+                <td>
+                    {% match wf.avg_duration_secs %}
+                    {% when Some with (secs) %}
+                    {{ "{:.1}"|format(secs) }}s
+                    {% when None %}
+                    <span style="color: var(--text-muted);">-</span>
+                    {% endmatch %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Worker Stats -->
+{% if !analytics.worker_stats.is_empty() %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <h2 class="card-title">Worker Performance</h2>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Worker</th>
+                <th>Total</th>
+                <th>Completed</th>
+                <th>Discarded</th>
+                <th>Avg Attempts</th>
+                <th>Avg Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for w in analytics.worker_stats.iter() %}
+            <tr>
+                <td>{{ w.worker }}</td>
+                <td>{{ w.total }}</td>
+                <td><span class="badge badge-success">{{ w.completed }}</span></td>
+                <td><span class="badge badge-error">{{ w.discarded }}</span></td>
+                <td>{{ "{:.2}"|format(w.avg_attempts) }}</td>
+                <td>
+                    {% match w.avg_duration_secs %}
+                    {% when Some with (secs) %}
+                    {{ "{:.1}"|format(secs) }}s
+                    {% when None %}
+                    <span style="color: var(--text-muted);">-</span>
+                    {% endmatch %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Failure Patterns -->
+{% if !analytics.failure_patterns.is_empty() %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <h2 class="card-title" style="color: var(--error);">Common Failure Patterns</h2>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Worker</th>
+                <th>Error Type</th>
+                <th>Count</th>
+                <th>Last Seen</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for fp in analytics.failure_patterns.iter() %}
+            <tr>
+                <td>{{ fp.worker }}</td>
+                <td><code style="color: var(--error);">{{ fp.error_type }}</code></td>
+                <td><span class="badge badge-error">{{ fp.count }}</span></td>
+                <td>{{ fp.last_seen.format("%Y-%m-%d %H:%M") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

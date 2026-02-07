@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Create database"
+set -e
+sqlx database create

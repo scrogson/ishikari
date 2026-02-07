@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Remove local PostgreSQL data directory"
+set -e
+
+PGDATA="${PGDATA:-.postgres}"
+
+if [ ! -d "$PGDATA" ]; then
+  echo "PostgreSQL data directory not found at $PGDATA"
+  exit 0
+fi
+
+# Stop if running
+if [ -f "$PGDATA/postmaster.pid" ]; then
+  echo "Stopping PostgreSQL..."
+  pg_ctl -D "$PGDATA" stop || true
+fi
+
+echo "Removing $PGDATA..."
+rm -rf "$PGDATA"
+
+echo "PostgreSQL data directory removed"

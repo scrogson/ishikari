@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Initialize local PostgreSQL data directory"
+set -e
+
+PGDATA="${PGDATA:-.postgres}"
+
+if [ -d "$PGDATA" ]; then
+  echo "PostgreSQL data directory already exists at $PGDATA"
+  echo "Run 'mise run pg-destroy' to remove it first if you want to reinitialize"
+  exit 1
+fi
+
+echo "Initializing PostgreSQL in $PGDATA..."
+initdb -D "$PGDATA" --no-locale --encoding=UTF8
+
+# Configure PostgreSQL to use Unix socket only
+cat >> "$PGDATA/postgresql.conf" <<EOF
+
+# Local development configuration
+listen_addresses = ''
+unix_socket_directories = '$PWD/$PGDATA'
+EOF
+
+echo "PostgreSQL initialized successfully!"
+echo "Run 'mise run pg-start' to start the server"

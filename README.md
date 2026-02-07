@@ -15,20 +15,16 @@ Ishikari is a robust job processing system written in Rust, designed for reliabl
 - **Worker System**: Easy-to-use worker trait for implementing job processors
 - **State Management**: Context-based state sharing between jobs and workers
 - **PostgreSQL Integration**: Built-in support for PostgreSQL as the job storage backend
-
-### Ishikari Pro
-
-For advanced workflow features, see [Ishikari Pro](https://github.com/scrogson/ishikari-pro) (requires license):
-
-- **Pipelines** - Linear chains of jobs
-- **DAGs** - Directed acyclic graphs for complex job orchestration
-- **Sagas** - Workflows with automatic compensation/rollback on failure
+- **Workflow Orchestration**:
+  - **Pipelines** - Linear chains of jobs executed in sequence
+  - **DAGs** - Directed acyclic graphs for complex job dependencies
+  - **Sagas** - Workflows with automatic compensation/rollback on failure
+- **Admin Dashboard**: Web UI for monitoring jobs, queues, and workflows
 
 ## Prerequisites
 
 - Rust (latest stable version)
 - PostgreSQL
-- Docker and Docker Compose (for local development)
 
 ## Setup
 
@@ -160,14 +156,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Project Structure
 
 - `ishikari/` - Main library crate
-  - `src/` - Source code
-    - `engine.rs` - Core job processing engine
-    - `queue.rs` - Queue management
-    - `model.rs` - Data models
-    - `result.rs` - Job result handling
-    - `stager.rs` - Job staging
-- `ishikari-macros/` - Procedural macros for the library
-- `migrations/` - Database migrations
+  - `engine.rs` - Core job processing engine
+  - `queue.rs` - Queue management
+  - `model.rs` - Data models
+  - `workflow.rs` - Workflow orchestration (pipelines, DAGs, sagas)
+- `ishikari-macros/` - Procedural macros (`#[ishikari::job]`, `#[ishikari::worker]`)
+- `ishikari-cli/` - CLI tool for generating migrations
+- `ishikari-admin/` - Web dashboard for monitoring and management
 
 ## License
 

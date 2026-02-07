@@ -1,0 +1,73 @@
+{% if sagas.is_empty() %}
+<div class="empty-state">
+    <p>No sagas found.</p>
+</div>
+{% else %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>State</th>
+            <th>Progress</th>
+            <th>Steps</th>
+            <th>Started</th>
+            <th>Completed</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for saga in sagas.iter() %}
+        <tr>
+            <td><a href="/sagas/{{ saga.id }}">#{{ saga.id }}</a></td>
+            <td>{{ saga.name }}</td>
+            <td><span class="badge {{ saga.state_class() }}">{{ saga.state }}</span></td>
+            <td style="min-width: 150px;">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{ saga.progress() }}%;
+                        {% if saga.failed_steps > 0 %}background: var(--danger);
+                        {% else if saga.compensating_steps > 0 %}background: var(--warning);{% endif %}"></div>
+                </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">
+                    {{ saga.completed_steps }}/{{ saga.step_count }} steps
+                    {% if saga.failed_steps > 0 %}({{ saga.failed_steps }} failed){% endif %}
+                    {% if saga.compensating_steps > 0 %}({{ saga.compensating_steps }} compensating){% endif %}
+                </span>
+            </td>
+            <td>{{ saga.step_count }}</td>
+            <td>{{ saga.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+            <td>
+                {% if let Some(completed) = saga.completed_at %}
+                {{ completed.format("%Y-%m-%d %H:%M") }}
+                {% else %}
+                <span style="color: var(--text-muted);">-</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" hx-get="/api/sagas?page={{ page - 1 }}" hx-target="#sagas-table">&laquo; Prev</a>
+    {% endif %}
+
+    {% for p in 1..=total_pages %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
+        <a href="?page={{ p }}" hx-get="/api/sagas?page={{ p }}" hx-target="#sagas-table">{{ p }}</a>
+        {% else if p == 4 && page > 5 %}
+        <span>...</span>
+        {% else if p == total_pages - 2 && page < total_pages - 4 %}
+        <span>...</span>
+        {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" hx-get="/api/sagas?page={{ page + 1 }}" hx-target="#sagas-table">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}

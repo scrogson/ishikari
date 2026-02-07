@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Start frontend dev server (Vite)"
+#MISE dir="ishikari-admin/frontend"
+set -e
+
+echo "Starting Vite dev server on http://localhost:5173"
+echo "Make sure the Rust server is running on port 3000 for API proxying"
+npm run dev

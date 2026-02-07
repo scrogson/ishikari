@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Sagas - Ishikari Pro Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Sagas</h1>
+    <p class="page-subtitle">Distributed transactions with compensation</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">All Sagas ({{ total }})</h2>
+    </div>
+
+    <!-- Filters -->
+    <form class="filters" hx-get="/api/sagas" hx-target="#sagas-table" hx-trigger="change">
+        <div class="filter-group">
+            <label class="form-label">State</label>
+            <select name="state" class="form-select">
+                <option value="">All States</option>
+                <option value="running" {% if current_state.as_deref() == Some("running") %}selected{% endif %}>Running</option>
+                <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                <option value="failed" {% if current_state.as_deref() == Some("failed") %}selected{% endif %}>Failed</option>
+                <option value="compensating" {% if current_state.as_deref() == Some("compensating") %}selected{% endif %}>Compensating</option>
+                <option value="compensated" {% if current_state.as_deref() == Some("compensated") %}selected{% endif %}>Compensated</option>
+                <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+            </select>
+        </div>
+    </form>
+
+    <div id="sagas-table">
+        {% include "partials/sagas_table.html" %}
+    </div>
+</div>
+{% endblock %}
