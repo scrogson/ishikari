@@ -364,6 +364,7 @@ impl<'a> Validator<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn validate_expression_in_value(
         &self,
         result: &mut ValidationResult,
@@ -420,6 +421,7 @@ impl<'a> Validator<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn validate_expression_references(
         &self,
         result: &mut ValidationResult,
@@ -494,6 +496,7 @@ impl<'a> Validator<'a> {
     /// Validate workflow outputs.
     fn validate_outputs(&self, result: &mut ValidationResult) {
         let node_ids: HashSet<&str> = self.workflow.nodes.keys().map(|s| s.as_str()).collect();
+        let re = regex::Regex::new(r"\{\{nodes\.([^.}]+)").unwrap();
 
         for (output_name, expr) in &self.workflow.outputs {
             if !contains_expression(expr) {
@@ -508,7 +511,6 @@ impl<'a> Validator<'a> {
             }
 
             // Validate the expression references
-            let re = regex::Regex::new(r"\{\{nodes\.([^.}]+)").unwrap();
             for cap in re.captures_iter(expr) {
                 let ref_node_id = cap.get(1).unwrap().as_str();
                 if !node_ids.contains(ref_node_id) {
