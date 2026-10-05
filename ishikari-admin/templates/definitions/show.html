@@ -1,206 +1,201 @@
 {% extends "base.html" %}
 
-{% block title %}{{ definition.name }} v{{ definition.version }} - Ishikari Pro Admin{% endblock %}
+{% block title %}{{ definition.name }} v{{ definition.version }} - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h1 class="page-title">{{ definition.name }}</h1>
-            <p class="page-subtitle">Version {{ definition.version }}</p>
+<div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">{{ definition.name }}</h1>
+        <p class="text-sm text-base-content/60">Version {{ definition.version }}</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-primary btn-sm">Edit</a>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/run" class="btn btn-sm">Run Workflow</a>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/export" class="btn btn-ghost btn-sm">Export YAML</a>
+        <form method="post" action="{{ base_path }}/definitions/{{ definition.id }}/delete">
+            <button type="submit" class="btn btn-error btn-soft btn-sm" onclick="return confirm('Delete this definition? This cannot be undone.')">Delete</button>
+        </form>
+    </div>
+</div>
+
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Details</h2>
+
+        <dl class="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+            <dt class="text-base-content/60">ID</dt>
+            <dd class="font-mono">{{ definition.id }}</dd>
+
+            <dt class="text-base-content/60">Name</dt>
+            <dd>{{ definition.name }}</dd>
+
+            <dt class="text-base-content/60">Version</dt>
+            <dd><span class="badge badge-soft badge-sm badge-info">v{{ definition.version }}</span></dd>
+
+            {% match definition.description %}
+            {% when Some with (desc) %}
+            <dt class="text-base-content/60">Description</dt>
+            <dd>{{ desc }}</dd>
+            {% when None %}
+            {% endmatch %}
+
+            <dt class="text-base-content/60">Nodes</dt>
+            <dd class="tabular-nums">{{ definition.node_count() }}</dd>
+
+            {% match definition.created_at %}
+            {% when Some with (created) %}
+            <dt class="text-base-content/60">Created</dt>
+            <dd class="text-base-content/80">{{ created.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+            {% when None %}
+            {% endmatch %}
+
+            {% match definition.updated_at %}
+            {% when Some with (updated) %}
+            <dt class="text-base-content/60">Updated</dt>
+            <dd class="text-base-content/80">{{ updated.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+            {% when None %}
+            {% endmatch %}
+        </dl>
+    </div>
+</section>
+
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Input Schema</h2>
+        {% if definition.input_fields().is_empty() %}
+        <div class="rounded-box bg-base-200 p-6">
+            <p class="font-medium">No inputs defined</p>
+            <p class="mt-1 mb-4 text-sm text-base-content/60">
+                Add inputs to make your workflow configurable. Use the workflow builder to define what parameters this workflow accepts.
+            </p>
+            <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-sm">+ Add Inputs</a>
         </div>
-        <div style="display: flex; gap: 0.5rem;">
-            <a href="/definitions/{{ definition.id }}/edit" class="btn btn-primary">Edit</a>
-            <a href="/definitions/{{ definition.id }}/run" class="btn btn-secondary">Run Workflow</a>
-            <a href="/definitions/{{ definition.id }}/export" class="btn btn-secondary">Export YAML</a>
-            <form method="post" action="/definitions/{{ definition.id }}/delete" style="margin: 0;">
-                <button type="submit" class="btn btn-secondary" onclick="return confirm('Delete this definition? This cannot be undone.')">Delete</button>
-            </form>
-        </div>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Details</h2>
-    </div>
-
-    <div class="detail-grid">
-        <div class="detail-label">ID</div>
-        <div>{{ definition.id }}</div>
-
-        <div class="detail-label">Name</div>
-        <div>{{ definition.name }}</div>
-
-        <div class="detail-label">Version</div>
-        <div>{{ definition.version }}</div>
-
-        {% match definition.description %}
-        {% when Some with (desc) %}
-        <div class="detail-label">Description</div>
-        <div>{{ desc }}</div>
-        {% when None %}
-        {% endmatch %}
-
-        <div class="detail-label">Nodes</div>
-        <div>{{ definition.node_count() }}</div>
-
-        {% match definition.created_at %}
-        {% when Some with (created) %}
-        <div class="detail-label">Created</div>
-        <div>{{ created.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
-        {% when None %}
-        {% endmatch %}
-
-        {% match definition.updated_at %}
-        {% when Some with (updated) %}
-        <div class="detail-label">Updated</div>
-        <div>{{ updated.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
-        {% when None %}
-        {% endmatch %}
-    </div>
-</div>
-
-{% if definition.input_fields().is_empty() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Input Schema</h2>
-    </div>
-    <div style="background-color: var(--bg-tertiary); border-radius: 8px; padding: 1.5rem;">
-        <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">
-            No inputs defined
-        </p>
-        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-            Add inputs to make your workflow configurable. Use the workflow builder to define what parameters this workflow accepts.
-        </p>
-        <a href="/definitions/{{ definition.id }}/edit" class="btn btn-secondary" style="font-size: 0.875rem;">
-            + Add Inputs
-        </a>
-    </div>
-</div>
-{% else %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Input Schema</h2>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Required</th>
-                <th>Description</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for (name, field) in definition.input_fields() %}
-            <tr>
-                <td><code>{{ name }}</code></td>
-                <td>{{ field.field_type }}</td>
-                <td>{% if field.required %}<span style="color: var(--success);">Yes</span>{% else %}<span style="color: var(--text-muted);">No</span>{% endif %}</td>
-                <td>{{ field.description.as_deref().unwrap_or("-") }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
-
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Nodes ({{ definition.node_count() }})</h2>
-    </div>
-
-    {% if definition.nodes_list().is_empty() %}
-    <div class="empty-state">No nodes defined</div>
-    {% else %}
-    <table>
-        <thead>
-            <tr>
-                <th>Node ID</th>
-                <th>Type</th>
-                <th>Dependencies</th>
-                <th>Timeout</th>
-                <th>Retries</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for (node_id, node) in definition.nodes_list() %}
-            <tr>
-                <td><code>{{ node_id }}</code></td>
-                <td><span class="badge badge-info">{{ node.node_type }}</span></td>
-                <td>
-                    {% if node.depends_on.is_empty() %}
-                    <span style="color: var(--text-muted);">None</span>
-                    {% else %}
-                    {% for dep in node.depends_on %}
-                    <code>{{ dep }}</code>{% if !loop.last %}, {% endif %}
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Required</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for (name, field) in definition.input_fields() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><code class="font-mono">{{ name }}</code></td>
+                        <td><span class="badge badge-ghost badge-sm">{{ field.field_type }}</span></td>
+                        <td>{% if field.required %}<span class="badge badge-soft badge-sm badge-success">required</span>{% else %}<span class="text-base-content/40">optional</span>{% endif %}</td>
+                        <td class="text-base-content/70">{{ field.description.as_deref().unwrap_or("—") }}</td>
+                    </tr>
                     {% endfor %}
-                    {% endif %}
-                </td>
-                <td>{% match node.timeout_seconds %}{% when Some with (t) %}{{ t }}s{% when None %}-{% endmatch %}</td>
-                <td>{% match node.max_retries %}{% when Some with (r) %}{{ r }}{% when None %}-{% endmatch %}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</section>
 
-    <div class="workflow-graph" style="margin-top: 1.5rem;">
-        <h3 style="margin-bottom: 1rem; color: var(--text-secondary);">Node Graph</h3>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Nodes ({{ definition.node_count() }})</h2>
+
+        {% if definition.nodes_list().is_empty() %}
+        <div class="py-12 text-center text-base-content/50">No nodes defined</div>
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Node ID</th>
+                        <th>Type</th>
+                        <th>Dependencies</th>
+                        <th>Timeout</th>
+                        <th>Retries</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for (node_id, node) in definition.nodes_list() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><code class="font-mono">{{ node_id }}</code></td>
+                        <td><span class="badge badge-soft badge-sm badge-info">{{ node.node_type }}</span></td>
+                        <td>
+                            {% if node.depends_on.is_empty() %}
+                            <span class="text-base-content/30">—</span>
+                            {% else %}
+                            {% for dep in node.depends_on %}
+                            <code class="font-mono text-xs">{{ dep }}</code>{% if !loop.last %}, {% endif %}
+                            {% endfor %}
+                            {% endif %}
+                        </td>
+                        <td class="tabular-nums">{% match node.timeout_seconds %}{% when Some with (t) %}{{ t }}s{% when None %}<span class="text-base-content/30">—</span>{% endmatch %}</td>
+                        <td class="tabular-nums">{% match node.max_retries %}{% when Some with (r) %}{{ r }}{% when None %}<span class="text-base-content/30">—</span>{% endmatch %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
         <div>
-            {% for (node_id, node) in definition.nodes_list() %}
-            <div class="job-node">
-                <span class="badge badge-info" style="min-width: 1.5rem; text-align: center;">{{ node.node_type }}</span>
-                <span style="font-size: 0.875rem;"><code>{{ node_id }}</code></span>
-                {% if !node.depends_on.is_empty() %}
-                <span style="color: var(--text-muted); font-size: 0.75rem;">
-                    &larr; {% for dep in node.depends_on %}{{ dep }}{% if !loop.last %}, {% endif %}{% endfor %}
-                </span>
-                {% endif %}
+            <h3 class="mb-3 text-sm font-semibold text-base-content/60">Node Graph</h3>
+            <div class="flex flex-wrap gap-2">
+                {% for (node_id, node) in definition.nodes_list() %}
+                <div class="inline-flex items-center gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2">
+                    <span class="badge badge-soft badge-sm badge-info">{{ node.node_type }}</span>
+                    <code class="font-mono text-sm">{{ node_id }}</code>
+                    {% if !node.depends_on.is_empty() %}
+                    <span class="text-xs text-base-content/50">
+                        &larr; {% for dep in node.depends_on %}{{ dep }}{% if !loop.last %}, {% endif %}{% endfor %}
+                    </span>
+                    {% endif %}
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
         </div>
     </div>
-</div>
+</section>
 
 {% if !definition.output_expressions().is_empty() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Outputs</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Outputs</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Expression</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for (name, expr) in definition.output_expressions() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><code class="font-mono">{{ name }}</code></td>
+                        <td><code class="font-mono text-xs text-base-content/70">{{ expr }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Expression</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for (name, expr) in definition.output_expressions() %}
-            <tr>
-                <td><code>{{ name }}</code></td>
-                <td><code>{{ expr }}</code></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 
 {% if !definition.definition.metadata.is_empty() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Metadata</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Metadata</h2>
+        <pre class="code-block">{{ definition.metadata_pretty() }}</pre>
     </div>
-    <pre class="code-block">{{ definition.metadata_pretty() }}</pre>
-</div>
+</section>
 {% endif %}
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">YAML Definition</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">YAML Definition</h2>
+        <pre class="code-block">{{ definition.yaml }}</pre>
     </div>
-    <pre class="code-block">{{ definition.yaml }}</pre>
-</div>
+</section>
 {% endblock %}

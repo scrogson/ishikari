@@ -535,7 +535,7 @@ pub async fn delete(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?;
 
-    Ok(Redirect::to("/definitions"))
+    Ok(Redirect::to(&format!("{}/definitions", state.base_path)))
 }
 
 /// Get workflow definitions with filtering and pagination.
@@ -885,7 +885,10 @@ pub async fn run(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?;
 
     // Redirect to the workflow detail page
-    Ok(Redirect::to(&format!("/workflows/{}", workflow_id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, workflow_id
+    )))
 }
 
 /// Create a workflow run with all node jobs.
@@ -897,7 +900,7 @@ async fn create_workflow_run(
     definition_version: i32,
     inputs: &Value,
 ) -> Result<i64, String> {
-    // 1. Create the ishikari-pro workflow
+    // 1. Create the workflow
     let workflow = Workflow::create(
         pool,
         &def.name,

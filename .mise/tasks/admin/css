@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Build admin UI CSS (Tailwind + daisyUI) into ishikari-admin/assets"
+#MISE dir="ishikari-admin/styles"
+set -e
+[ -d node_modules ] || npm install
+npm run build

@@ -1,53 +1,53 @@
 {% extends "base.html" %}
 
-{% block title %}Job Dependencies - Ishikari Pro Admin{% endblock %}
+{% block title %}Job Dependencies - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Job Dependencies</h1>
-    <p class="page-subtitle">View and manage job dependency relationships</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Job Dependencies</h1>
+    <p class="text-sm text-base-content/60">View and manage job dependency relationships</p>
 </div>
 
-<!-- Stats Cards -->
-<div class="stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
-    <div class="card">
-        <div class="stat-value" style="font-size: 2rem; font-weight: 700;">{{ stats.total_dependencies }}</div>
-        <div class="stat-label" style="color: var(--text-secondary);">Total Dependencies</div>
+<!-- Stats -->
+<section class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Total Dependencies</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums">{{ stats.total_dependencies }}</div>
     </div>
-    <div class="card">
-        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--warning);">{{ stats.blocked_jobs }}</div>
-        <div class="stat-label" style="color: var(--text-secondary);">Blocked Jobs</div>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Blocked Jobs</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums text-warning">{{ stats.blocked_jobs }}</div>
     </div>
-    <div class="card">
-        <div class="stat-value" style="font-size: 2rem; font-weight: 700; color: var(--success);">{{ stats.ready_jobs }}</div>
-        <div class="stat-label" style="color: var(--text-secondary);">Ready Jobs</div>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Ready Jobs</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums text-success">{{ stats.ready_jobs }}</div>
     </div>
-</div>
+</section>
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Dependency Relationships</h2>
-    </div>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+            <h2 class="card-title text-base">Dependency Relationships</h2>
 
-    <!-- Filters -->
-    <form class="filters" hx-get="/api/dependencies" hx-target="#dependencies-table" hx-trigger="change">
-        <div class="filter-group">
-            <label class="form-label">Filter</label>
-            <select name="blocked" class="form-select">
-                <option value="">All Dependencies</option>
-                <option value="true" {% if show_blocked_only %}selected{% endif %}>Blocking Only</option>
-            </select>
+            <!-- Filters -->
+            <form class="flex flex-wrap items-end gap-3" hx-get="{{ base_path }}/api/dependencies" hx-target="#dependencies-table" hx-trigger="change">
+                <fieldset class="fieldset py-0">
+                    <legend class="fieldset-legend">Filter</legend>
+                    <select name="blocked" class="select select-sm w-48">
+                        <option value="">All Dependencies</option>
+                        <option value="true" {% if show_blocked_only %}selected{% endif %}>Blocking Only</option>
+                    </select>
+                </fieldset>
+                {% if workflow_id.is_some() %}
+                <input type="hidden" name="workflow_id" value="{{ workflow_id.unwrap() }}">
+                <a href="{{ base_path }}/dependencies" class="btn btn-ghost btn-sm">Clear Workflow Filter</a>
+                {% endif %}
+            </form>
         </div>
-        {% if workflow_id.is_some() %}
-        <input type="hidden" name="workflow_id" value="{{ workflow_id.unwrap() }}">
-        <div class="filter-group" style="display: flex; align-items: flex-end;">
-            <a href="/dependencies" class="btn btn-secondary">Clear Workflow Filter</a>
-        </div>
-        {% endif %}
-    </form>
 
-    <div id="dependencies-table">
-        {% include "partials/dependencies_table.html" %}
+        <div id="dependencies-table">
+            {% include "partials/dependencies_table.html" %}
+        </div>
     </div>
-</div>
+</section>
 {% endblock %}

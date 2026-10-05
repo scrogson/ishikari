@@ -1,239 +1,122 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Ishikari Pro Admin{% endblock %}</title>
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <style>
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-tertiary: #334155;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --success: #22c55e;
-            --warning: #eab308;
-            --danger: #ef4444;
-            --border: #334155;
-            --pro: #8b5cf6;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-        }
-
-        .layout { display: flex; min-height: 100vh; }
-
-        .sidebar {
-            width: 240px;
-            background-color: var(--bg-secondary);
-            border-right: 1px solid var(--border);
-            padding: 1rem;
-            position: fixed;
-            height: 100vh;
-        }
-
-        .sidebar-logo {
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin-bottom: 2rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .sidebar-logo .pro-badge {
-            background: linear-gradient(135deg, var(--pro), var(--accent));
-            color: white;
-            font-size: 0.625rem;
-            padding: 0.125rem 0.375rem;
-            border-radius: 0.25rem;
-            font-weight: 600;
-        }
-
-        .sidebar-nav { list-style: none; }
-        .sidebar-nav a {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            color: var(--text-secondary);
-            text-decoration: none;
-            border-radius: 0.375rem;
-            margin-bottom: 0.25rem;
-            transition: all 0.2s;
-        }
-        .sidebar-nav a:hover { background-color: var(--bg-tertiary); color: var(--text-primary); }
-        .sidebar-nav a.active { background-color: var(--accent); color: white; }
-        .sidebar-nav .nav-icon { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
-        .sidebar-nav .section-label {
-            font-size: 0.625rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            padding: 1rem 1rem 0.5rem;
-            margin-top: 0.5rem;
-        }
-
-        .main-content { flex: 1; margin-left: 240px; padding: 2rem; }
-
-        .page-header { margin-bottom: 2rem; }
-        .page-title { font-size: 1.875rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .page-subtitle { color: var(--text-secondary); }
-
-        .card {
-            background-color: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 0.5rem;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-        .card-title { font-size: 1.125rem; font-weight: 600; }
-
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; }
-        .stat-card { background-color: var(--bg-tertiary); border-radius: 0.375rem; padding: 1rem; text-align: center; }
-        .stat-value { font-size: 1.75rem; font-weight: 700; }
-        .stat-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
-        .stat-available { color: var(--success); }
-        .stat-executing { color: var(--accent); }
-        .stat-scheduled { color: var(--warning); }
-        .stat-retryable { color: #f97316; }
-        .stat-completed { color: var(--text-secondary); }
-        .stat-discarded { color: var(--danger); }
-        .stat-cancelled { color: var(--text-muted); }
-
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-        th { font-weight: 600; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; }
-        tr:hover { background-color: var(--bg-tertiary); }
-
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            text-transform: uppercase;
-        }
-        .badge-info { background-color: rgba(59, 130, 246, 0.2); color: var(--accent); }
-        .badge-success { background-color: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .badge-warning { background-color: rgba(234, 179, 8, 0.2); color: var(--warning); }
-        .badge-error { background-color: rgba(239, 68, 68, 0.2); color: var(--danger); }
-        .badge-neutral { background-color: rgba(100, 116, 139, 0.2); color: var(--text-muted); }
-        .badge-primary { background-color: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .badge-secondary { background-color: rgba(234, 179, 8, 0.2); color: var(--warning); }
-        .badge-ghost { background-color: var(--bg-tertiary); color: var(--text-secondary); }
-
-        .btn {
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-        }
-        .btn-primary { background-color: var(--accent); color: white; }
-        .btn-secondary { background-color: var(--bg-tertiary); color: var(--text-primary); }
-
-        .filters { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-        .filter-group { min-width: 150px; }
-        .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary); }
-        .form-input, .form-select {
-            width: 100%;
-            padding: 0.5rem 0.75rem;
-            background-color: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 0.375rem;
-            color: var(--text-primary);
-        }
-
-        .pagination { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
-        .pagination a, .pagination span { padding: 0.5rem 0.75rem; border-radius: 0.375rem; color: var(--text-secondary); text-decoration: none; }
-        .pagination a:hover { background-color: var(--bg-tertiary); }
-        .pagination .active { background-color: var(--accent); color: white; }
-
-        .progress-bar {
-            height: 0.5rem;
-            background-color: var(--bg-tertiary);
-            border-radius: 0.25rem;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--success), var(--accent));
-            transition: width 0.3s;
-        }
-
-        .code-block {
-            background-color: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 0.375rem;
-            padding: 1rem;
-            overflow-x: auto;
-            font-family: 'Monaco', monospace;
-            font-size: 0.875rem;
-        }
-
-        .detail-grid { display: grid; grid-template-columns: 150px 1fr; gap: 0.75rem; }
-        .detail-label { font-weight: 500; color: var(--text-secondary); }
-
-        .workflow-graph { margin-top: 1.5rem; }
-        .job-node {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            background-color: var(--bg-tertiary);
-            border-radius: 0.375rem;
-            margin: 0.25rem;
-        }
-
-        .empty-state { text-align: center; padding: 3rem; color: var(--text-muted); }
-        a { color: var(--accent); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+    <title>{% block title %}Ishikari Admin{% endblock %}</title>
+    <script>
+        // Apply saved theme before first paint to avoid a flash
+        try {
+            const t = localStorage.getItem("ishikari-theme");
+            if (t) document.documentElement.dataset.theme = t;
+        } catch (_) {}
+    </script>
+    <link rel="stylesheet" href="{{ base_path }}/assets/admin.css">
+    <script src="{{ base_path }}/assets/htmx.min.js"></script>
+    {% block head %}{% endblock %}
 </head>
-<body>
-    <div class="layout">
-        <aside class="sidebar">
-            <div class="sidebar-logo">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                </svg>
-                Ishikari <span class="pro-badge">PRO</span>
-            </div>
-            <nav>
-                <ul class="sidebar-nav">
+<body class="min-h-screen bg-base-200 text-base-content antialiased">
+    <div class="drawer lg:drawer-open">
+        <input id="nav-drawer" type="checkbox" class="drawer-toggle">
+
+        <div class="drawer-content flex min-h-screen flex-col">
+            <!-- Top bar -->
+            <header class="navbar sticky top-0 z-20 gap-2 border-b border-base-300 bg-base-100/80 px-4 backdrop-blur">
+                <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open menu">
+                    <svg class="size-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </label>
+                <div class="lg:hidden">
+                    <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 font-bold">
+                    <svg class="size-5 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    Ishikari
+                </a>
+                </div>
+                <div class="flex-1"></div>
+                <label class="swap swap-rotate btn btn-ghost btn-circle btn-sm" title="Toggle theme">
+                    <input type="checkbox" id="theme-toggle" aria-label="Toggle light theme">
+                    <!-- moon: shown in dark mode -->
+                    <svg class="swap-off size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
+                    <!-- sun: shown in light mode -->
+                    <svg class="swap-on size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg>
+                </label>
+            </header>
+
+            <main class="{% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 lg:p-8{% endblock %}">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="drawer-side z-30">
+            <label for="nav-drawer" class="drawer-overlay" aria-label="Close menu"></label>
+            <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100">
+                <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 px-6 py-5 text-lg font-bold">
+                    <svg class="size-6 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    Ishikari
+                </a>
+                <ul class="menu w-full gap-1 px-3" id="sidebar-nav">
                     {% for item in nav_items %}
-                    <li><a href="{{ item.href }}">
-                        {% if let Some(icon) = item.icon %}
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
-                        </svg>
-                        {% endif %}
-                        {{ item.label }}
-                        {% if item.is_pro %}<span class="pro-badge">PRO</span>{% endif %}
-                    </a></li>
+                    <li>
+                        <a href="{{ item.href }}">
+                            {% if let Some(icon) = item.icon %}
+                            <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
+                            </svg>
+                            {% endif %}
+                            {{ item.label }}
+                        </a>
+                    </li>
                     {% endfor %}
                 </ul>
-            </nav>
-        </aside>
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
+            </aside>
+        </div>
     </div>
+
+    <script>
+        // Highlight the nav item matching the current page (longest prefix wins)
+        (function () {
+            const path = location.pathname.replace(/\/$/, "");
+            let best = null, bestLen = -1;
+            document.querySelectorAll("#sidebar-nav a").forEach(function (a) {
+                const href = new URL(a.href).pathname.replace(/\/$/, "");
+                const match = path === href || path.startsWith(href + "/");
+                if (match && href.length > bestLen) { best = a; bestLen = href.length; }
+            });
+            if (best) best.classList.add("menu-active");
+        })();
+
+        // Tooltip for [data-tip] elements (e.g. full worker paths). Fixed-position
+        // so it isn't clipped by scrolling table containers.
+        (function () {
+            const tip = document.createElement("div");
+            tip.className = "pointer-events-none fixed z-50 hidden max-w-lg rounded-field bg-neutral px-2 py-1 font-mono text-xs text-neutral-content shadow-lg break-all";
+            tip.setAttribute("role", "tooltip");
+            document.body.appendChild(tip);
+            function hide() { tip.classList.add("hidden"); }
+            document.addEventListener("mouseover", function (e) {
+                const el = e.target.closest("[data-tip]");
+                if (!el) return hide();
+                tip.textContent = el.dataset.tip;
+                tip.classList.remove("hidden");
+                const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+                const left = Math.min(Math.max(8, r.left), window.innerWidth - t.width - 8);
+                const top = r.top - t.height - 6 < 8 ? r.bottom + 6 : r.top - t.height - 6;
+                tip.style.left = left + "px";
+                tip.style.top = top + "px";
+            });
+            window.addEventListener("scroll", hide, true);
+        })();
+
+        // Theme toggle (dark is the default)
+        (function () {
+            const toggle = document.getElementById("theme-toggle");
+            toggle.checked = document.documentElement.dataset.theme === "light";
+            toggle.addEventListener("change", function () {
+                const theme = toggle.checked ? "light" : "dark";
+                document.documentElement.dataset.theme = theme;
+                try { localStorage.setItem("ishikari-theme", theme); } catch (_) {}
+            });
+        })();
+    </script>
 </body>
 </html>

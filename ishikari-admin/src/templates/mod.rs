@@ -1,4 +1,4 @@
-//! Askama templates for the pro admin interface.
+//! Askama templates for the admin interface.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -15,6 +15,17 @@ use crate::routes::resolver::{
 use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
 use crate::NavItem;
+
+/// Custom askama filters available to all admin templates.
+mod filters {
+    use std::fmt::Display;
+
+    /// Last `::` segment of a path, e.g. `app::workers::SendEmail` -> `SendEmail`.
+    pub fn short_name<T: Display>(s: T, _: &dyn askama::Values) -> askama::Result<String> {
+        let s = s.to_string();
+        Ok(s.rsplit("::").next().unwrap_or(&s).to_string())
+    }
+}
 
 /// Dashboard page template.
 #[derive(Template, WebTemplate)]
@@ -79,6 +90,7 @@ pub struct WorkflowDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/workflows_table.html")]
 pub struct WorkflowsTablePartial {
+    pub base_path: String,
     pub workflows: Vec<WorkflowInfo>,
     pub page: i64,
     pub total_pages: i64,
@@ -88,6 +100,7 @@ pub struct WorkflowsTablePartial {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/workflow_jobs.html")]
 pub struct WorkflowJobsPartial {
+    pub base_path: String,
     pub jobs: Vec<WorkflowJobInfo>,
 }
 
@@ -119,6 +132,7 @@ pub struct DependencyDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/dependencies_table.html")]
 pub struct DependenciesTablePartial {
+    pub base_path: String,
     pub dependencies: Vec<DependencyInfo>,
     pub page: i64,
     pub total_pages: i64,
@@ -151,6 +165,7 @@ pub struct SagaDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/sagas_table.html")]
 pub struct SagasTablePartial {
+    pub base_path: String,
     pub sagas: Vec<SagaInfo>,
     pub page: i64,
     pub total_pages: i64,
@@ -176,6 +191,10 @@ pub struct EnhancedJobsListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
     pub jobs: Vec<EnhancedJobInfo>,
+    /// Distinct queue names, for the queue filter.
+    pub queues: Vec<String>,
+    /// Distinct worker names, for the worker filter.
+    pub workers: Vec<String>,
     pub current_state: Option<String>,
     pub current_queue: Option<String>,
     pub current_worker: Option<String>,
@@ -201,6 +220,7 @@ pub struct EnhancedJobDetailTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/enhanced_jobs_table.html")]
 pub struct EnhancedJobsTablePartial {
+    pub base_path: String,
     pub jobs: Vec<EnhancedJobInfo>,
     pub page: i64,
     pub total_pages: i64,
@@ -263,6 +283,7 @@ pub struct DefinitionRunTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/definitions_table.html")]
 pub struct DefinitionsTablePartial {
+    pub base_path: String,
     pub definitions: Vec<DefinitionInfo>,
     pub page: i64,
     pub total_pages: i64,

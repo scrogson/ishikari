@@ -52,7 +52,6 @@ pub struct NavItem {
     pub label: String,
     pub href: String,
     pub icon: Option<String>,
-    pub is_pro: bool,
 }
 
 impl NavItem {
@@ -62,17 +61,6 @@ impl NavItem {
             label: label.into(),
             href: href.into(),
             icon: None,
-            is_pro: false,
-        }
-    }
-
-    /// Create a pro navigation item.
-    pub fn pro(label: impl Into<String>, href: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            href: href.into(),
-            icon: None,
-            is_pro: true,
         }
     }
 
@@ -124,7 +112,7 @@ impl AppState {
         self
     }
 
-    /// Add additional navigation items (for pro/extension features).
+    /// Add additional navigation items (for extension features).
     pub fn with_nav_items(mut self, items: Vec<NavItem>) -> Self {
         let base = self.base_path.as_str();
         let mut all_items = Self::default_nav_items(base);
@@ -266,6 +254,8 @@ pub fn app(state: AppState) -> Router {
         // Visual workflow builder (React SPA)
         .route("/builder/{*path}", get(routes::frontend::serve_builder))
         .route("/builder", get(routes::frontend::serve_builder))
+        // Embedded CSS/JS for the admin UI
+        .route("/assets/{file}", get(routes::assets::serve))
         // Static files
         .nest_service("/static", ServeDir::new("static"))
         .layer(TraceLayer::new_for_http())

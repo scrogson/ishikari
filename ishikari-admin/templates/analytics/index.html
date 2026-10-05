@@ -1,241 +1,214 @@
 {% extends "base.html" %}
 
-{% block title %}Analytics - Ishikari Pro Admin{% endblock %}
+{% block title %}Analytics - Ishikari Admin{% endblock %}
+
+{% macro count_row(label, value, class) %}
+<div class="flex items-center justify-between py-2">
+    <dt class="text-sm text-base-content/60">{{ label }}</dt>
+    <dd><span class="badge badge-soft badge-sm tabular-nums {{ class }}">{{ value }}</span></dd>
+</div>
+{% endmacro %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Analytics Dashboard</h1>
-    <p class="page-subtitle">Workflow and job performance metrics</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Analytics Dashboard</h1>
+    <p class="text-sm text-base-content/60">Workflow and job performance metrics</p>
 </div>
 
-<!-- Summary Cards -->
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
-    <!-- Workflow Success Rate -->
-    <div class="card" style="text-align: center;">
-        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Workflow Success Rate</h3>
-        <div style="font-size: 2.5rem; font-weight: 700;">
-            <span class="badge {{ analytics.workflow_success_class() }}" style="font-size: 1.5rem; padding: 0.5rem 1rem;">
-                {{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}%
-            </span>
-        </div>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+<!-- Summary tiles -->
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Workflow Success Rate</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums">{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}%</div>
+        <progress class="progress mt-2 w-full {{ analytics.workflow_success_progress() }}" value="{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}" max="100"></progress>
+        <div class="mt-1 text-xs text-base-content/50">
             {{ analytics.workflow_stats.completed }} / {{ analytics.workflow_stats.completed + analytics.workflow_stats.failed }} completed
-        </p>
+        </div>
     </div>
 
-    <!-- Job Success Rate -->
-    <div class="card" style="text-align: center;">
-        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Job Success Rate</h3>
-        <div style="font-size: 2.5rem; font-weight: 700;">
-            <span class="badge {{ analytics.job_success_class() }}" style="font-size: 1.5rem; padding: 0.5rem 1rem;">
-                {{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%
-            </span>
-        </div>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Job Success Rate</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums">{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%</div>
+        <progress class="progress mt-2 w-full {{ analytics.job_success_progress() }}" value="{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}" max="100"></progress>
+        <div class="mt-1 text-xs text-base-content/50">
             {{ analytics.job_stats.completed }} / {{ analytics.job_stats.completed + analytics.job_stats.discarded }} completed
-        </p>
+        </div>
     </div>
 
-    <!-- Active Work -->
-    <div class="card" style="text-align: center;">
-        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Active Work</h3>
-        <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent);">
-            {{ analytics.workflow_stats.running }}
-        </div>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
-            workflows running
-        </p>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Active Work</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums text-info">{{ analytics.workflow_stats.running }}</div>
+        <div class="mt-1 text-xs text-base-content/50">workflows running</div>
     </div>
 
-    <!-- Blocked Jobs -->
-    <div class="card" style="text-align: center;">
-        <h3 style="color: var(--text-secondary); margin-bottom: 0.5rem;">Blocked Jobs</h3>
-        <div style="font-size: 2.5rem; font-weight: 700; color: {% if analytics.dependency_stats.blocked_jobs > 0 %}var(--warning){% else %}var(--text-primary){% endif %};">
-            {{ analytics.dependency_stats.blocked_jobs }}
-        </div>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">
-            waiting on dependencies
-        </p>
+    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Blocked Jobs</div>
+        <div class="mt-1 text-3xl font-bold tabular-nums {% if analytics.dependency_stats.blocked_jobs > 0 %}text-warning{% endif %}">{{ analytics.dependency_stats.blocked_jobs }}</div>
+        <div class="mt-1 text-xs text-base-content/50">waiting on dependencies</div>
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-    <!-- Workflow Overview -->
-    <div class="card">
-        <div class="card-header">
-            <h2 class="card-title">Workflow Overview</h2>
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <section class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body gap-2">
+            <div class="flex items-center justify-between">
+                <h2 class="card-title text-base">Workflows</h2>
+                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.workflow_stats.total }} total</span>
+            </div>
+            <dl class="divide-y divide-base-300">
+                {% call count_row("Running", analytics.workflow_stats.running, "badge-info") %}
+                {% call count_row("Completed", analytics.workflow_stats.completed, "badge-success") %}
+                {% call count_row("Failed", analytics.workflow_stats.failed, "badge-error") %}
+                {% call count_row("Cancelled", analytics.workflow_stats.cancelled, "badge-neutral") %}
+            </dl>
         </div>
-        <div class="detail-grid">
-            <div class="detail-label">Total</div>
-            <div>{{ analytics.workflow_stats.total }}</div>
-            <div class="detail-label">Running</div>
-            <div><span class="badge badge-warning">{{ analytics.workflow_stats.running }}</span></div>
-            <div class="detail-label">Completed</div>
-            <div><span class="badge badge-success">{{ analytics.workflow_stats.completed }}</span></div>
-            <div class="detail-label">Failed</div>
-            <div><span class="badge badge-error">{{ analytics.workflow_stats.failed }}</span></div>
-            <div class="detail-label">Cancelled</div>
-            <div><span class="badge badge-secondary">{{ analytics.workflow_stats.cancelled }}</span></div>
-        </div>
-    </div>
+    </section>
 
-    <!-- Job Overview -->
-    <div class="card">
-        <div class="card-header">
-            <h2 class="card-title">Job Overview</h2>
+    <section class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body gap-2">
+            <div class="flex items-center justify-between">
+                <h2 class="card-title text-base">Jobs</h2>
+                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.job_stats.total }} total</span>
+            </div>
+            <dl class="divide-y divide-base-300">
+                {% call count_row("Available", analytics.job_stats.available, "badge-primary") %}
+                {% call count_row("Executing", analytics.job_stats.executing, "badge-info") %}
+                {% call count_row("Completed", analytics.job_stats.completed, "badge-success") %}
+                {% call count_row("Retryable", analytics.job_stats.retryable, "badge-warning") %}
+                {% call count_row("Discarded", analytics.job_stats.discarded, "badge-error") %}
+            </dl>
         </div>
-        <div class="detail-grid">
-            <div class="detail-label">Total</div>
-            <div>{{ analytics.job_stats.total }}</div>
-            <div class="detail-label">Available</div>
-            <div><span class="badge badge-info">{{ analytics.job_stats.available }}</span></div>
-            <div class="detail-label">Executing</div>
-            <div><span class="badge badge-warning">{{ analytics.job_stats.executing }}</span></div>
-            <div class="detail-label">Completed</div>
-            <div><span class="badge badge-success">{{ analytics.job_stats.completed }}</span></div>
-            <div class="detail-label">Discarded</div>
-            <div><span class="badge badge-error">{{ analytics.job_stats.discarded }}</span></div>
-            <div class="detail-label">Retryable</div>
-            <div><span class="badge badge-secondary">{{ analytics.job_stats.retryable }}</span></div>
+    </section>
+
+    <section class="card border border-base-300 bg-base-100 shadow-sm">
+        <div class="card-body gap-2">
+            <div class="flex items-center justify-between">
+                <h2 class="card-title text-base">Dependencies</h2>
+                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.dependency_stats.total_deps }} total</span>
+            </div>
+            <dl class="divide-y divide-base-300">
+                {% call count_row("Pending", analytics.dependency_stats.pending, "badge-warning") %}
+                {% call count_row("Satisfied", analytics.dependency_stats.satisfied, "badge-success") %}
+                {% call count_row("Failed", analytics.dependency_stats.failed, "badge-error") %}
+            </dl>
         </div>
-    </div>
+    </section>
 </div>
 
-<!-- Dependency Stats -->
-<div class="card" style="margin-top: 1rem;">
-    <div class="card-header">
-        <h2 class="card-title">Dependency Resolution</h2>
-    </div>
-    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
-        <div>
-            <span style="color: var(--text-secondary);">Total Dependencies:</span>
-            <strong>{{ analytics.dependency_stats.total_deps }}</strong>
-        </div>
-        <div>
-            <span style="color: var(--text-secondary);">Pending:</span>
-            <span class="badge badge-warning">{{ analytics.dependency_stats.pending }}</span>
-        </div>
-        <div>
-            <span style="color: var(--text-secondary);">Satisfied:</span>
-            <span class="badge badge-success">{{ analytics.dependency_stats.satisfied }}</span>
-        </div>
-        <div>
-            <span style="color: var(--text-secondary);">Failed:</span>
-            <span class="badge badge-error">{{ analytics.dependency_stats.failed }}</span>
-        </div>
-    </div>
-</div>
-
-<!-- Workflow Type Breakdown -->
 {% if !analytics.workflow_types.is_empty() %}
-<div class="card" style="margin-top: 1rem;">
-    <div class="card-header">
-        <h2 class="card-title">Workflow Types</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Workflow Types</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Total</th>
+                        <th>Completed</th>
+                        <th>Failed</th>
+                        <th>Success Rate</th>
+                        <th>Avg Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for wf in analytics.workflow_types.iter() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td class="font-medium">{{ wf.name }}</td>
+                        <td class="tabular-nums">{{ wf.total }}</td>
+                        <td class="tabular-nums text-success">{{ wf.completed }}</td>
+                        <td class="tabular-nums {% if wf.failed > 0 %}text-error{% else %}text-base-content/40{% endif %}">{{ wf.failed }}</td>
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <progress class="progress w-24 {% if wf.success_rate >= 0.95 %}progress-success{% elif wf.success_rate >= 0.80 %}progress-warning{% else %}progress-error{% endif %}" value="{{ "{:.1}"|format(wf.success_rate * 100.0) }}" max="100"></progress>
+                                <span class="text-xs tabular-nums">{{ "{:.1}"|format(wf.success_rate * 100.0) }}%</span>
+                            </div>
+                        </td>
+                        <td class="tabular-nums">
+                            {% match wf.avg_duration_secs %}
+                            {% when Some with (secs) %}
+                            {{ "{:.1}"|format(secs) }}s
+                            {% when None %}
+                            <span class="text-base-content/30">—</span>
+                            {% endmatch %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Total</th>
-                <th>Completed</th>
-                <th>Failed</th>
-                <th>Success Rate</th>
-                <th>Avg Duration</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for wf in analytics.workflow_types.iter() %}
-            <tr>
-                <td>{{ wf.name }}</td>
-                <td>{{ wf.total }}</td>
-                <td><span class="badge badge-success">{{ wf.completed }}</span></td>
-                <td><span class="badge badge-error">{{ wf.failed }}</span></td>
-                <td>
-                    <span class="badge {% if wf.success_rate >= 0.95 %}badge-success{% elif wf.success_rate >= 0.80 %}badge-warning{% else %}badge-error{% endif %}">
-                        {{ "{:.1}"|format(wf.success_rate * 100.0) }}%
-                    </span>
-                </td>
-                <td>
-                    {% match wf.avg_duration_secs %}
-                    {% when Some with (secs) %}
-                    {{ "{:.1}"|format(secs) }}s
-                    {% when None %}
-                    <span style="color: var(--text-muted);">-</span>
-                    {% endmatch %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 
-<!-- Worker Stats -->
 {% if !analytics.worker_stats.is_empty() %}
-<div class="card" style="margin-top: 1rem;">
-    <div class="card-header">
-        <h2 class="card-title">Worker Performance</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Worker Performance</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th>Total</th>
+                        <th>Completed</th>
+                        <th>Discarded</th>
+                        <th>Avg Attempts</th>
+                        <th>Avg Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for w in analytics.worker_stats.iter() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ w.worker }}">{{ w.worker|short_name }}</span></td>
+                        <td class="tabular-nums">{{ w.total }}</td>
+                        <td class="tabular-nums text-success">{{ w.completed }}</td>
+                        <td class="tabular-nums {% if w.discarded > 0 %}text-error{% else %}text-base-content/40{% endif %}">{{ w.discarded }}</td>
+                        <td class="tabular-nums">{{ "{:.2}"|format(w.avg_attempts) }}</td>
+                        <td class="tabular-nums">
+                            {% match w.avg_duration_secs %}
+                            {% when Some with (secs) %}
+                            {{ "{:.1}"|format(secs) }}s
+                            {% when None %}
+                            <span class="text-base-content/30">—</span>
+                            {% endmatch %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Worker</th>
-                <th>Total</th>
-                <th>Completed</th>
-                <th>Discarded</th>
-                <th>Avg Attempts</th>
-                <th>Avg Duration</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for w in analytics.worker_stats.iter() %}
-            <tr>
-                <td>{{ w.worker }}</td>
-                <td>{{ w.total }}</td>
-                <td><span class="badge badge-success">{{ w.completed }}</span></td>
-                <td><span class="badge badge-error">{{ w.discarded }}</span></td>
-                <td>{{ "{:.2}"|format(w.avg_attempts) }}</td>
-                <td>
-                    {% match w.avg_duration_secs %}
-                    {% when Some with (secs) %}
-                    {{ "{:.1}"|format(secs) }}s
-                    {% when None %}
-                    <span style="color: var(--text-muted);">-</span>
-                    {% endmatch %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 
-<!-- Failure Patterns -->
 {% if !analytics.failure_patterns.is_empty() %}
-<div class="card" style="margin-top: 1rem;">
-    <div class="card-header">
-        <h2 class="card-title" style="color: var(--error);">Common Failure Patterns</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base text-error">Common Failure Patterns</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th>Error Type</th>
+                        <th>Count</th>
+                        <th>Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fp in analytics.failure_patterns.iter() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ fp.worker }}">{{ fp.worker|short_name }}</span></td>
+                        <td class="max-w-md truncate"><code class="font-mono text-xs text-error" title="{{ fp.error_type }}">{{ fp.error_type }}</code></td>
+                        <td><span class="badge badge-soft badge-sm badge-error tabular-nums">{{ fp.count }}</span></td>
+                        <td class="whitespace-nowrap text-base-content/60">{{ fp.last_seen.format("%Y-%m-%d %H:%M") }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Worker</th>
-                <th>Error Type</th>
-                <th>Count</th>
-                <th>Last Seen</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for fp in analytics.failure_patterns.iter() %}
-            <tr>
-                <td>{{ fp.worker }}</td>
-                <td><code style="color: var(--error);">{{ fp.error_type }}</code></td>
-                <td><span class="badge badge-error">{{ fp.count }}</span></td>
-                <td>{{ fp.last_seen.format("%Y-%m-%d %H:%M") }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 {% endblock %}

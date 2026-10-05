@@ -1,22 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}Jobs - Ishikari Pro Admin{% endblock %}
+{% block title %}Jobs - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Jobs</h1>
-    <p class="page-subtitle">{{ total }} jobs</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Jobs</h1>
+    <p class="text-sm text-base-content/60">{{ total }} jobs</p>
 </div>
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Filters</h2>
-    </div>
-
-    <form id="jobs-filter-form" class="filters" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem;">
-        <div class="filter-group">
-            <label class="form-label">State</label>
-            <select name="state" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body">
+    <form id="jobs-filter-form" class="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">State</legend>
+            <select name="state" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">All States</option>
                 <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
                 <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
@@ -26,47 +23,58 @@
                 <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
                 <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
             </select>
-        </div>
+        </fieldset>
 
-        <div class="filter-group">
-            <label class="form-label">Queue</label>
-            <input type="text" name="queue" class="form-input" placeholder="Filter by queue" value="{{ current_queue.as_deref().unwrap_or("") }}" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="input changed delay:300ms, change" hx-include="#jobs-filter-form">
-        </div>
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">Queue</legend>
+            <select name="queue" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+                <option value="">All Queues</option>
+                {% for q in queues %}
+                <option value="{{ q }}" {% if current_queue.as_deref() == Some(q.as_str()) %}selected{% endif %}>{{ q }}</option>
+                {% endfor %}
+            </select>
+        </fieldset>
 
-        <div class="filter-group">
-            <label class="form-label">Worker</label>
-            <input type="text" name="worker" class="form-input" placeholder="Filter by worker" value="{{ current_worker.as_deref().unwrap_or("") }}" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="input changed delay:300ms, change" hx-include="#jobs-filter-form">
-        </div>
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">Worker</legend>
+            <select name="worker" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+                <option value="">All Workers</option>
+                {% for w in workers %}
+                <option value="{{ w }}" title="{{ w }}" {% if current_worker.as_deref() == Some(w.as_str()) %}selected{% endif %}>{{ w|short_name }}</option>
+                {% endfor %}
+            </select>
+        </fieldset>
 
-        <div class="filter-group">
-            <label class="form-label">Has Dependencies</label>
-            <select name="has_deps" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">Has Dependencies</legend>
+            <select name="has_deps" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">Any</option>
                 <option value="true" {% if has_deps_filter == Some(true) %}selected{% endif %}>Yes</option>
             </select>
-        </div>
+        </fieldset>
 
-        <div class="filter-group">
-            <label class="form-label">Is Blocking</label>
-            <select name="is_blocking" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">Is Blocking</legend>
+            <select name="is_blocking" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">Any</option>
                 <option value="true" {% if is_blocking_filter == Some(true) %}selected{% endif %}>Yes</option>
             </select>
-        </div>
+        </fieldset>
 
-        <div class="filter-group">
-            <label class="form-label">In Workflow</label>
-            <select name="in_workflow" class="form-select" hx-get="/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
+        <fieldset class="fieldset py-0">
+            <legend class="fieldset-legend">In Workflow</legend>
+            <select name="in_workflow" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">Any</option>
                 <option value="true" {% if in_workflow_filter == Some(true) %}selected{% endif %}>Yes</option>
             </select>
-        </div>
+        </fieldset>
     </form>
-</div>
+    </div>
+</section>
 
-<div class="card">
-    <div id="jobs-table">
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body" id="jobs-table">
         {% include "partials/enhanced_jobs_table.html" %}
     </div>
-</div>
+</section>
 {% endblock %}

@@ -3,45 +3,47 @@
 {% block title %}Queues - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Queues</h1>
-    <p class="page-subtitle">{{ queues.len() }} queues</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Queues</h1>
+    <p class="text-sm text-base-content/60">{{ queues.len() }} queues</p>
 </div>
 
-<div class="card">
-    {% if queues.is_empty() %}
-    <div class="empty-state">
-        <p>No queues found</p>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        {% if queues.is_empty() %}
+        <div class="py-12 text-center text-base-content/50">No queues found</div>
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Queue</th>
+                        <th class="text-right">Available</th>
+                        <th class="text-right">Executing</th>
+                        <th class="text-right">Scheduled</th>
+                        <th class="text-right">Retryable</th>
+                        <th class="text-right">Completed</th>
+                        <th class="text-right">Discarded</th>
+                        <th class="text-right">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for queue in queues %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><a class="link link-hover link-primary font-medium" href="{{ base_path }}/queues/{{ queue.name }}">{{ queue.name }}</a></td>
+                        <td class="text-right tabular-nums text-primary">{{ queue.available }}</td>
+                        <td class="text-right tabular-nums text-info">{{ queue.executing }}</td>
+                        <td class="text-right tabular-nums text-secondary">{{ queue.scheduled }}</td>
+                        <td class="text-right tabular-nums text-warning">{{ queue.retryable }}</td>
+                        <td class="text-right tabular-nums text-success">{{ queue.completed }}</td>
+                        <td class="text-right tabular-nums text-error">{{ queue.discarded }}</td>
+                        <td class="text-right font-semibold tabular-nums">{{ queue.total }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
     </div>
-    {% else %}
-    <table>
-        <thead>
-            <tr>
-                <th>Queue</th>
-                <th>Available</th>
-                <th>Executing</th>
-                <th>Scheduled</th>
-                <th>Retryable</th>
-                <th>Completed</th>
-                <th>Discarded</th>
-                <th>Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for queue in queues %}
-            <tr>
-                <td><a href="{{ base_path }}/queues/{{ queue.name }}">{{ queue.name }}</a></td>
-                <td><span class="stat-available">{{ queue.available }}</span></td>
-                <td><span class="stat-executing">{{ queue.executing }}</span></td>
-                <td><span class="stat-scheduled">{{ queue.scheduled }}</span></td>
-                <td><span class="stat-retryable">{{ queue.retryable }}</span></td>
-                <td><span class="stat-completed">{{ queue.completed }}</span></td>
-                <td><span class="stat-discarded">{{ queue.discarded }}</span></td>
-                <td>{{ queue.total }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
-</div>
+</section>
 {% endblock %}

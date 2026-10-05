@@ -3,47 +3,49 @@
 {% block title %}Dashboard - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">Job queue overview</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
+    <p class="text-sm text-base-content/60">Job queue overview</p>
 </div>
 
-<div class="card" id="stats-card" hx-get="{{ base_path }}/api/stats" hx-trigger="every 5s" hx-swap="innerHTML">
+<section id="stats-card" hx-get="{{ base_path }}/api/stats" hx-trigger="every 5s" hx-swap="innerHTML">
     {% include "partials/stats.html" %}
-</div>
+</section>
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Recent Failures</h2>
-        <a href="{{ base_path }}/jobs?state=discarded" class="btn btn-secondary btn-sm">View All</a>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <div class="flex items-center justify-between">
+            <h2 class="card-title text-base">Recent Failures</h2>
+            <a href="{{ base_path }}/jobs?state=discarded" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        {% if recent_failures.is_empty() %}
+        <div class="py-12 text-center text-base-content/50">No recent failures 🎉</div>
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Worker</th>
+                        <th>Queue</th>
+                        <th>Error</th>
+                        <th>Failed At</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for failure in recent_failures %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ failure.id }}">#{{ failure.id }}</a></td>
+                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ failure.worker }}">{{ failure.worker|short_name }}</span></td>
+                        <td><span class="badge badge-ghost badge-sm">{{ failure.queue }}</span></td>
+                        <td class="max-w-md truncate text-error" title="{{ failure.error.as_deref().unwrap_or("-") }}">{{ failure.error.as_deref().unwrap_or("-") }}</td>
+                        <td class="whitespace-nowrap text-base-content/60">{{ failure.failed_at.format("%Y-%m-%d %H:%M:%S") }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
     </div>
-    {% if recent_failures.is_empty() %}
-    <div class="empty-state">
-        <p>No recent failures</p>
-    </div>
-    {% else %}
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Worker</th>
-                <th>Queue</th>
-                <th>Error</th>
-                <th>Failed At</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for failure in recent_failures %}
-            <tr>
-                <td><a href="{{ base_path }}/jobs/{{ failure.id }}">{{ failure.id }}</a></td>
-                <td class="text-truncate">{{ failure.worker }}</td>
-                <td>{{ failure.queue }}</td>
-                <td class="text-truncate">{{ failure.error.as_deref().unwrap_or("-") }}</td>
-                <td>{{ failure.failed_at.format("%Y-%m-%d %H:%M:%S") }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
-</div>
+</section>
 {% endblock %}

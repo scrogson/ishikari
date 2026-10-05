@@ -92,7 +92,7 @@ function WorkflowBuilderInner({ definitionId, onSaved }: WorkflowBuilderProps) {
       <header className="flex items-center justify-between px-4 py-3 bg-bg-secondary border-b border-border shrink-0">
         <div className="flex items-center gap-4">
           <a
-            href="/definitions"
+            href={`${window.__WORKFLOW_BUILDER__?.basePath ?? ''}/definitions`}
             className="text-text-secondary hover:text-text-primary transition-colors"
           >
             ← Definitions

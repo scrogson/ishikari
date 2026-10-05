@@ -180,6 +180,7 @@ pub async fn workflows_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     WorkflowsTablePartial {
+        base_path: state.base_path.to_string(),
         workflows,
         page,
         total_pages,
@@ -192,7 +193,10 @@ pub async fn workflow_jobs(
     Path(id): Path<i64>,
 ) -> WorkflowJobsPartial {
     let jobs = get_workflow_jobs(&state.pool, state.schema(), id).await;
-    WorkflowJobsPartial { jobs }
+    WorkflowJobsPartial {
+        base_path: state.base_path.to_string(),
+        jobs,
+    }
 }
 
 /// Get workflows (copied from workflows.rs to avoid circular deps)
@@ -319,14 +323,15 @@ async fn get_workflow_jobs(
             j.id, j.worker, j.state::text, j.attempt, j.max_attempts,
             j.inserted_at, j.completed_at,
             COALESCE(array_agg(d.depends_on_job_id) FILTER (WHERE d.depends_on_job_id IS NOT NULL), '{{}}') as dependencies,
-            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation
+            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation,
+            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
         FROM {} j
         LEFT JOIN {} d ON d.job_id = j.id
         WHERE j.workflow_id = $1
         GROUP BY j.id
         ORDER BY j.id
         "#,
-        saga_steps_table, jobs_table, deps_table
+        saga_steps_table, saga_steps_table, jobs_table, deps_table
     );
 
     let rows: Vec<(
@@ -339,6 +344,7 @@ async fn get_workflow_jobs(
         Option<chrono::DateTime<chrono::Utc>>,
         Vec<i64>,
         bool,
+        Option<String>,
     )> = sqlx::query_as(&query)
         .bind(workflow_id)
         .fetch_all(pool)
@@ -356,6 +362,7 @@ async fn get_workflow_jobs(
             completed_at: row.6,
             dependencies: row.7,
             is_compensation: row.8,
+            saga_step_state: row.9,
         })
         .collect()
 }
@@ -382,6 +389,7 @@ pub async fn dependencies_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     DependenciesTablePartial {
+        base_path: state.base_path.to_string(),
         dependencies,
         page,
         total_pages,
@@ -525,6 +533,7 @@ pub async fn sagas_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     SagasTablePartial {
+        base_path: state.base_path.to_string(),
         sagas,
         page,
         total_pages,
@@ -643,6 +652,7 @@ pub async fn enhanced_jobs_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     EnhancedJobsTablePartial {
+        base_path: state.base_path.to_string(),
         jobs,
         page,
         total_pages,
@@ -682,8 +692,8 @@ async fn get_enhanced_jobs(
         conditions.push(format!("j.queue = ${}", params.len()));
     }
     if let Some(ref w) = query.worker {
-        params.push(format!("%{}%", w));
-        conditions.push(format!("j.worker ILIKE ${}", params.len()));
+        params.push(w.to_string());
+        conditions.push(format!("j.worker = ${}", params.len()));
     }
     if query.has_deps == Some(true) {
         conditions.push(format!(
@@ -812,6 +822,7 @@ pub async fn definitions_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     DefinitionsTablePartial {
+        base_path: state.base_path.to_string(),
         definitions,
         page,
         total_pages,

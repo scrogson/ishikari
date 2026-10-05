@@ -5,7 +5,7 @@ import type {
   WorkflowDefinition,
 } from '../types/workflow';
 
-const API_BASE = '/api';
+const API_BASE = window.__WORKFLOW_BUILDER__?.apiBase ?? '/api';
 
 class ApiError extends Error {
   status: number;

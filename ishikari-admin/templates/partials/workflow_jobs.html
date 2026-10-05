@@ -1,34 +1,46 @@
 {% if jobs.is_empty() %}
-<div class="empty-state">No jobs in this workflow</div>
+<div class="py-12 text-center text-base-content/50">No jobs in this workflow</div>
 {% else %}
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Worker</th>
-            <th>State</th>
-            <th>Attempt</th>
-            <th>Dependencies</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for job in jobs %}
-        <tr>
-            <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
-            <td>{{ job.worker }}</td>
-            <td><span class="badge {{ job.state_class() }}">{{ job.state }}</span></td>
-            <td>{{ job.attempt }}/{{ job.max_attempts }}</td>
-            <td>
-                {% if job.dependencies.is_empty() %}
-                <span style="color: var(--text-muted)">None</span>
-                {% else %}
-                {% for dep_id in job.dependencies %}
-                <a href="/jobs/{{ dep_id }}">#{{ dep_id }}</a>{% if !loop.last %}, {% endif %}
-                {% endfor %}
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="overflow-x-auto">
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Worker</th>
+                <th>State</th>
+                <th>Attempt</th>
+                <th>Dependencies</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr class="hover:bg-base-200/60">
+                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                <td>
+                    <div class="flex flex-wrap gap-1">
+                        <span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+                        {% if let Some(rs) = job.saga_rollback_state() %}
+                        <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                        {% endif %}
+                        {% if job.is_compensation %}
+                        <span class="badge badge-ghost badge-sm" title="Saga compensation job">compensation</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td class="tabular-nums">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td>
+                    {% if job.dependencies.is_empty() %}
+                    <span class="text-base-content/30">—</span>
+                    {% else %}
+                    {% for dep_id in job.dependencies %}
+                    <a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ dep_id }}">#{{ dep_id }}</a>{% if !loop.last %}, {% endif %}
+                    {% endfor %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endif %}

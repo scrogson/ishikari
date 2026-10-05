@@ -195,6 +195,8 @@ pub struct WorkflowJobInfo {
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether this is a compensation job (from a saga).
     pub is_compensation: bool,
+    /// Saga step state, if this is a saga forward job.
+    pub saga_step_state: Option<String>,
 }
 
 impl WorkflowJobInfo {
@@ -210,6 +212,22 @@ impl WorkflowJobInfo {
             "discarded" | "cancelled" => "badge-error",
             "retryable" => "badge-warning",
             _ => "badge-ghost",
+        }
+    }
+
+    /// Saga step state worth showing next to the job state, i.e. when the
+    /// step was rolled back after the job itself completed.
+    pub fn saga_rollback_state(&self) -> Option<&str> {
+        self.saga_step_state
+            .as_deref()
+            .filter(|s| matches!(*s, "compensating" | "compensated" | "compensation_failed"))
+    }
+
+    pub fn saga_rollback_class(&self) -> &'static str {
+        match self.saga_step_state.as_deref() {
+            Some("compensation_failed") => "badge-error",
+            Some("compensating") => "badge-warning",
+            _ => "badge-neutral",
         }
     }
 }
@@ -497,14 +515,15 @@ async fn get_workflow_jobs(
             j.id, j.worker, j.state::text, j.attempt, j.max_attempts,
             j.inserted_at, j.completed_at,
             COALESCE(array_agg(d.depends_on_job_id) FILTER (WHERE d.depends_on_job_id IS NOT NULL), '{{}}') as dependencies,
-            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation
+            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation,
+            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
         FROM {} j
         LEFT JOIN {} d ON d.job_id = j.id
         WHERE j.workflow_id = $1
         GROUP BY j.id
         ORDER BY j.id
         "#,
-        saga_steps_table, jobs_table, deps_table
+        saga_steps_table, saga_steps_table, jobs_table, deps_table
     );
 
     let rows: Vec<(
@@ -517,6 +536,7 @@ async fn get_workflow_jobs(
         Option<chrono::DateTime<chrono::Utc>>,
         Vec<i64>,
         bool,
+        Option<String>,
     )> = sqlx::query_as(&query)
         .bind(workflow_id)
         .fetch_all(pool)
@@ -534,6 +554,7 @@ async fn get_workflow_jobs(
             completed_at: row.6,
             dependencies: row.7,
             is_compensation: row.8,
+            saga_step_state: row.9,
         })
         .collect()
 }

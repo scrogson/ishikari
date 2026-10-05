@@ -55,7 +55,10 @@ pub async fn cancel_workflow(
     }
 
     info!(workflow_id = id, "workflow cancelled");
-    Ok(Redirect::to(&format!("/workflows/{}", id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, id
+    )))
 }
 
 /// Retry failed jobs in a workflow.
@@ -98,7 +101,10 @@ pub async fn retry_workflow(
     }
 
     info!(workflow_id = id, "workflow jobs retried");
-    Ok(Redirect::to(&format!("/workflows/{}", id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, id
+    )))
 }
 
 /// Clone a workflow (create a new one with same jobs).
@@ -149,7 +155,10 @@ pub async fn clone_workflow(
         new_workflow_id = new_workflow_id,
         "workflow cloned"
     );
-    Ok(Redirect::to(&format!("/workflows/{}", new_workflow_id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, new_workflow_id
+    )))
 }
 
 /// Retry a single job.
@@ -169,7 +178,7 @@ pub async fn retry_job(
     }
 
     info!(job_id = id, "job retried");
-    Ok(Redirect::to(&format!("/jobs/{}", id)))
+    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
 }
 
 /// Cancel a single job.
@@ -189,7 +198,7 @@ pub async fn cancel_job(
     }
 
     info!(job_id = id, "job cancelled");
-    Ok(Redirect::to(&format!("/jobs/{}", id)))
+    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
 }
 
 // Helper functions
