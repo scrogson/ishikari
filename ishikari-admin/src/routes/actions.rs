@@ -297,6 +297,10 @@ async fn retry_workflow_jobs(
         Some(s) => format!("{}.ishikari_job_dependencies", s),
         None => "ishikari_job_dependencies".to_string(),
     };
+    let enum_type = match schema {
+        Some(s) => format!("{}.ishikari_job_state", s),
+        None => "ishikari_job_state".to_string(),
+    };
 
     // Reset discarded jobs to retryable, reset attempt count
     let query = format!(
@@ -306,13 +310,13 @@ async fn retry_workflow_jobs(
             WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = id AND d.state != 'satisfied')
             THEN 'scheduled'
             ELSE 'available'
-        END,
+        END::{},
         attempt = 0,
-        errors = '[]'::jsonb
+        errors = ARRAY[]::jsonb[]
         WHERE workflow_id = $1
           AND state IN ('discarded', 'cancelled')
         "#,
-        jobs_table, deps_table
+        jobs_table, deps_table, enum_type
     );
 
     sqlx::query(&query).bind(workflow_id).execute(pool).await?;
@@ -456,6 +460,10 @@ async fn retry_single_job(pool: &PgPool, schema: Option<&str>, id: i64) -> Resul
         Some(s) => format!("{}.ishikari_job_dependencies", s),
         None => "ishikari_job_dependencies".to_string(),
     };
+    let enum_type = match schema {
+        Some(s) => format!("{}.ishikari_job_state", s),
+        None => "ishikari_job_state".to_string(),
+    };
 
     let query = format!(
         r#"
@@ -464,13 +472,13 @@ async fn retry_single_job(pool: &PgPool, schema: Option<&str>, id: i64) -> Resul
             WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = $1 AND d.state != 'satisfied')
             THEN 'scheduled'
             ELSE 'available'
-        END,
+        END::{},
         attempt = 0,
-        errors = '[]'::jsonb
+        errors = ARRAY[]::jsonb[]
         WHERE id = $1
           AND state IN ('discarded', 'cancelled', 'retryable')
         "#,
-        jobs_table, deps_table
+        jobs_table, deps_table, enum_type
     );
 
     sqlx::query(&query).bind(id).execute(pool).await?;
