@@ -259,13 +259,13 @@ mod queue;
 mod result;
 mod stager;
 
-// Pro features: workflow orchestration patterns
+// workflow orchestration patterns
 pub mod workflows;
 
-// Pro features: job dependency management
+// job dependency management
 pub mod dependencies;
 
-// Pro features: advanced workflow execution
+// advanced workflow execution
 pub mod execution;
 
 pub use ishikari_macros::{job, worker};

@@ -22,7 +22,7 @@
 //! # Example: DAG
 //!
 //! ```rust,ignore
-//! use ishikari::workflows::DAG;
+//! use ishikari::workflows::Dag;
 //!
 //! let dag = DAG::builder("etl-pipeline")
 //!     .job("extract_users", ExtractUsersJob)

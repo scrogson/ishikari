@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ishikari_pro::Saga;
+//! use ishikari::workflows::Saga;
 //!
 //! // Book a trip - if any step fails, previous steps are rolled back
 //! let workflow = Saga::new("book-trip")
@@ -170,7 +170,7 @@ impl SagaStepBuilder {
 /// # Example
 ///
 /// ```rust,ignore
-/// use ishikari_pro::Saga;
+/// use ishikari::workflows::Saga;
 ///
 /// let workflow = Saga::new("transfer-funds")
 ///     .step(DebitAccount { account: "A", amount: 100 })
