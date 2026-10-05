@@ -245,6 +245,10 @@
 //! See the [examples](https://github.com/scrogson/ishikari/tree/main/ishikari/examples) directory
 //! for complete working examples of job processing with Ishikari.
 
+// `#[async_trait]` emits `#[must_use]` on methods returning `Result`, which
+// clippy (1.99+) flags as `double_must_use` in the generated code.
+#![allow(clippy::double_must_use)]
+
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 #[doc(hidden)]

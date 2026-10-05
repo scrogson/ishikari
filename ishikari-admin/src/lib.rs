@@ -28,6 +28,10 @@
 //! }
 //! ```
 
+// Handlers return `Result<_, axum::response::Response>`; boxing the error
+// to satisfy clippy (1.99+) would just add an allocation per error response.
+#![allow(clippy::result_large_err)]
+
 use axum::{
     extract::FromRef,
     routing::{get, post},
