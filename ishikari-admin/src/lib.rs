@@ -28,6 +28,10 @@
 //! }
 //! ```
 
+// Handlers return `Result<_, axum::response::Response>`; boxing the error
+// to satisfy clippy (1.99+) would just add an allocation per error response.
+#![allow(clippy::result_large_err)]
+
 use axum::{
     extract::FromRef,
     routing::{get, post},
@@ -52,7 +56,6 @@ pub struct NavItem {
     pub label: String,
     pub href: String,
     pub icon: Option<String>,
-    pub is_pro: bool,
 }
 
 impl NavItem {
@@ -62,17 +65,6 @@ impl NavItem {
             label: label.into(),
             href: href.into(),
             icon: None,
-            is_pro: false,
-        }
-    }
-
-    /// Create a pro navigation item.
-    pub fn pro(label: impl Into<String>, href: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            href: href.into(),
-            icon: None,
-            is_pro: true,
         }
     }
 
@@ -88,6 +80,7 @@ impl NavItem {
 pub struct AppState {
     pub pool: PgPool,
     pub schema: Option<String>,
+    pub base_path: Arc<String>,
     pub nav_items: Arc<Vec<NavItem>>,
 }
 
@@ -97,7 +90,8 @@ impl AppState {
         Self {
             pool,
             schema: None,
-            nav_items: Arc::new(Self::default_nav_items()),
+            base_path: Arc::new(String::new()),
+            nav_items: Arc::new(Self::default_nav_items("")),
         }
     }
 
@@ -106,14 +100,33 @@ impl AppState {
         Self {
             pool,
             schema: Some(schema.into()),
-            nav_items: Arc::new(Self::default_nav_items()),
+            base_path: Arc::new(String::new()),
+            nav_items: Arc::new(Self::default_nav_items("")),
         }
     }
 
-    /// Add additional navigation items (for pro/extension features).
+    /// Set the base path for when the admin is mounted at a subpath.
+    ///
+    /// For example, if mounted at "/admin", all links will be prefixed with "/admin".
+    pub fn with_base_path(mut self, path: impl Into<String>) -> Self {
+        let path = path.into();
+        let path = path.trim_end_matches('/').to_string();
+        self.nav_items = Arc::new(Self::default_nav_items(&path));
+        self.base_path = Arc::new(path);
+        self
+    }
+
+    /// Add additional navigation items (for extension features).
     pub fn with_nav_items(mut self, items: Vec<NavItem>) -> Self {
-        let mut all_items = Self::default_nav_items();
-        all_items.extend(items);
+        let base = self.base_path.as_str();
+        let mut all_items = Self::default_nav_items(base);
+        // Prefix additional items with base path
+        for mut item in items {
+            if !item.href.starts_with("http") {
+                item.href = format!("{}{}", base, item.href);
+            }
+            all_items.push(item);
+        }
         self.nav_items = Arc::new(all_items);
         self
     }
@@ -123,22 +136,37 @@ impl AppState {
         self.schema.as_deref()
     }
 
+    /// Get the base path for URL prefixing.
+    pub fn base_path(&self) -> &str {
+        &self.base_path
+    }
+
     /// Get navigation items for the sidebar.
     pub fn nav_items(&self) -> &[NavItem] {
         &self.nav_items
     }
 
-    fn default_nav_items() -> Vec<NavItem> {
+    fn default_nav_items(base: &str) -> Vec<NavItem> {
+        let p = |path: &str| {
+            if base.is_empty() {
+                path.to_string()
+            } else if path == "/" {
+                base.to_string()
+            } else {
+                format!("{}{}", base, path)
+            }
+        };
+
         vec![
-            NavItem::new("Dashboard", "/").icon("M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"),
-            NavItem::new("Jobs", "/jobs").icon("M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"),
-            NavItem::new("Queues", "/queues").icon("M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"),
-            NavItem::new("Definitions", "/definitions").icon("M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"),
-            NavItem::new("Workflows", "/workflows").icon("M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75zM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-8.25zM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-2.25z"),
-            NavItem::new("Sagas", "/sagas").icon("M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3"),
-            NavItem::new("Dependencies", "/dependencies").icon("M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"),
-            NavItem::new("Analytics", "/analytics").icon("M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"),
-            NavItem::new("Resolver", "/resolver").icon("M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077l1.41-.513m14.095-5.13l1.41-.513M5.106 17.785l1.15-.964m11.49-9.642l1.149-.964M7.501 19.795l.75-1.3m7.5-12.99l.75-1.3m-6.063 16.658l.26-1.477m2.605-14.772l.26-1.477m0 17.726l-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205L12 12m6.894 5.785l-1.149-.964M6.256 7.178l-1.15-.964m15.352 8.864l-1.41-.513M4.954 9.435l-1.41-.514M12.002 12l-3.75 6.495"),
+            NavItem::new("Dashboard", p("/")).icon("M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"),
+            NavItem::new("Jobs", p("/jobs")).icon("M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"),
+            NavItem::new("Queues", p("/queues")).icon("M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"),
+            NavItem::new("Definitions", p("/definitions")).icon("M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"),
+            NavItem::new("Workflows", p("/workflows")).icon("M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75zM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-8.25zM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-2.25z"),
+            NavItem::new("Sagas", p("/sagas")).icon("M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3"),
+            NavItem::new("Dependencies", p("/dependencies")).icon("M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"),
+            NavItem::new("Analytics", p("/analytics")).icon("M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"),
+            NavItem::new("Resolver", p("/resolver")).icon("M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077l1.41-.513m14.095-5.13l1.41-.513M5.106 17.785l1.15-.964m11.49-9.642l1.149-.964M7.501 19.795l.75-1.3m7.5-12.99l.75-1.3m-6.063 16.658l.26-1.477m2.605-14.772l.26-1.477m0 17.726l-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205L12 12m6.894 5.785l-1.149-.964M6.256 7.178l-1.15-.964m15.352 8.864l-1.41-.513M4.954 9.435l-1.41-.514M12.002 12l-3.75 6.495"),
         ]
     }
 }
@@ -230,6 +258,8 @@ pub fn app(state: AppState) -> Router {
         // Visual workflow builder (React SPA)
         .route("/builder/{*path}", get(routes::frontend::serve_builder))
         .route("/builder", get(routes::frontend::serve_builder))
+        // Embedded CSS/JS for the admin UI
+        .route("/assets/{file}", get(routes::assets::serve))
         // Static files
         .nest_service("/static", ServeDir::new("static"))
         .layer(TraceLayer::new_for_http())

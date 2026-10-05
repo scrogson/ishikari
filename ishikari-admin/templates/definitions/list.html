@@ -1,39 +1,37 @@
 {% extends "base.html" %}
 
-{% block title %}Workflow Definitions - Ishikari Pro Admin{% endblock %}
+{% block title %}Workflow Definitions - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h1 class="page-title">Workflow Definitions</h1>
-            <p class="page-subtitle">{{ total }} definitions found</p>
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
-            <a href="/definitions/new" class="btn btn-primary">New Definition</a>
-            <a href="/definitions/import" class="btn btn-secondary">Import YAML</a>
-        </div>
+<div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">Workflow Definitions</h1>
+        <p class="text-sm text-base-content/60">{{ total }} definitions found</p>
+    </div>
+    <div class="flex gap-2">
+        <a href="{{ base_path }}/definitions/new" class="btn btn-primary btn-sm">New Definition</a>
+        <a href="{{ base_path }}/definitions/import" class="btn btn-sm">Import YAML</a>
     </div>
 </div>
 
 {% match error %}
 {% when Some with (e) %}
-<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
-    <p style="color: var(--danger);">{{ e }}</p>
-</div>
+<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
 {% when None %}
 {% endmatch %}
 
-<div class="card">
-    <form class="filters" hx-get="/api/definitions" hx-target="#definitions-table" hx-trigger="change, keyup delay:300ms from:input[name=name]">
-        <div class="filter-group">
-            <label class="form-label">Name</label>
-            <input type="text" name="name" class="form-input" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
-        </div>
-    </form>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <form class="grid grid-cols-1 gap-4 md:grid-cols-3" hx-get="{{ base_path }}/api/definitions" hx-target="#definitions-table" hx-trigger="change, keyup delay:300ms from:input[name=name]">
+            <fieldset class="fieldset py-0">
+                <legend class="fieldset-legend">Name</legend>
+                <input type="text" name="name" class="input input-sm w-full" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
+            </fieldset>
+        </form>
 
-    <div id="definitions-table">
-        {% include "partials/definitions_table.html" %}
+        <div id="definitions-table">
+            {% include "partials/definitions_table.html" %}
+        </div>
     </div>
-</div>
+</section>
 {% endblock %}

@@ -9,6 +9,7 @@ use axum::{
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::routes::sagas::SagaStepInfo;
 use crate::templates::{EnhancedJobDetailTemplate, EnhancedJobsListTemplate};
 use crate::AppState;
 
@@ -95,9 +96,19 @@ pub struct EnhancedJobInfo {
     pub pending_deps: i64,
     pub failed_deps: i64,
     pub inserted_at: chrono::DateTime<chrono::Utc>,
+    /// Saga step state, if this is a saga forward job.
+    pub saga_step_state: Option<String>,
 }
 
 impl EnhancedJobInfo {
+    pub fn saga_rollback_state(&self) -> Option<&str> {
+        super::sagas::rollback_state(self.saga_step_state.as_deref())
+    }
+
+    pub fn saga_rollback_class(&self) -> &'static str {
+        super::sagas::rollback_class(self.saga_step_state.as_deref())
+    }
+
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
@@ -187,9 +198,20 @@ pub struct EnhancedJobDetail {
     pub node_type: Option<String>,
     /// Node ID for workflow jobs (from job args.node_id)
     pub node_id: Option<String>,
+    /// Saga step this job belongs to (as forward or compensation job)
+    pub saga_step: Option<SagaStepInfo>,
+    /// Total number of steps in the saga
+    pub saga_step_count: i64,
 }
 
 impl EnhancedJobDetail {
+    /// True if this job is the compensation job of its saga step.
+    pub fn is_compensation_job(&self) -> bool {
+        self.saga_step
+            .as_ref()
+            .is_some_and(|s| s.compensation_job_id == Some(self.id))
+    }
+
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
             "available" => "badge-primary",
@@ -365,8 +387,15 @@ pub async fn list(
 
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
+    let queues = fetch_distinct_job_values(&state.pool, state.schema(), "queue").await;
+    let workers = fetch_distinct_job_values(&state.pool, state.schema(), "worker").await;
+
     EnhancedJobsListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         jobs,
+        queues,
+        workers,
         current_state: query.state,
         current_queue: query.queue,
         current_worker: query.worker,
@@ -380,13 +409,40 @@ pub async fn list(
     }
 }
 
+/// Distinct values of a jobs column, for filter dropdowns.
+///
+/// `column` must be a trusted column name (it is interpolated into the SQL).
+async fn fetch_distinct_job_values(
+    pool: &PgPool,
+    schema: Option<&str>,
+    column: &str,
+) -> Vec<String> {
+    let jobs_table = match schema {
+        Some(s) => format!("{}.ishikari_jobs", s),
+        None => "ishikari_jobs".to_string(),
+    };
+    let query = format!(
+        "SELECT DISTINCT {col} FROM {table} ORDER BY {col}",
+        col = column,
+        table = jobs_table
+    );
+    sqlx::query_scalar(&query)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+}
+
 /// Show enhanced job detail.
 pub async fn show(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<EnhancedJobDetailTemplate, Response> {
     match get_enhanced_job(&state.pool, state.schema(), id).await {
-        Ok(Some(job)) => Ok(EnhancedJobDetailTemplate { job }),
+        Ok(Some(job)) => Ok(EnhancedJobDetailTemplate {
+            base_path: state.base_path.to_string(),
+            nav_items: state.nav_items.to_vec(),
+            job,
+        }),
         Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Job not found").into_response()),
         Err(e) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -397,7 +453,7 @@ pub async fn show(
 }
 
 /// Get enhanced jobs with filtering.
-async fn get_enhanced_jobs(
+pub(crate) async fn get_enhanced_jobs(
     pool: &PgPool,
     schema: Option<&str>,
     query: &EnhancedJobsQuery,
@@ -416,21 +472,32 @@ async fn get_enhanced_jobs(
         Some(s) => format!("{}.ishikari_workflows", s),
         None => "ishikari_workflows".to_string(),
     };
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
 
     let mut conditions = Vec::new();
     let mut params: Vec<String> = Vec::new();
 
-    if let Some(ref s) = query.state {
-        params.push(s.to_string());
-        conditions.push(format!("j.state::text = ${}", params.len()));
+    match query.state.as_deref() {
+        // Not a job state: completed jobs whose saga step was rolled back
+        Some("compensated") => {
+            conditions.push(super::sagas::compensated_condition(&saga_steps_table, "j"));
+        }
+        Some(s) => {
+            params.push(s.to_string());
+            conditions.push(format!("j.state::text = ${}", params.len()));
+        }
+        None => {}
     }
     if let Some(ref q) = query.queue {
         params.push(q.to_string());
         conditions.push(format!("j.queue = ${}", params.len()));
     }
     if let Some(ref w) = query.worker {
-        params.push(format!("%{}%", w));
-        conditions.push(format!("j.worker ILIKE ${}", params.len()));
+        params.push(w.to_string());
+        conditions.push(format!("j.worker = ${}", params.len()));
     }
     if query.has_deps == Some(true) {
         conditions.push(format!(
@@ -469,7 +536,8 @@ async fn get_enhanced_jobs(
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.depends_on_job_id = j.id), 0) as blocking_count,
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'satisfied'), 0) as satisfied_deps,
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'pending'), 0) as pending_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps
+            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps,
+            (SELECT s.state FROM {steps} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
         FROM {jobs} j
         LEFT JOIN {workflows} w ON w.id = j.workflow_id
         {where_clause}
@@ -479,6 +547,7 @@ async fn get_enhanced_jobs(
         deps = deps_table,
         jobs = jobs_table,
         workflows = workflows_table,
+        steps = saga_steps_table,
         where_clause = where_clause,
         limit = limit,
         offset = offset
@@ -509,6 +578,7 @@ async fn get_enhanced_jobs(
             i64,
             i64,
             i64,
+            Option<String>,
         ),
     >(&list_query);
     for p in &params {
@@ -534,6 +604,7 @@ async fn get_enhanced_jobs(
             satisfied_deps: row.11,
             pending_deps: row.12,
             failed_deps: row.13,
+            saga_step_state: row.14,
         })
         .collect();
 
@@ -559,7 +630,7 @@ async fn get_enhanced_job(
         None => "ishikari_workflows".to_string(),
     };
 
-    // Check if workflows table exists (it might not if ishikari-pro migrations haven't run)
+    // Check if workflows table exists (it might not if the workflow migrations haven't run)
     let workflows_exist = check_table_exists(pool, schema, "ishikari_workflows").await;
 
     // Get job info - use LEFT JOIN only if workflows table exists
@@ -682,6 +753,13 @@ async fn get_enhanced_job(
     // Fetch resolved inputs from node_executions table
     let node_inputs = fetch_node_inputs(pool, schema, args).await;
 
+    let (saga_step, saga_step_count) = match job_row.8 {
+        Some(_) if check_table_exists(pool, schema, "ishikari_saga_steps").await => {
+            fetch_saga_step(pool, schema, id).await
+        }
+        _ => (None, 0),
+    };
+
     Ok(Some(EnhancedJobDetail {
         id: job_row.0,
         worker: job_row.1,
@@ -720,7 +798,79 @@ async fn get_enhanced_job(
         raw_node_inputs,
         node_type,
         node_id,
+        saga_step,
+        saga_step_count,
     }))
+}
+
+/// Fetch the saga step a job belongs to, either as forward or compensation job.
+async fn fetch_saga_step(
+    pool: &PgPool,
+    schema: Option<&str>,
+    job_id: i64,
+) -> (Option<SagaStepInfo>, i64) {
+    let jobs_table = match schema {
+        Some(s) => format!("{}.ishikari_jobs", s),
+        None => "ishikari_jobs".to_string(),
+    };
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
+
+    let query = format!(
+        r#"
+        SELECT
+            s.step_order,
+            s.state,
+            s.job_id,
+            j.worker,
+            j.state::text,
+            s.compensation_job_id,
+            cj.worker,
+            cj.state::text,
+            (SELECT COUNT(*) FROM {} s2 WHERE s2.workflow_id = s.workflow_id)
+        FROM {} s
+        JOIN {} j ON j.id = s.job_id
+        LEFT JOIN {} cj ON cj.id = s.compensation_job_id
+        WHERE s.job_id = $1 OR s.compensation_job_id = $1
+        LIMIT 1
+        "#,
+        saga_steps_table, saga_steps_table, jobs_table, jobs_table
+    );
+
+    let row: Option<(
+        i32,
+        String,
+        i64,
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        i64,
+    )> = sqlx::query_as(&query)
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or_default();
+
+    match row {
+        Some(r) => (
+            Some(SagaStepInfo {
+                step_order: r.0,
+                state: r.1,
+                job_id: r.2,
+                job_worker: r.3,
+                job_state: r.4,
+                compensation_job_id: r.5,
+                compensation_worker: r.6,
+                compensation_state: r.7,
+            }),
+            r.8,
+        ),
+        None => (None, 0),
+    }
 }
 
 /// Fetch node output from ishikari_node_executions table.
@@ -829,5 +979,5 @@ pub async fn discard(State(state): State<AppState>, Path(id): Path<i64>) -> Redi
 
     let _ = sqlx::query(&query).bind(id).execute(&state.pool).await;
 
-    Redirect::to(&format!("/jobs/{}", id))
+    Redirect::to(&format!("{}/jobs/{}", state.base_path, id))
 }

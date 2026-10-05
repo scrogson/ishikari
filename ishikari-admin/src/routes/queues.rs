@@ -22,9 +22,19 @@ pub struct QueueJobInfo {
     pub scheduled_at: chrono::DateTime<chrono::Utc>,
     pub attempted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Saga step state, if this is a saga forward job.
+    pub saga_step_state: Option<String>,
 }
 
 impl QueueJobInfo {
+    pub fn saga_rollback_state(&self) -> Option<&str> {
+        super::sagas::rollback_state(self.saga_step_state.as_deref())
+    }
+
+    pub fn saga_rollback_class(&self) -> &'static str {
+        super::sagas::rollback_class(self.saga_step_state.as_deref())
+    }
+
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
@@ -63,7 +73,11 @@ pub struct QueueInfo {
 /// List queues page.
 pub async fn list(State(state): State<AppState>) -> QueuesListTemplate {
     let queues = get_queues(&state.pool, state.schema.as_deref()).await;
-    QueuesListTemplate { queues }
+    QueuesListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        queues,
+    }
 }
 
 /// Show single queue.
@@ -103,6 +117,8 @@ pub async fn show(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     QueueDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         queue_name: name,
         stats,
         jobs,
@@ -172,27 +188,39 @@ async fn get_queue_jobs(
         Some(s) => format!("{}.ishikari_jobs", s),
         None => "ishikari_jobs".to_string(),
     };
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
 
-    let mut conditions = vec!["queue = $1".to_string()];
+    // "compensated" isn't a job state: completed jobs whose saga step was rolled back
+    let compensated = state_filter == Some("compensated");
+    let state_filter = state_filter.filter(|_| !compensated);
+
+    let mut conditions = vec!["j.queue = $1".to_string()];
     let mut param_count = 1;
 
+    if compensated {
+        conditions.push(super::sagas::compensated_condition(&saga_steps_table, "j"));
+    }
     if state_filter.is_some() {
         param_count += 1;
-        conditions.push(format!("state::text = ${}", param_count));
+        conditions.push(format!("j.state::text = ${}", param_count));
     }
 
     let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
-    let count_query = format!("SELECT COUNT(*) FROM {} {}", table, where_clause);
+    let count_query = format!("SELECT COUNT(*) FROM {} j {}", table, where_clause);
     let list_query = format!(
         r#"
-        SELECT id, queue, worker, state::text, attempt, max_attempts,
-               inserted_at, scheduled_at, attempted_at, completed_at
-        FROM {} {}
-        ORDER BY id DESC
+        SELECT j.id, j.queue, j.worker, j.state::text, j.attempt, j.max_attempts,
+               j.inserted_at, j.scheduled_at, j.attempted_at, j.completed_at,
+               (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
+        FROM {} j {}
+        ORDER BY j.id DESC
         LIMIT {} OFFSET {}
         "#,
-        table, where_clause, limit, offset
+        saga_steps_table, table, where_clause, limit, offset
     );
 
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_query).bind(queue_name);
@@ -209,6 +237,7 @@ async fn get_queue_jobs(
             chrono::DateTime<chrono::Utc>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
+            Option<String>,
         ),
     >(&list_query)
     .bind(queue_name);
@@ -234,6 +263,7 @@ async fn get_queue_jobs(
             scheduled_at: row.7,
             attempted_at: row.8,
             completed_at: row.9,
+            saga_step_state: row.10,
         })
         .collect();
 

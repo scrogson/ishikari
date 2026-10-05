@@ -1,0 +1,69 @@
+@import "tailwindcss" source(none);
+
+/* Templates, plus Rust sources that return class names (e.g. state_class()) */
+@source "../templates";
+@source "../src";
+
+@plugin "daisyui" {
+  themes: light, dark --default --prefersdark;
+}
+
+@plugin "daisyui/theme" {
+  name: "dark";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(21% 0.034 264.665);
+  --color-base-200: oklch(18% 0.03 264.665);
+  --color-base-300: oklch(15% 0.028 264.665);
+  --color-primary: oklch(62% 0.214 259.815);
+  --color-secondary: oklch(60% 0.25 292.717);
+  --radius-box: 0.75rem;
+  --radius-field: 0.5rem;
+}
+
+@plugin "daisyui/theme" {
+  name: "light";
+  color-scheme: light;
+  --color-primary: oklch(55% 0.214 259.815);
+  --color-secondary: oklch(55% 0.25 292.717);
+  --radius-box: 0.75rem;
+  --radius-field: 0.5rem;
+}
+
+@layer components {
+  /* Pretty-printed JSON / YAML blocks */
+  .code-block {
+    @apply bg-base-300 rounded-box p-4 overflow-x-auto font-mono text-sm leading-relaxed;
+  }
+}
+
+#sidebar-nav {
+  --menu-active-bg: var(--color-primary);
+  --menu-active-fg: var(--color-primary-content);
+}
+
+/* Soft neutral/ghost badges are near-invisible on dark bases; tint from base-content */
+.badge-soft.badge-neutral {
+  --badge-color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+}
+.badge-ghost {
+  background-color: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  border-color: transparent;
+}
+
+/* Let wide content (pre, tables) scroll inside cards instead of stretching the page */
+.drawer-content,
+.card-body {
+  min-width: 0;
+}
+dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-tip] {
+  cursor: help;
+  text-decoration: underline dotted color-mix(in oklab, currentColor 35%, transparent);
+  text-underline-offset: 3px;
+}

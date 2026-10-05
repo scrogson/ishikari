@@ -17,7 +17,7 @@ use super::definitions::{
     WorkflowDefinition,
 };
 use super::dependencies::{DependenciesQuery, DependencyInfo};
-use super::jobs::{EnhancedJobInfo, EnhancedJobsQuery};
+use super::jobs::{get_enhanced_jobs, EnhancedJobsQuery};
 use super::sagas::{SagaInfo, SagasQuery};
 use super::workflows::{WorkflowInfo, WorkflowJobInfo, WorkflowsQuery};
 use crate::routes::dashboard::{JobStats, WorkflowStats};
@@ -180,6 +180,7 @@ pub async fn workflows_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     WorkflowsTablePartial {
+        base_path: state.base_path.to_string(),
         workflows,
         page,
         total_pages,
@@ -192,7 +193,10 @@ pub async fn workflow_jobs(
     Path(id): Path<i64>,
 ) -> WorkflowJobsPartial {
     let jobs = get_workflow_jobs(&state.pool, state.schema(), id).await;
-    WorkflowJobsPartial { jobs }
+    WorkflowJobsPartial {
+        base_path: state.base_path.to_string(),
+        jobs,
+    }
 }
 
 /// Get workflows (copied from workflows.rs to avoid circular deps)
@@ -319,14 +323,15 @@ async fn get_workflow_jobs(
             j.id, j.worker, j.state::text, j.attempt, j.max_attempts,
             j.inserted_at, j.completed_at,
             COALESCE(array_agg(d.depends_on_job_id) FILTER (WHERE d.depends_on_job_id IS NOT NULL), '{{}}') as dependencies,
-            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation
+            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation,
+            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
         FROM {} j
         LEFT JOIN {} d ON d.job_id = j.id
         WHERE j.workflow_id = $1
         GROUP BY j.id
         ORDER BY j.id
         "#,
-        saga_steps_table, jobs_table, deps_table
+        saga_steps_table, saga_steps_table, jobs_table, deps_table
     );
 
     let rows: Vec<(
@@ -339,6 +344,7 @@ async fn get_workflow_jobs(
         Option<chrono::DateTime<chrono::Utc>>,
         Vec<i64>,
         bool,
+        Option<String>,
     )> = sqlx::query_as(&query)
         .bind(workflow_id)
         .fetch_all(pool)
@@ -356,6 +362,7 @@ async fn get_workflow_jobs(
             completed_at: row.6,
             dependencies: row.7,
             is_compensation: row.8,
+            saga_step_state: row.9,
         })
         .collect()
 }
@@ -382,6 +389,7 @@ pub async fn dependencies_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     DependenciesTablePartial {
+        base_path: state.base_path.to_string(),
         dependencies,
         page,
         total_pages,
@@ -525,6 +533,7 @@ pub async fn sagas_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     SagasTablePartial {
+        base_path: state.base_path.to_string(),
         sagas,
         page,
         total_pages,
@@ -643,152 +652,11 @@ pub async fn enhanced_jobs_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     EnhancedJobsTablePartial {
+        base_path: state.base_path.to_string(),
         jobs,
         page,
         total_pages,
     }
-}
-
-/// Get enhanced jobs (copied from jobs.rs for htmx partial).
-async fn get_enhanced_jobs(
-    pool: &PgPool,
-    schema: Option<&str>,
-    query: &EnhancedJobsQuery,
-    limit: i64,
-    offset: i64,
-) -> (Vec<EnhancedJobInfo>, i64) {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-    let deps_table = match schema {
-        Some(s) => format!("{}.ishikari_job_dependencies", s),
-        None => "ishikari_job_dependencies".to_string(),
-    };
-    let workflows_table = match schema {
-        Some(s) => format!("{}.ishikari_workflows", s),
-        None => "ishikari_workflows".to_string(),
-    };
-
-    let mut conditions = Vec::new();
-    let mut params: Vec<String> = Vec::new();
-
-    if let Some(ref s) = query.state {
-        params.push(s.to_string());
-        conditions.push(format!("j.state::text = ${}", params.len()));
-    }
-    if let Some(ref q) = query.queue {
-        params.push(q.to_string());
-        conditions.push(format!("j.queue = ${}", params.len()));
-    }
-    if let Some(ref w) = query.worker {
-        params.push(format!("%{}%", w));
-        conditions.push(format!("j.worker ILIKE ${}", params.len()));
-    }
-    if query.has_deps == Some(true) {
-        conditions.push(format!(
-            "EXISTS (SELECT 1 FROM {} d WHERE d.job_id = j.id)",
-            deps_table
-        ));
-    }
-    if query.is_blocking == Some(true) {
-        conditions.push(format!(
-            "EXISTS (SELECT 1 FROM {} d WHERE d.depends_on_job_id = j.id)",
-            deps_table
-        ));
-    }
-    if query.in_workflow == Some(true) {
-        conditions.push("j.workflow_id IS NOT NULL".to_string());
-    }
-    if let Some(wf_id) = query.workflow_id {
-        params.push(wf_id.to_string());
-        conditions.push(format!("j.workflow_id = ${}", params.len()));
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    let count_query = format!("SELECT COUNT(*) FROM {} j {}", jobs_table, where_clause);
-
-    let list_query = format!(
-        r#"
-        SELECT
-            j.id, j.worker, j.queue, j.state::text, j.attempt, j.max_attempts,
-            j.workflow_id, w.name as workflow_name, j.inserted_at,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id), 0) as dependency_count,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.depends_on_job_id = j.id), 0) as blocking_count,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'satisfied'), 0) as satisfied_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'pending'), 0) as pending_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps
-        FROM {jobs} j
-        LEFT JOIN {workflows} w ON w.id = j.workflow_id
-        {where_clause}
-        ORDER BY j.id DESC
-        LIMIT {limit} OFFSET {offset}
-        "#,
-        deps = deps_table,
-        jobs = jobs_table,
-        workflows = workflows_table,
-        where_clause = where_clause,
-        limit = limit,
-        offset = offset
-    );
-
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
-    for p in &params {
-        count_q = count_q.bind(p);
-    }
-    let total: i64 = count_q.fetch_one(pool).await.unwrap_or(0);
-
-    let mut list_q = sqlx::query_as::<
-        _,
-        (
-            i64,
-            String,
-            String,
-            String,
-            i32,
-            i32,
-            Option<i64>,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-        ),
-    >(&list_query);
-    for p in &params {
-        list_q = list_q.bind(p);
-    }
-
-    let rows = list_q.fetch_all(pool).await.unwrap_or_default();
-
-    let jobs = rows
-        .into_iter()
-        .map(|row| EnhancedJobInfo {
-            id: row.0,
-            worker: row.1,
-            queue: row.2,
-            state: row.3,
-            attempt: row.4,
-            max_attempts: row.5,
-            workflow_id: row.6,
-            workflow_name: row.7,
-            inserted_at: row.8,
-            dependency_count: row.9,
-            blocking_count: row.10,
-            satisfied_deps: row.11,
-            pending_deps: row.12,
-            failed_deps: row.13,
-        })
-        .collect();
-
-    (jobs, total)
 }
 
 /// Definitions table partial for htmx updates.
@@ -812,6 +680,7 @@ pub async fn definitions_table(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     DefinitionsTablePartial {
+        base_path: state.base_path.to_string(),
         definitions,
         page,
         total_pages,

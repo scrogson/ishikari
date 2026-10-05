@@ -55,7 +55,10 @@ pub async fn cancel_workflow(
     }
 
     info!(workflow_id = id, "workflow cancelled");
-    Ok(Redirect::to(&format!("/workflows/{}", id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, id
+    )))
 }
 
 /// Retry failed jobs in a workflow.
@@ -98,7 +101,10 @@ pub async fn retry_workflow(
     }
 
     info!(workflow_id = id, "workflow jobs retried");
-    Ok(Redirect::to(&format!("/workflows/{}", id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, id
+    )))
 }
 
 /// Clone a workflow (create a new one with same jobs).
@@ -149,7 +155,10 @@ pub async fn clone_workflow(
         new_workflow_id = new_workflow_id,
         "workflow cloned"
     );
-    Ok(Redirect::to(&format!("/workflows/{}", new_workflow_id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, new_workflow_id
+    )))
 }
 
 /// Retry a single job.
@@ -169,7 +178,7 @@ pub async fn retry_job(
     }
 
     info!(job_id = id, "job retried");
-    Ok(Redirect::to(&format!("/jobs/{}", id)))
+    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
 }
 
 /// Cancel a single job.
@@ -189,7 +198,7 @@ pub async fn cancel_job(
     }
 
     info!(job_id = id, "job cancelled");
-    Ok(Redirect::to(&format!("/jobs/{}", id)))
+    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
 }
 
 // Helper functions
@@ -297,6 +306,10 @@ async fn retry_workflow_jobs(
         Some(s) => format!("{}.ishikari_job_dependencies", s),
         None => "ishikari_job_dependencies".to_string(),
     };
+    let enum_type = match schema {
+        Some(s) => format!("{}.ishikari_job_state", s),
+        None => "ishikari_job_state".to_string(),
+    };
 
     // Reset discarded jobs to retryable, reset attempt count
     let query = format!(
@@ -306,13 +319,13 @@ async fn retry_workflow_jobs(
             WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = id AND d.state != 'satisfied')
             THEN 'scheduled'
             ELSE 'available'
-        END,
+        END::{},
         attempt = 0,
-        errors = '[]'::jsonb
+        errors = ARRAY[]::jsonb[]
         WHERE workflow_id = $1
           AND state IN ('discarded', 'cancelled')
         "#,
-        jobs_table, deps_table
+        jobs_table, deps_table, enum_type
     );
 
     sqlx::query(&query).bind(workflow_id).execute(pool).await?;
@@ -456,6 +469,10 @@ async fn retry_single_job(pool: &PgPool, schema: Option<&str>, id: i64) -> Resul
         Some(s) => format!("{}.ishikari_job_dependencies", s),
         None => "ishikari_job_dependencies".to_string(),
     };
+    let enum_type = match schema {
+        Some(s) => format!("{}.ishikari_job_state", s),
+        None => "ishikari_job_state".to_string(),
+    };
 
     let query = format!(
         r#"
@@ -464,13 +481,13 @@ async fn retry_single_job(pool: &PgPool, schema: Option<&str>, id: i64) -> Resul
             WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = $1 AND d.state != 'satisfied')
             THEN 'scheduled'
             ELSE 'available'
-        END,
+        END::{},
         attempt = 0,
-        errors = '[]'::jsonb
+        errors = ARRAY[]::jsonb[]
         WHERE id = $1
           AND state IN ('discarded', 'cancelled', 'retryable')
         "#,
-        jobs_table, deps_table
+        jobs_table, deps_table, enum_type
     );
 
     sqlx::query(&query).bind(id).execute(pool).await?;

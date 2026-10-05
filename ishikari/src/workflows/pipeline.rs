@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ishikari_pro::Pipeline;
+//! use ishikari::workflows::Pipeline;
 //!
 //! // Define a pipeline that processes a video
 //! let workflow = Pipeline::new("video-processing")

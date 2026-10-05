@@ -12,7 +12,7 @@ use demo_lib::scenarios;
 use demo_lib::workers::NodeJobState;
 use ishikari::dependencies::DependencyResolver;
 use ishikari::{Engine, Postgres, Queue};
-use ishikari_admin::{app, AppState};
+use ishikari_admin::{app, app_at, AppState};
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -79,12 +79,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Started worker engine");
 
     // Setup admin
-    let state = AppState::new(pool);
-    let admin = app(state);
+    // Set BASE_PATH (e.g. "/admin") to mount the admin at a subpath
+    let base_path = std::env::var("BASE_PATH").unwrap_or_default();
+    let state = AppState::new(pool).with_base_path(&base_path);
+    let admin = if base_path.is_empty() {
+        app(state)
+    } else {
+        app_at(&base_path, state)
+    };
 
     // Start server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    tracing::info!("Admin UI available at http://{}", addr);
+    tracing::info!("Admin UI available at http://{}{}", addr, base_path);
     tracing::info!("Press Ctrl+C to stop");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

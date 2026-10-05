@@ -1,8 +1,8 @@
-//! Error types for Ishikari Pro.
+//! Error types for workflows.
 
 use thiserror::Error;
 
-/// Errors that can occur in Ishikari Pro operations.
+/// Errors that can occur in workflow operations.
 #[derive(Debug, Error)]
 pub enum Error {
     /// A database error occurred.
@@ -38,5 +38,5 @@ pub enum Error {
     Serialization(#[from] serde_json::Error),
 }
 
-/// Result type for Ishikari Pro operations.
+/// Result type for workflow operations.
 pub type Result<T> = std::result::Result<T, Error>;

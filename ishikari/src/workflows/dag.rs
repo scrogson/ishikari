@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ishikari_pro::Dag;
+//! use ishikari::workflows::Dag;
 //!
 //! // ETL pipeline with parallel extraction
 //! let workflow = Dag::new("etl-pipeline")
@@ -88,7 +88,7 @@ impl Debug for DagStep {
 /// # Example
 ///
 /// ```rust,ignore
-/// use ishikari_pro::Dag;
+/// use ishikari::workflows::Dag;
 ///
 /// let workflow = Dag::new("etl")
 ///     .add("extract_s3", ExtractFromS3 { ... })

@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod analytics;
 pub mod api;
+pub mod assets;
 pub mod dashboard;
 pub mod definitions;
 pub mod dependencies;

@@ -102,12 +102,34 @@ impl Analytics {
     pub fn job_success_class(&self) -> &'static str {
         self.state_class(self.job_stats.success_rate)
     }
+
+    fn progress_class(&self, rate: f64) -> &'static str {
+        if rate >= 0.95 {
+            "progress-success"
+        } else if rate >= 0.80 {
+            "progress-warning"
+        } else {
+            "progress-error"
+        }
+    }
+
+    pub fn workflow_success_progress(&self) -> &'static str {
+        self.progress_class(self.workflow_stats.success_rate)
+    }
+
+    pub fn job_success_progress(&self) -> &'static str {
+        self.progress_class(self.job_stats.success_rate)
+    }
 }
 
 /// Analytics dashboard page.
 pub async fn index(State(state): State<AppState>) -> AnalyticsTemplate {
     let analytics = fetch_analytics(&state.pool, state.schema()).await;
-    AnalyticsTemplate { analytics }
+    AnalyticsTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        analytics,
+    }
 }
 
 async fn fetch_analytics(pool: &PgPool, schema: Option<&str>) -> Analytics {

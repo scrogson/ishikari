@@ -1,285 +1,122 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Ishikari Pro Admin{% endblock %}</title>
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <style>
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-tertiary: #334155;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --success: #22c55e;
-            --warning: #eab308;
-            --danger: #ef4444;
-            --border: #334155;
-            --pro: #8b5cf6;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-        }
-
-        .layout { display: flex; min-height: 100vh; }
-
-        .sidebar {
-            width: 240px;
-            background-color: var(--bg-secondary);
-            border-right: 1px solid var(--border);
-            padding: 1rem;
-            position: fixed;
-            height: 100vh;
-        }
-
-        .sidebar-logo {
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin-bottom: 2rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .sidebar-logo .pro-badge {
-            background: linear-gradient(135deg, var(--pro), var(--accent));
-            color: white;
-            font-size: 0.625rem;
-            padding: 0.125rem 0.375rem;
-            border-radius: 0.25rem;
-            font-weight: 600;
-        }
-
-        .sidebar-nav { list-style: none; }
-        .sidebar-nav a {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            color: var(--text-secondary);
-            text-decoration: none;
-            border-radius: 0.375rem;
-            margin-bottom: 0.25rem;
-            transition: all 0.2s;
-        }
-        .sidebar-nav a:hover { background-color: var(--bg-tertiary); color: var(--text-primary); }
-        .sidebar-nav a.active { background-color: var(--accent); color: white; }
-        .sidebar-nav .nav-icon { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
-        .sidebar-nav .section-label {
-            font-size: 0.625rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            padding: 1rem 1rem 0.5rem;
-            margin-top: 0.5rem;
-        }
-
-        .main-content { flex: 1; margin-left: 240px; padding: 2rem; }
-
-        .page-header { margin-bottom: 2rem; }
-        .page-title { font-size: 1.875rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .page-subtitle { color: var(--text-secondary); }
-
-        .card {
-            background-color: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 0.5rem;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-        .card-title { font-size: 1.125rem; font-weight: 600; }
-
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; }
-        .stat-card { background-color: var(--bg-tertiary); border-radius: 0.375rem; padding: 1rem; text-align: center; }
-        .stat-value { font-size: 1.75rem; font-weight: 700; }
-        .stat-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
-        .stat-available { color: var(--success); }
-        .stat-executing { color: var(--accent); }
-        .stat-scheduled { color: var(--warning); }
-        .stat-retryable { color: #f97316; }
-        .stat-completed { color: var(--text-secondary); }
-        .stat-discarded { color: var(--danger); }
-        .stat-cancelled { color: var(--text-muted); }
-
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-        th { font-weight: 600; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; }
-        tr:hover { background-color: var(--bg-tertiary); }
-
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            text-transform: uppercase;
-        }
-        .badge-info { background-color: rgba(59, 130, 246, 0.2); color: var(--accent); }
-        .badge-success { background-color: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .badge-warning { background-color: rgba(234, 179, 8, 0.2); color: var(--warning); }
-        .badge-error { background-color: rgba(239, 68, 68, 0.2); color: var(--danger); }
-        .badge-neutral { background-color: rgba(100, 116, 139, 0.2); color: var(--text-muted); }
-        .badge-primary { background-color: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .badge-secondary { background-color: rgba(234, 179, 8, 0.2); color: var(--warning); }
-        .badge-ghost { background-color: var(--bg-tertiary); color: var(--text-secondary); }
-
-        .btn {
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-        }
-        .btn-primary { background-color: var(--accent); color: white; }
-        .btn-secondary { background-color: var(--bg-tertiary); color: var(--text-primary); }
-
-        .filters { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-        .filter-group { min-width: 150px; }
-        .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary); }
-        .form-input, .form-select {
-            width: 100%;
-            padding: 0.5rem 0.75rem;
-            background-color: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 0.375rem;
-            color: var(--text-primary);
-        }
-
-        .pagination { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
-        .pagination a, .pagination span { padding: 0.5rem 0.75rem; border-radius: 0.375rem; color: var(--text-secondary); text-decoration: none; }
-        .pagination a:hover { background-color: var(--bg-tertiary); }
-        .pagination .active { background-color: var(--accent); color: white; }
-
-        .progress-bar {
-            height: 0.5rem;
-            background-color: var(--bg-tertiary);
-            border-radius: 0.25rem;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--success), var(--accent));
-            transition: width 0.3s;
-        }
-
-        .code-block {
-            background-color: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 0.375rem;
-            padding: 1rem;
-            overflow-x: auto;
-            font-family: 'Monaco', monospace;
-            font-size: 0.875rem;
-        }
-
-        .detail-grid { display: grid; grid-template-columns: 150px 1fr; gap: 0.75rem; }
-        .detail-label { font-weight: 500; color: var(--text-secondary); }
-
-        .workflow-graph { margin-top: 1.5rem; }
-        .job-node {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            background-color: var(--bg-tertiary);
-            border-radius: 0.375rem;
-            margin: 0.25rem;
-        }
-
-        .empty-state { text-align: center; padding: 3rem; color: var(--text-muted); }
-        a { color: var(--accent); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+    <title>{% block title %}Ishikari Admin{% endblock %}</title>
+    <script>
+        // Apply saved theme before first paint to avoid a flash
+        try {
+            const t = localStorage.getItem("ishikari-theme");
+            if (t) document.documentElement.dataset.theme = t;
+        } catch (_) {}
+    </script>
+    <link rel="stylesheet" href="{{ base_path }}/assets/admin.css">
+    <script src="{{ base_path }}/assets/htmx.min.js"></script>
+    {% block head %}{% endblock %}
 </head>
-<body>
-    <div class="layout">
-        <aside class="sidebar">
-            <div class="sidebar-logo">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                </svg>
-                Ishikari <span class="pro-badge">PRO</span>
-            </div>
-            <nav>
-                <ul class="sidebar-nav">
-                    <li><a href="/">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-                        </svg>
-                        Dashboard
-                    </a></li>
-                    <li><a href="/jobs">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 00.75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 00-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0112 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 01-.673-.38m0 0A2.18 2.18 0 013 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 013.413-.387m7.5 0V5.25A2.25 2.25 0 0013.5 3h-3a2.25 2.25 0 00-2.25 2.25v.894m7.5 0a48.667 48.667 0 00-7.5 0M12 12.75h.008v.008H12v-.008z"/>
-                        </svg>
-                        Jobs
-                    </a></li>
-                    <li><a href="/queues">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3"/>
-                        </svg>
-                        Queues
-                    </a></li>
-                    <li class="section-label">Workflows</li>
-                    <li><a href="/definitions">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
-                        </svg>
-                        Definitions
-                    </a></li>
-                    <li><a href="/workflows">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/>
-                        </svg>
-                        All Workflows
-                    </a></li>
-                    <li><a href="/sagas">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3"/>
-                        </svg>
-                        Sagas
-                    </a></li>
-                    <li><a href="/dependencies">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/>
-                        </svg>
-                        Dependencies
-                    </a></li>
-                    <li class="section-label">Insights</li>
-                    <li><a href="/analytics">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
-                        </svg>
-                        Analytics
-                    </a></li>
-                    <li><a href="/resolver">
-                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                        </svg>
-                        Resolver
-                    </a></li>
+<body class="min-h-screen bg-base-200 text-base-content antialiased">
+    <div class="drawer lg:drawer-open">
+        <input id="nav-drawer" type="checkbox" class="drawer-toggle">
+
+        <div class="drawer-content flex min-h-screen flex-col">
+            <!-- Top bar -->
+            <header class="navbar sticky top-0 z-20 gap-2 border-b border-base-300 bg-base-100/80 px-4 backdrop-blur">
+                <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open menu">
+                    <svg class="size-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </label>
+                <div class="lg:hidden">
+                    <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 font-bold">
+                    <svg class="size-5 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    Ishikari
+                </a>
+                </div>
+                <div class="flex-1"></div>
+                <label class="swap swap-rotate btn btn-ghost btn-circle btn-sm" title="Toggle theme">
+                    <input type="checkbox" id="theme-toggle" aria-label="Toggle light theme">
+                    <!-- moon: shown in dark mode -->
+                    <svg class="swap-off size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
+                    <!-- sun: shown in light mode -->
+                    <svg class="swap-on size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg>
+                </label>
+            </header>
+
+            <main class="{% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 lg:p-8{% endblock %}">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="drawer-side z-30">
+            <label for="nav-drawer" class="drawer-overlay" aria-label="Close menu"></label>
+            <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100">
+                <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 px-6 py-5 text-lg font-bold">
+                    <svg class="size-6 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    Ishikari
+                </a>
+                <ul class="menu w-full gap-1 px-3" id="sidebar-nav">
+                    {% for item in nav_items %}
+                    <li>
+                        <a href="{{ item.href }}">
+                            {% if let Some(icon) = item.icon %}
+                            <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
+                            </svg>
+                            {% endif %}
+                            {{ item.label }}
+                        </a>
+                    </li>
+                    {% endfor %}
                 </ul>
-            </nav>
-        </aside>
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
+            </aside>
+        </div>
     </div>
+
+    <script>
+        // Highlight the nav item matching the current page (longest prefix wins)
+        (function () {
+            const path = location.pathname.replace(/\/$/, "");
+            let best = null, bestLen = -1;
+            document.querySelectorAll("#sidebar-nav a").forEach(function (a) {
+                const href = new URL(a.href).pathname.replace(/\/$/, "");
+                const match = path === href || path.startsWith(href + "/");
+                if (match && href.length > bestLen) { best = a; bestLen = href.length; }
+            });
+            if (best) best.classList.add("menu-active");
+        })();
+
+        // Tooltip for [data-tip] elements (e.g. full worker paths). Fixed-position
+        // so it isn't clipped by scrolling table containers.
+        (function () {
+            const tip = document.createElement("div");
+            tip.className = "pointer-events-none fixed z-50 hidden max-w-lg rounded-field bg-neutral px-2 py-1 font-mono text-xs text-neutral-content shadow-lg break-all";
+            tip.setAttribute("role", "tooltip");
+            document.body.appendChild(tip);
+            function hide() { tip.classList.add("hidden"); }
+            document.addEventListener("mouseover", function (e) {
+                const el = e.target.closest("[data-tip]");
+                if (!el) return hide();
+                tip.textContent = el.dataset.tip;
+                tip.classList.remove("hidden");
+                const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+                const left = Math.min(Math.max(8, r.left), window.innerWidth - t.width - 8);
+                const top = r.top - t.height - 6 < 8 ? r.bottom + 6 : r.top - t.height - 6;
+                tip.style.left = left + "px";
+                tip.style.top = top + "px";
+            });
+            window.addEventListener("scroll", hide, true);
+        })();
+
+        // Theme toggle (dark is the default)
+        (function () {
+            const toggle = document.getElementById("theme-toggle");
+            toggle.checked = document.documentElement.dataset.theme === "light";
+            toggle.addEventListener("change", function () {
+                const theme = toggle.checked ? "light" : "dark";
+                document.documentElement.dataset.theme = theme;
+                try { localStorage.setItem("ishikari-theme", theme); } catch (_) {}
+            });
+        })();
+    </script>
 </body>
 </html>

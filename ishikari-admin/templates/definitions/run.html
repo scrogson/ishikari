@@ -1,204 +1,200 @@
 {% extends "base.html" %}
 
-{% block title %}Run {{ definition.name }} - Ishikari Pro Admin{% endblock %}
+{% block title %}Run {{ definition.name }} - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h1 class="page-title">Run {{ definition.name }}</h1>
-            <p class="page-subtitle">Version {{ definition.version }}</p>
-        </div>
-        <a href="/definitions/{{ definition.id }}" class="btn btn-secondary">Back to Definition</a>
+<div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">Run {{ definition.name }}</h1>
+        <p class="text-sm text-base-content/60">Version {{ definition.version }}</p>
     </div>
+    <a href="{{ base_path }}/definitions/{{ definition.id }}" class="btn btn-ghost btn-sm">&larr; Back to Definition</a>
 </div>
 
 {% match error %}
 {% when Some with (e) %}
-<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
-    <p style="color: var(--danger);">{{ e }}</p>
-</div>
+<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
 {% when None %}
 {% endmatch %}
 
-<div class="card">
-    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-        <h2 class="card-title">Workflow Inputs</h2>
-        {% if !definition.input_fields().is_empty() %}
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <label style="font-size: 0.875rem; color: var(--text-secondary);">Mode:</label>
-            <button type="button" id="mode-form" class="btn btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="setMode('form')">Form</button>
-            <button type="button" id="mode-json" class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.875rem;" onclick="setMode('json')">JSON</button>
-        </div>
-        {% endif %}
-    </div>
-
-    <form method="post" action="/definitions/{{ definition.id }}/run" id="run-form" onsubmit="return prepareSubmit()">
-        {% if definition.input_fields().is_empty() %}
-        <div style="background-color: var(--bg-tertiary); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
-            <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">
-                This workflow has no input parameters defined.
-            </p>
-            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-                You can run the workflow as-is, or add inputs to make it configurable.
-            </p>
-            <a href="/definitions/{{ definition.id }}/edit" class="btn btn-secondary" style="font-size: 0.875rem;">
-                + Add Inputs in Workflow Builder
-            </a>
-        </div>
-        <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
-        {% else %}
-
-        <!-- Form Mode -->
-        <div id="form-mode">
-            <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
-                {% for (name, field) in definition.input_fields() %}
-                <div class="form-field">
-                    <label class="form-label" for="field-{{ name }}">
-                        {{ name }}
-                        {% if field.required %}<span style="color: var(--danger);">*</span>{% endif %}
-                    </label>
-                    {% if field.field_type == "boolean" %}
-                    <select
-                        id="field-{{ name }}"
-                        name="field-{{ name }}"
-                        class="form-select"
-                        data-field-name="{{ name }}"
-                        data-field-type="{{ field.field_type }}"
-                    >
-                        <option value="">-- Select --</option>
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                    </select>
-                    {% else if field.field_type == "integer" || field.field_type == "number" %}
-                    <input
-                        type="number"
-                        id="field-{{ name }}"
-                        name="field-{{ name }}"
-                        class="form-input"
-                        data-field-name="{{ name }}"
-                        data-field-type="{{ field.field_type }}"
-                        {% if field.field_type == "number" %}step="any"{% endif %}
-                        placeholder="Enter {{ field.field_type }}"
-                    >
-                    {% else if field.field_type == "object" || field.field_type == "array" %}
-                    <textarea
-                        id="field-{{ name }}"
-                        name="field-{{ name }}"
-                        class="form-input"
-                        data-field-name="{{ name }}"
-                        data-field-type="{{ field.field_type }}"
-                        style="font-family: monospace; min-height: 80px;"
-                        placeholder="Enter JSON {{ field.field_type }}"
-                    ></textarea>
-                    {% else %}
-                    <input
-                        type="text"
-                        id="field-{{ name }}"
-                        name="field-{{ name }}"
-                        class="form-input"
-                        data-field-name="{{ name }}"
-                        data-field-type="{{ field.field_type }}"
-                        placeholder="Enter {{ field.field_type }}"
-                    >
-                    {% endif %}
-                    {% match field.description %}
-                    {% when Some with (desc) %}
-                    <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">{{ desc }}</p>
-                    {% when None %}
-                    {% endmatch %}
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <div class="flex items-center justify-between">
+            <h2 class="card-title text-base">Workflow Inputs</h2>
+            {% if !definition.input_fields().is_empty() %}
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-base-content/60">Mode</span>
+                <div class="join">
+                    <button type="button" id="mode-form" class="join-item btn btn-sm btn-primary btn-active" onclick="setMode('form')">Form</button>
+                    <button type="button" id="mode-json" class="join-item btn btn-sm" onclick="setMode('json')">JSON</button>
                 </div>
-                {% endfor %}
             </div>
+            {% endif %}
         </div>
 
-        <!-- JSON Mode -->
-        <div id="json-mode" style="display: none;">
-            <div style="margin-bottom: 1rem;">
-                <label class="form-label">Input JSON</label>
-                <textarea
-                    id="json-input"
-                    class="form-input"
-                    style="min-height: 200px; font-family: monospace; resize: vertical;"
-                    placeholder="{}"
-                >{}</textarea>
-                <p style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.5rem;">
-                    Enter inputs as a JSON object.
+        <form method="post" action="{{ base_path }}/definitions/{{ definition.id }}/run" id="run-form" onsubmit="return prepareSubmit()" class="space-y-4">
+            {% if definition.input_fields().is_empty() %}
+            <div class="rounded-box bg-base-200 p-6">
+                <p class="font-medium">This workflow has no input parameters defined.</p>
+                <p class="mt-1 mb-4 text-sm text-base-content/60">
+                    You can run the workflow as-is, or add inputs to make it configurable.
                 </p>
+                <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-sm">+ Add Inputs in Workflow Builder</a>
             </div>
-        </div>
+            <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
+            {% else %}
 
-        <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
-        {% endif %}
+            <!-- Form Mode -->
+            <div id="form-mode">
+                <div class="grid gap-x-6 gap-y-2 md:grid-cols-2">
+                    {% for (name, field) in definition.input_fields() %}
+                    <fieldset class="fieldset">
+                        <label class="fieldset-legend" for="field-{{ name }}">
+                            <span class="font-mono">{{ name }}</span>
+                            {% if field.required %}<span class="text-error">*</span>{% endif %}
+                            <span class="badge badge-ghost badge-xs">{{ field.field_type }}</span>
+                        </label>
+                        {% if field.field_type == "boolean" %}
+                        <select
+                            id="field-{{ name }}"
+                            name="field-{{ name }}"
+                            class="select select-sm w-full"
+                            data-field-name="{{ name }}"
+                            data-field-type="{{ field.field_type }}"
+                        >
+                            <option value="">-- Select --</option>
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                        </select>
+                        {% else if field.field_type == "integer" || field.field_type == "number" %}
+                        <input
+                            type="number"
+                            id="field-{{ name }}"
+                            name="field-{{ name }}"
+                            class="input input-sm w-full"
+                            data-field-name="{{ name }}"
+                            data-field-type="{{ field.field_type }}"
+                            {% if field.field_type == "number" %}step="any"{% endif %}
+                            placeholder="Enter {{ field.field_type }}"
+                        >
+                        {% else if field.field_type == "object" || field.field_type == "array" %}
+                        <textarea
+                            id="field-{{ name }}"
+                            name="field-{{ name }}"
+                            class="textarea min-h-20 w-full font-mono"
+                            data-field-name="{{ name }}"
+                            data-field-type="{{ field.field_type }}"
+                            placeholder="Enter JSON {{ field.field_type }}"
+                        ></textarea>
+                        {% else %}
+                        <input
+                            type="text"
+                            id="field-{{ name }}"
+                            name="field-{{ name }}"
+                            class="input input-sm w-full"
+                            data-field-name="{{ name }}"
+                            data-field-type="{{ field.field_type }}"
+                            placeholder="Enter {{ field.field_type }}"
+                        >
+                        {% endif %}
+                        {% match field.description %}
+                        {% when Some with (desc) %}
+                        <p class="label whitespace-normal">{{ desc }}</p>
+                        {% when None %}
+                        {% endmatch %}
+                    </fieldset>
+                    {% endfor %}
+                </div>
+            </div>
 
-        <button type="submit" class="btn btn-primary">Run Workflow</button>
-    </form>
-</div>
+            <!-- JSON Mode -->
+            <div id="json-mode" class="hidden">
+                <fieldset class="fieldset">
+                    <legend class="fieldset-legend">Input JSON</legend>
+                    <textarea
+                        id="json-input"
+                        class="textarea min-h-[200px] w-full resize-y font-mono"
+                        placeholder="{}"
+                    >{}</textarea>
+                    <p class="label">Enter inputs as a JSON object.</p>
+                </fieldset>
+            </div>
+
+            <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
+            {% endif %}
+
+            <button type="submit" class="btn btn-primary btn-sm">Run Workflow</button>
+        </form>
+    </div>
+</section>
 
 {% if !definition.input_fields().is_empty() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Input Schema Reference</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Input Schema Reference</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Required</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for (name, field) in definition.input_fields() %}
+                    <tr class="hover:bg-base-200/60">
+                        <td><code class="font-mono">{{ name }}</code></td>
+                        <td><span class="badge badge-ghost badge-sm">{{ field.field_type }}</span></td>
+                        <td>{% if field.required %}<span class="badge badge-soft badge-sm badge-success">required</span>{% else %}<span class="text-base-content/40">optional</span>{% endif %}</td>
+                        <td class="text-base-content/70">{{ field.description.as_deref().unwrap_or("—") }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Required</th>
-                <th>Description</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for (name, field) in definition.input_fields() %}
-            <tr>
-                <td><code>{{ name }}</code></td>
-                <td>{{ field.field_type }}</td>
-                <td>{% if field.required %}<span style="color: var(--success);">Yes</span>{% else %}<span style="color: var(--text-muted);">No</span>{% endif %}</td>
-                <td>{{ field.description.as_deref().unwrap_or("-") }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 
 {% if !runs.is_empty() %}
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Recent Runs</h2>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Recent Runs</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Run ID</th>
+                        <th>Workflow</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for run in runs %}
+                    <tr class="hover:bg-base-200/60">
+                        <td class="font-mono">{{ run.id }}</td>
+                        <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/workflows/{{ run.workflow_id }}">#{{ run.workflow_id }}</a></td>
+                        <td><span class="badge badge-soft badge-sm {{ run.status_class() }}">{{ run.status }}</span></td>
+                        <td class="whitespace-nowrap text-base-content/60">{{ run.created_at.format("%Y-%m-%d %H:%M") }}</td>
+                        <td class="whitespace-nowrap text-base-content/60">
+                            {% match run.completed_at %}
+                            {% when Some with (completed) %}
+                            {{ completed.format("%Y-%m-%d %H:%M") }}
+                            {% when None %}
+                            <span class="text-base-content/30">—</span>
+                            {% endmatch %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Run ID</th>
-                <th>Workflow</th>
-                <th>Status</th>
-                <th>Started</th>
-                <th>Completed</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for run in runs %}
-            <tr>
-                <td>{{ run.id }}</td>
-                <td><a href="/workflows/{{ run.workflow_id }}">#{{ run.workflow_id }}</a></td>
-                <td><span class="badge {{ run.status_class() }}">{{ run.status }}</span></td>
-                <td>{{ run.created_at.format("%Y-%m-%d %H:%M") }}</td>
-                <td>
-                    {% match run.completed_at %}
-                    {% when Some with (completed) %}
-                    {{ completed.format("%Y-%m-%d %H:%M") }}
-                    {% when None %}
-                    <span style="color: var(--text-muted);">-</span>
-                    {% endmatch %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+</section>
 {% endif %}
 
 <script>
@@ -211,27 +207,20 @@ function setMode(mode) {
     const formBtn = document.getElementById('mode-form');
     const jsonBtn = document.getElementById('mode-json');
 
+    formMode.classList.toggle('hidden', mode !== 'form');
+    jsonMode.classList.toggle('hidden', mode === 'form');
+    formBtn.classList.toggle('btn-active', mode === 'form');
+    formBtn.classList.toggle('btn-primary', mode === 'form');
+    jsonBtn.classList.toggle('btn-active', mode !== 'form');
+    jsonBtn.classList.toggle('btn-primary', mode !== 'form');
+
     if (mode === 'form') {
-        formMode.style.display = 'block';
-        jsonMode.style.display = 'none';
-        formBtn.className = 'btn btn-primary';
-        jsonBtn.className = 'btn btn-secondary';
         // Sync JSON to form fields
         syncJsonToForm();
     } else {
-        formMode.style.display = 'none';
-        jsonMode.style.display = 'block';
-        formBtn.className = 'btn btn-secondary';
-        jsonBtn.className = 'btn btn-primary';
         // Sync form fields to JSON
         syncFormToJson();
     }
-
-    // Update button styles
-    formBtn.style.padding = '0.25rem 0.75rem';
-    formBtn.style.fontSize = '0.875rem';
-    jsonBtn.style.padding = '0.25rem 0.75rem';
-    jsonBtn.style.fontSize = '0.875rem';
 }
 
 function syncFormToJson() {

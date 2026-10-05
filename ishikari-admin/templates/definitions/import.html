@@ -1,30 +1,28 @@
 {% extends "base.html" %}
 
-{% block title %}Import Definition - Ishikari Pro Admin{% endblock %}
+{% block title %}Import Definition - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Import Workflow Definition</h1>
-    <p class="page-subtitle">Paste your YAML workflow definition below</p>
+<div>
+    <h1 class="text-2xl font-bold tracking-tight">Import Workflow Definition</h1>
+    <p class="text-sm text-base-content/60">Paste your YAML workflow definition below</p>
 </div>
 
 {% match error %}
 {% when Some with (e) %}
-<div class="card" style="border-color: var(--danger); background-color: rgba(239, 68, 68, 0.1);">
-    <p style="color: var(--danger);">{{ e }}</p>
-</div>
+<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
 {% when None %}
 {% endmatch %}
 
-<div class="card">
-    <form method="post" action="/definitions/import">
-        <div style="margin-bottom: 1rem;">
-            <label class="form-label">YAML Definition</label>
-            <textarea
-                name="yaml"
-                class="form-input"
-                style="min-height: 400px; font-family: monospace; resize: vertical;"
-                placeholder="name: my-workflow
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <form method="post" action="{{ base_path }}/definitions/import" class="space-y-4">
+            <fieldset class="fieldset">
+                <legend class="fieldset-legend">YAML Definition</legend>
+                <textarea
+                    name="yaml"
+                    class="textarea min-h-[400px] w-full resize-y font-mono"
+                    placeholder="name: my-workflow
 description: My workflow description
 
 inputs:
@@ -37,44 +35,49 @@ nodes:
     type: echo
     inputs:
       message: Hello, world!"
-            >{{ yaml }}</textarea>
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
-            <button type="submit" class="btn btn-primary">Import Definition</button>
-            <a href="/definitions" class="btn btn-secondary">Cancel</a>
-        </div>
-    </form>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">YAML Format Reference</h2>
+                >{{ yaml }}</textarea>
+            </fieldset>
+            <div class="flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm">Import Definition</button>
+                <a href="{{ base_path }}/definitions" class="btn btn-ghost btn-sm">Cancel</a>
+            </div>
+        </form>
     </div>
-    <div style="color: var(--text-secondary); line-height: 1.8;">
-        <p><strong>Required fields:</strong></p>
-        <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
-            <li><code>name</code> - Unique workflow identifier</li>
-            <li><code>nodes</code> - Map of node definitions</li>
-        </ul>
+</section>
 
-        <p><strong>Optional fields:</strong></p>
-        <ul style="margin-left: 1.5rem; margin-bottom: 1rem;">
-            <li><code>description</code> - Human-readable description</li>
-            <li><code>version</code> - Version number (auto-incremented if omitted)</li>
-            <li><code>inputs</code> - Input schema with type/description/required</li>
-            <li><code>outputs</code> - Output expressions referencing node outputs</li>
-            <li><code>metadata</code> - Custom key-value metadata</li>
-        </ul>
-
-        <p><strong>Node fields:</strong></p>
-        <ul style="margin-left: 1.5rem;">
-            <li><code>type</code> - Node type (e.g., "http/get", "transform/json")</li>
-            <li><code>depends_on</code> - List of node IDs this node depends on</li>
-            <li><code>inputs</code> - Input values (can use mustache-style expressions)</li>
-            <li><code>when</code> - Conditional execution expression</li>
-            <li><code>timeout_seconds</code> - Execution timeout</li>
-            <li><code>max_retries</code> - Maximum retry attempts</li>
-        </ul>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">YAML Format Reference</h2>
+        <div class="grid gap-6 text-sm text-base-content/70 md:grid-cols-3">
+            <div>
+                <p class="mb-2 font-semibold text-base-content">Required fields</p>
+                <ul class="list-disc space-y-1 pl-5">
+                    <li><code class="font-mono text-primary">name</code> - Unique workflow identifier</li>
+                    <li><code class="font-mono text-primary">nodes</code> - Map of node definitions</li>
+                </ul>
+            </div>
+            <div>
+                <p class="mb-2 font-semibold text-base-content">Optional fields</p>
+                <ul class="list-disc space-y-1 pl-5">
+                    <li><code class="font-mono text-primary">description</code> - Human-readable description</li>
+                    <li><code class="font-mono text-primary">version</code> - Version number (auto-incremented if omitted)</li>
+                    <li><code class="font-mono text-primary">inputs</code> - Input schema with type/description/required</li>
+                    <li><code class="font-mono text-primary">outputs</code> - Output expressions referencing node outputs</li>
+                    <li><code class="font-mono text-primary">metadata</code> - Custom key-value metadata</li>
+                </ul>
+            </div>
+            <div>
+                <p class="mb-2 font-semibold text-base-content">Node fields</p>
+                <ul class="list-disc space-y-1 pl-5">
+                    <li><code class="font-mono text-primary">type</code> - Node type (e.g., "http/get", "transform/json")</li>
+                    <li><code class="font-mono text-primary">depends_on</code> - List of node IDs this node depends on</li>
+                    <li><code class="font-mono text-primary">inputs</code> - Input values (can use mustache-style expressions)</li>
+                    <li><code class="font-mono text-primary">when</code> - Conditional execution expression</li>
+                    <li><code class="font-mono text-primary">timeout_seconds</code> - Execution timeout</li>
+                    <li><code class="font-mono text-primary">max_retries</code> - Maximum retry attempts</li>
+                </ul>
+            </div>
+        </div>
     </div>
-</div>
+</section>
 {% endblock %}

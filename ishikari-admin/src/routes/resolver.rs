@@ -99,6 +99,8 @@ pub async fn status(State(state): State<AppState>) -> ResolverStatusTemplate {
     let pending_dependencies = get_pending_dependencies(&state.pool, state.schema()).await;
 
     ResolverStatusTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         stats,
         pending_releases,
         blocked_jobs,

@@ -1,0 +1,13 @@
+{
+  "name": "ishikari-admin-styles",
+  "private": true,
+  "scripts": {
+    "build": "tailwindcss -i ./admin.css -o ../assets/admin.css --minify",
+    "watch": "tailwindcss -i ./admin.css -o ../assets/admin.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "daisyui": "^5.7.47",
+    "tailwindcss": "^4.3.3"
+  }
+}

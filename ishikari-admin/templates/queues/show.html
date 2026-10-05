@@ -1,80 +1,59 @@
 {% extends "base.html" %}
 
+{% macro stat(label, value, color) %}
+<div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">{{ label }}</div>
+    <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
+</div>
+{% endmacro %}
+
 {% block title %}{{ queue_name }} Queue - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Queue: {{ queue_name }}</h1>
-    <p class="page-subtitle">{{ total }} jobs</p>
+<div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">Queue: {{ queue_name }}</h1>
+        <p class="text-sm text-base-content/60">{{ total }} jobs</p>
+    </div>
+    <a href="{{ base_path }}/queues" class="btn btn-ghost btn-sm">&larr; Back to Queues</a>
 </div>
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Queue Statistics</h2>
-    </div>
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value stat-available">{{ stats.available }}</div>
-            <div class="stat-label">Available</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-executing">{{ stats.executing }}</div>
-            <div class="stat-label">Executing</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-scheduled">{{ stats.scheduled }}</div>
-            <div class="stat-label">Scheduled</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-retryable">{{ stats.retryable }}</div>
-            <div class="stat-label">Retryable</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-completed">{{ stats.completed }}</div>
-            <div class="stat-label">Completed</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-discarded">{{ stats.discarded }}</div>
-            <div class="stat-label">Discarded</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value stat-cancelled">{{ stats.cancelled }}</div>
-            <div class="stat-label">Cancelled</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ stats.total }}</div>
-            <div class="stat-label">Total</div>
-        </div>
-    </div>
-</div>
+<section class="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-8">
+    {% call stat("Available", stats.available, "text-primary") %}
+    {% call stat("Executing", stats.executing, "text-info") %}
+    {% call stat("Scheduled", stats.scheduled, "text-secondary") %}
+    {% call stat("Retryable", stats.retryable, "text-warning") %}
+    {% call stat("Completed", stats.completed, "text-success") %}
+    {% call stat("Discarded", stats.discarded, "text-error") %}
+    {% call stat("Cancelled", stats.cancelled, "text-base-content/50") %}
+    {% call stat("Total", stats.total, "") %}
+</section>
 
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Jobs in Queue</h2>
-    </div>
-
-    <form class="filters" hx-get="/queues/{{ queue_name }}" hx-target="body" hx-trigger="change" hx-push-url="true">
-        <div class="filter-group">
-            <label class="form-label">State</label>
-            <select name="state" class="form-select">
-                <option value="">All States</option>
-                <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
-                <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
-                <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>
-                <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
-                <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
-                <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
-                <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
-            </select>
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+            <h2 class="card-title text-base">Jobs in Queue</h2>
+            <form hx-get="{{ base_path }}/queues/{{ queue_name }}" hx-target="body" hx-trigger="change" hx-push-url="true">
+                <fieldset class="fieldset py-0">
+                    <legend class="fieldset-legend">State</legend>
+                    <select name="state" class="select select-sm w-48">
+                        <option value="">All States</option>
+                        <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
+                        <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
+                        <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>
+                        <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
+                        <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
+                        <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
+                        <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+                        <option value="compensated" {% if current_state.as_deref() == Some("compensated") %}selected{% endif %}>Compensated (saga)</option>
+                    </select>
+                </fieldset>
+            </form>
         </div>
-    </form>
 
-    <div id="queue-jobs">
-        {% include "partials/jobs_table.html" %}
+        <div id="queue-jobs">
+            {% include "partials/jobs_table.html" %}
+        </div>
     </div>
-</div>
-
-<div style="margin-top: 1rem;">
-    <a href="/queues" class="btn btn-secondary">&larr; Back to Queues</a>
-</div>
+</section>
 {% endblock %}

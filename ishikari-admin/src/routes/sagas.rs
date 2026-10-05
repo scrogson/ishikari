@@ -58,6 +58,35 @@ impl SagaInfo {
     }
 }
 
+/// Saga step states meaning a completed forward job was (being) rolled back.
+pub const ROLLBACK_STATES_SQL: &str = "('compensating', 'compensated', 'compensation_failed')";
+
+/// The saga step state worth showing next to a job's own state: only set when
+/// the step was rolled back after its forward job completed.
+pub fn rollback_state(step_state: Option<&str>) -> Option<&str> {
+    step_state.filter(|s| matches!(*s, "compensating" | "compensated" | "compensation_failed"))
+}
+
+/// Badge class for a rollback state from [`rollback_state`].
+pub fn rollback_class(step_state: Option<&str>) -> &'static str {
+    match step_state {
+        Some("compensation_failed") => "badge-error",
+        Some("compensating") => "badge-warning",
+        _ => "badge-neutral",
+    }
+}
+
+/// SQL condition matching completed jobs whose saga step was rolled back.
+/// `job` is the jobs table alias.
+pub fn compensated_condition(saga_steps_table: &str, job: &str) -> String {
+    format!(
+        "{job}.state = 'completed' AND EXISTS (SELECT 1 FROM {steps} s WHERE s.job_id = {job}.id AND s.state IN {states})",
+        job = job,
+        steps = saga_steps_table,
+        states = ROLLBACK_STATES_SQL
+    )
+}
+
 /// Saga step detail.
 #[derive(Debug)]
 pub struct SagaStepInfo {
@@ -171,6 +200,8 @@ pub async fn list(
     let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
     SagasListTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         sagas,
         current_state: query.state,
         page,
@@ -190,7 +221,12 @@ pub async fn show(
 
     let steps = get_saga_steps(&state.pool, state.schema(), id).await;
 
-    Ok(SagaDetailTemplate { saga, steps })
+    Ok(SagaDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        saga,
+        steps,
+    })
 }
 
 /// Get sagas (workflows that have saga steps).

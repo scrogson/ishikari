@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use ishikari_pro::execution::{WorkflowExecutor, ExecutionEvent};
+//! use ishikari::execution::{WorkflowExecutor, ExecutionEvent};
 //!
 //! let executor = WorkflowExecutor::new(pool.clone());
 //!

@@ -1,38 +1,16 @@
-<div class="card-header">
-    <h2 class="card-title">Job Statistics</h2>
-    <span class="htmx-indicator"><span class="loading"></span></span>
+{% macro stat(label, value, color) %}
+<div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">{{ label }}</div>
+    <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
 </div>
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-value stat-available">{{ stats.available }}</div>
-        <div class="stat-label">Available</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-executing">{{ stats.executing }}</div>
-        <div class="stat-label">Executing</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-scheduled">{{ stats.scheduled }}</div>
-        <div class="stat-label">Scheduled</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-retryable">{{ stats.retryable }}</div>
-        <div class="stat-label">Retryable</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-completed">{{ stats.completed }}</div>
-        <div class="stat-label">Completed</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-discarded">{{ stats.discarded }}</div>
-        <div class="stat-label">Discarded</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value stat-cancelled">{{ stats.cancelled }}</div>
-        <div class="stat-label">Cancelled</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value">{{ stats.total }}</div>
-        <div class="stat-label">Total</div>
-    </div>
+{% endmacro %}
+<div class="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-8">
+    {% call stat("Available", stats.available, "text-primary") %}
+    {% call stat("Executing", stats.executing, "text-info") %}
+    {% call stat("Scheduled", stats.scheduled, "text-secondary") %}
+    {% call stat("Retryable", stats.retryable, "text-warning") %}
+    {% call stat("Completed", stats.completed, "text-success") %}
+    {% call stat("Discarded", stats.discarded, "text-error") %}
+    {% call stat("Cancelled", stats.cancelled, "text-base-content/50") %}
+    {% call stat("Total", stats.total, "") %}
 </div>

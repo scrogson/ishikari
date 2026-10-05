@@ -393,6 +393,8 @@ pub async fn list(
             let total_pages = (total as f64 / per_page as f64).ceil() as i64;
 
             Ok(DefinitionsListTemplate {
+                base_path: state.base_path.to_string(),
+                nav_items: state.nav_items.to_vec(),
                 definitions,
                 current_name: query.name,
                 page,
@@ -402,6 +404,8 @@ pub async fn list(
             })
         }
         Err(e) => Ok(DefinitionsListTemplate {
+            base_path: state.base_path.to_string(),
+            nav_items: state.nav_items.to_vec(),
             definitions: vec![],
             current_name: query.name,
             page: 1,
@@ -422,7 +426,11 @@ pub async fn show(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Definition not found").into_response())?;
 
-    Ok(DefinitionDetailTemplate { definition })
+    Ok(DefinitionDetailTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        definition,
+    })
 }
 
 /// Show visual editor for an existing definition.
@@ -437,6 +445,8 @@ pub async fn edit(
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Definition not found").into_response())?;
 
     Ok(DefinitionEditTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         definition_id: Some(id),
         name: definition.name,
         is_new: false,
@@ -444,8 +454,10 @@ pub async fn edit(
 }
 
 /// Show visual editor for creating a new definition.
-pub async fn new_definition() -> DefinitionEditTemplate {
+pub async fn new_definition(State(state): State<AppState>) -> DefinitionEditTemplate {
     DefinitionEditTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         definition_id: None,
         name: "New Workflow".to_string(),
         is_new: true,
@@ -453,8 +465,10 @@ pub async fn new_definition() -> DefinitionEditTemplate {
 }
 
 /// Show import form.
-pub async fn import_form() -> DefinitionImportTemplate {
+pub async fn import_form(State(state): State<AppState>) -> DefinitionImportTemplate {
     DefinitionImportTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         error: None,
         yaml: String::new(),
     }
@@ -467,19 +481,24 @@ pub async fn import_yaml(
 ) -> Result<Redirect, DefinitionImportTemplate> {
     // Parse the YAML
     let def = WorkflowDefinition::from_yaml(&form.yaml).map_err(|e| DefinitionImportTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         error: Some(e),
         yaml: form.yaml.clone(),
     })?;
 
     // Save to database
+    let base_path = state.base_path.to_string();
     let id = save_definition(&state.pool, state.schema(), &def)
         .await
         .map_err(|e| DefinitionImportTemplate {
+            base_path: state.base_path.to_string(),
+            nav_items: state.nav_items.to_vec(),
             error: Some(format!("Failed to save: {}", e)),
             yaml: form.yaml.clone(),
         })?;
 
-    Ok(Redirect::to(&format!("/definitions/{}", id)))
+    Ok(Redirect::to(&format!("{}/definitions/{}", base_path, id)))
 }
 
 /// Export a workflow definition as YAML.
@@ -516,7 +535,7 @@ pub async fn delete(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?;
 
-    Ok(Redirect::to("/definitions"))
+    Ok(Redirect::to(&format!("{}/definitions", state.base_path)))
 }
 
 /// Get workflow definitions with filtering and pagination.
@@ -822,6 +841,8 @@ pub async fn run_form(
         .unwrap_or_default();
 
     Ok(DefinitionRunTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
         definition,
         runs,
         error: None,
@@ -864,7 +885,10 @@ pub async fn run(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?;
 
     // Redirect to the workflow detail page
-    Ok(Redirect::to(&format!("/workflows/{}", workflow_id)))
+    Ok(Redirect::to(&format!(
+        "{}/workflows/{}",
+        state.base_path, workflow_id
+    )))
 }
 
 /// Create a workflow run with all node jobs.
@@ -876,7 +900,7 @@ async fn create_workflow_run(
     definition_version: i32,
     inputs: &Value,
 ) -> Result<i64, String> {
-    // 1. Create the ishikari-pro workflow
+    // 1. Create the workflow
     let workflow = Workflow::create(
         pool,
         &def.name,

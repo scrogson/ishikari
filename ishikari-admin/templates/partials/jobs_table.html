@@ -1,54 +1,59 @@
 {% if jobs.is_empty() %}
-<div class="empty-state">
-    <p>No jobs found</p>
-</div>
+<div class="py-12 text-center text-base-content/50">No jobs found</div>
 {% else %}
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Worker</th>
-            <th>Queue</th>
-            <th>State</th>
-            <th>Attempts</th>
-            <th>Inserted At</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for job in jobs %}
-        <tr>
-            <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
-            <td class="text-truncate" title="{{ job.worker }}">{{ job.worker }}</td>
-            <td>{{ job.queue }}</td>
-            <td><span class="badge badge-{{ job.state }}">{{ job.state }}</span></td>
-            <td>{{ job.attempt }}/{{ job.max_attempts }}</td>
-            <td>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S") }}</td>
-            <td>
-                <a href="/jobs/{{ job.id }}" class="btn btn-secondary btn-sm">View</a>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="overflow-x-auto">
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Worker</th>
+                <th>Queue</th>
+                <th>State</th>
+                <th>Attempts</th>
+                <th>Inserted At</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr class="hover:bg-base-200/60">
+                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                <td><span class="badge badge-ghost badge-sm">{{ job.queue }}</span></td>
+                <td><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+                    {% if let Some(rs) = job.saga_rollback_state() %}
+                    <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                    {% endif %}</td>
+                <td class="tabular-nums">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td class="whitespace-nowrap text-base-content/60">{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S") }}</td>
+                <td class="text-right">
+                    <a href="{{ base_path }}/jobs/{{ job.id }}" class="btn btn-ghost btn-xs">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
 {% if total_pages > 1 %}
-<div class="pagination">
-    {% if page > 1 %}
-    <a href="?page={{ page - 1 }}" hx-get="/api/jobs?page={{ page - 1 }}" hx-target="#jobs-table">&laquo; Prev</a>
-    {% endif %}
-
-    {% for p in 1..=total_pages %}
-        {% if p == page %}
-        <span class="active">{{ p }}</span>
-        {% else %}
-        <a href="?page={{ p }}" hx-get="/api/jobs?page={{ p }}" hx-target="#jobs-table">{{ p }}</a>
+<div class="mt-4 flex justify-center">
+    <div class="join">
+        {% if page > 1 %}
+        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">«</a>
         {% endif %}
-    {% endfor %}
 
-    {% if page < total_pages %}
-    <a href="?page={{ page + 1 }}" hx-get="/api/jobs?page={{ page + 1 }}" hx-target="#jobs-table">Next &raquo;</a>
-    {% endif %}
+        {% for p in 1..=total_pages %}
+            {% if p == page %}
+            <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
+            {% else %}
+            <a class="join-item btn btn-sm" href="?page={{ p }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">»</a>
+        {% endif %}
+    </div>
 </div>
 {% endif %}
 {% endif %}

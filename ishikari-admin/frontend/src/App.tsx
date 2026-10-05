@@ -7,6 +7,7 @@ declare global {
     __WORKFLOW_BUILDER__?: {
       definitionId: number | null;
       isNew: boolean;
+      basePath: string;
       apiBase: string;
     };
   }
@@ -21,7 +22,7 @@ function App() {
   const handleSaved = useCallback((id: number) => {
     // Update URL if this was a new definition
     if (!definitionId) {
-      window.history.replaceState(null, '', `/definitions/${id}/edit`);
+      window.history.replaceState(null, '', `${config?.basePath ?? ''}/definitions/${id}/edit`);
       setDefinitionId(id);
     }
   }, [definitionId]);

@@ -1,144 +1,137 @@
 {% extends "base.html" %}
 
-{% block title %}Job #{{ job.id }} Dependencies - Ishikari Pro Admin{% endblock %}
+{% block title %}Job #{{ job.id }} Dependencies - Ishikari Admin{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Job #{{ job.id }} Dependencies</h1>
-    <p class="page-subtitle">
-        <span class="badge {{ job.state_class() }}">{{ job.state }}</span>
-        {{ job.worker }}
-        {% if job.is_blocked() %}
-        <span class="badge badge-warning" style="margin-left: 0.5rem;">BLOCKED</span>
-        {% endif %}
-    </p>
-</div>
-
-<!-- Job Info -->
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Job Details</h2>
-        <a href="/jobs/{{ job.id }}" class="btn btn-secondary">View Full Job</a>
-    </div>
-    <div class="detail-grid">
-        <div class="detail-label">Worker</div>
-        <div>{{ job.worker }}</div>
-        <div class="detail-label">Queue</div>
-        <div>{{ job.queue }}</div>
-        <div class="detail-label">State</div>
-        <div><span class="badge {{ job.state_class() }}">{{ job.state }}</span></div>
-        <div class="detail-label">Attempt</div>
-        <div>{{ job.attempt }} / {{ job.max_attempts }}</div>
-        {% if let Some(wf_id) = job.workflow_id %}
-        <div class="detail-label">Workflow</div>
-        <div><a href="/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a></div>
-        {% endif %}
-        <div class="detail-label">Inserted</div>
-        <div>{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</div>
-    </div>
-</div>
-
-<!-- Dependency Graph -->
-<div class="card">
-    <div class="card-header">
-        <h2 class="card-title">Dependency Graph</h2>
-    </div>
-
-    <div class="dependency-graph" style="display: flex; flex-direction: column; align-items: center; gap: 2rem; padding: 2rem;">
-        <!-- Upstream Dependencies (jobs this job depends on) -->
-        {% if !job.dependencies.is_empty() %}
-        <div class="graph-section">
-            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
-                Depends On ({{ job.dependencies.len() }})
-            </div>
-            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
-                {% for dep in job.dependencies.iter() %}
-                <a href="/dependencies/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
-                    <span class="badge {{ dep.state_class() }}">{{ dep.state }}</span>
-                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
-                    <span style="color: var(--text-muted);">#{{ dep.job_id }}</span>
-                </a>
-                {% endfor %}
-            </div>
-        </div>
-
-        <!-- Arrow -->
-        <div style="color: var(--text-muted); font-size: 1.5rem;">
+<div class="flex flex-wrap items-end justify-between gap-4">
+    <div class="min-w-0">
+        <h1 class="text-2xl font-bold tracking-tight">Job <span class="font-mono">#{{ job.id }}</span> Dependencies</h1>
+        <div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-base-content/60">
+            <span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+            <span class="truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></span>
             {% if job.is_blocked() %}
-            <span style="color: var(--warning);">&#x25BC; BLOCKED</span>
-            {% else %}
-            &#x25BC;
+            <span class="badge badge-soft badge-sm badge-warning">blocked</span>
             {% endif %}
         </div>
-        {% endif %}
-
-        <!-- Current Job -->
-        <div class="current-job" style="padding: 1rem 2rem; background: var(--bg-tertiary); border: 2px solid var(--accent); border-radius: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <span class="badge {{ job.state_class() }}">{{ job.state }}</span>
-                <span style="font-weight: 600;">{{ job.worker }}</span>
-                <span style="color: var(--text-muted);">#{{ job.id }}</span>
-            </div>
-        </div>
-
-        <!-- Downstream Dependents (jobs that depend on this job) -->
-        {% if !job.dependents.is_empty() %}
-        <!-- Arrow -->
-        <div style="color: var(--text-muted); font-size: 1.5rem;">&#x25BC;</div>
-
-        <div class="graph-section">
-            <div class="graph-label" style="text-align: center; color: var(--text-secondary); margin-bottom: 1rem;">
-                Dependents ({{ job.dependents.len() }})
-            </div>
-            <div class="job-nodes" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;">
-                {% for dep in job.dependents.iter() %}
-                <a href="/dependencies/{{ dep.job_id }}" class="job-node" style="text-decoration: none;">
-                    <span class="badge {{ dep.state_class() }}">{{ dep.state }}</span>
-                    <span style="color: var(--text-primary);">{{ dep.worker }}</span>
-                    <span style="color: var(--text-muted);">#{{ dep.job_id }}</span>
-                </a>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
-        {% if job.dependencies.is_empty() && job.dependents.is_empty() %}
-        <div class="empty-state">
-            <p>This job has no dependencies or dependents.</p>
-        </div>
-        {% endif %}
     </div>
+    <a href="{{ base_path }}/jobs/{{ job.id }}" class="btn btn-ghost btn-sm">View Full Job</a>
 </div>
 
 <!-- Blocking Dependencies Alert -->
 {% if job.is_blocked() %}
-<div class="card" style="border-color: var(--warning);">
-    <div class="card-header">
-        <h2 class="card-title" style="color: var(--warning);">Blocking Dependencies</h2>
+<div role="alert" class="alert alert-warning alert-soft items-start">
+    <svg class="size-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+    <div class="w-full">
+        <h3 class="font-semibold">Blocking dependencies</h3>
+        <p class="text-sm">This job cannot proceed until the following dependencies complete:</p>
+        <div class="mt-3 overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Worker</th>
+                        <th>State</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for dep in job.blocking_dependencies() %}
+                    <tr>
+                        <td><a class="link link-hover font-mono" href="{{ base_path }}/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ dep.worker }}">{{ dep.worker|short_name }}</span></td>
+                        <td><span class="badge badge-soft badge-sm {{ dep.state_class() }}">{{ dep.state }}</span></td>
+                        <td class="text-right"><a href="{{ base_path }}/dependencies/{{ dep.job_id }}" class="btn btn-ghost btn-xs">View Dependencies</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-        This job cannot proceed until the following dependencies complete:
-    </p>
-    <table>
-        <thead>
-            <tr>
-                <th>Job ID</th>
-                <th>Worker</th>
-                <th>State</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for dep in job.blocking_dependencies() %}
-            <tr>
-                <td><a href="/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
-                <td>{{ dep.worker }}</td>
-                <td><span class="badge {{ dep.state_class() }}">{{ dep.state }}</span></td>
-                <td><a href="/dependencies/{{ dep.job_id }}" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">View Dependencies</a></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
 </div>
 {% endif %}
+
+<!-- Job Info -->
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Job Details</h2>
+        <dl class="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+            <dt class="text-base-content/60">Worker</dt>
+            <dd class="break-all font-mono text-xs">{{ job.worker }}</dd>
+            <dt class="text-base-content/60">Queue</dt>
+            <dd><span class="badge badge-ghost badge-sm">{{ job.queue }}</span></dd>
+            <dt class="text-base-content/60">State</dt>
+            <dd><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span></dd>
+            <dt class="text-base-content/60">Attempt</dt>
+            <dd class="tabular-nums">{{ job.attempt }} / {{ job.max_attempts }}</dd>
+            {% if let Some(wf_id) = job.workflow_id %}
+            <dt class="text-base-content/60">Workflow</dt>
+            <dd><a class="link link-hover link-primary" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a></dd>
+            {% endif %}
+            <dt class="text-base-content/60">Inserted</dt>
+            <dd class="text-base-content/80">{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+        </dl>
+    </div>
+</section>
+
+<!-- Dependency Graph -->
+<section class="card border border-base-300 bg-base-100 shadow-sm">
+    <div class="card-body gap-4">
+        <h2 class="card-title text-base">Dependency Graph</h2>
+
+        <div class="flex flex-col items-center gap-4 py-4">
+            <!-- Upstream Dependencies (jobs this job depends on) -->
+            {% if !job.dependencies.is_empty() %}
+            <div class="flex w-full flex-col items-center gap-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Depends On ({{ job.dependencies.len() }})</div>
+                <div class="flex flex-wrap justify-center gap-2">
+                    {% for dep in job.dependencies.iter() %}
+                    <a href="{{ base_path }}/dependencies/{{ dep.job_id }}" class="flex items-center gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2 text-sm transition hover:border-primary">
+                        <span class="badge badge-soft badge-sm {{ dep.state_class() }}">{{ dep.state }}</span>
+                        <span class="font-mono text-xs"><span data-tip="{{ dep.worker }}">{{ dep.worker|short_name }}</span></span>
+                        <span class="font-mono text-xs text-base-content/50">#{{ dep.job_id }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Arrow -->
+            <div class="flex flex-col items-center text-base-content/40">
+                <svg class="size-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3"/></svg>
+                {% if job.is_blocked() %}
+                <span class="badge badge-soft badge-xs badge-warning">blocked</span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Current Job -->
+            <div class="flex items-center gap-3 rounded-box border-2 border-primary bg-primary/10 px-5 py-3">
+                <span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+                <span class="font-mono text-sm font-semibold"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></span>
+                <span class="font-mono text-xs text-base-content/50">#{{ job.id }}</span>
+            </div>
+
+            <!-- Downstream Dependents (jobs that depend on this job) -->
+            {% if !job.dependents.is_empty() %}
+            <svg class="size-6 text-base-content/40" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3"/></svg>
+
+            <div class="flex w-full flex-col items-center gap-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Dependents ({{ job.dependents.len() }})</div>
+                <div class="flex flex-wrap justify-center gap-2">
+                    {% for dep in job.dependents.iter() %}
+                    <a href="{{ base_path }}/dependencies/{{ dep.job_id }}" class="flex items-center gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2 text-sm transition hover:border-primary">
+                        <span class="badge badge-soft badge-sm {{ dep.state_class() }}">{{ dep.state }}</span>
+                        <span class="font-mono text-xs"><span data-tip="{{ dep.worker }}">{{ dep.worker|short_name }}</span></span>
+                        <span class="font-mono text-xs text-base-content/50">#{{ dep.job_id }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if job.dependencies.is_empty() && job.dependents.is_empty() %}
+            <div class="py-12 text-center text-base-content/50">This job has no dependencies or dependents.</div>
+            {% endif %}
+        </div>
+    </div>
+</section>
 {% endblock %}
