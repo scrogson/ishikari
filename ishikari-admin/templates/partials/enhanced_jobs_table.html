@@ -21,7 +21,10 @@
                 <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
                 <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
                 <td><span class="badge badge-ghost badge-sm">{{ job.queue }}</span></td>
-                <td><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span></td>
+                <td><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+                    {% if let Some(rs) = job.saga_rollback_state() %}
+                    <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                    {% endif %}</td>
                 <td>
                     {% if job.has_dependencies() %}
                     <span class="badge badge-soft badge-sm {{ job.dep_status_class() }}">{{ job.dep_status_text() }}</span>

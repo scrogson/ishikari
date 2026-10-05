@@ -45,6 +45,7 @@
                         <option value="completed" {% if current_state.as_deref() == Some("completed") %}selected{% endif %}>Completed</option>
                         <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
                         <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+                        <option value="compensated" {% if current_state.as_deref() == Some("compensated") %}selected{% endif %}>Compensated (saga)</option>
                     </select>
                 </fieldset>
             </form>

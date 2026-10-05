@@ -218,17 +218,11 @@ impl WorkflowJobInfo {
     /// Saga step state worth showing next to the job state, i.e. when the
     /// step was rolled back after the job itself completed.
     pub fn saga_rollback_state(&self) -> Option<&str> {
-        self.saga_step_state
-            .as_deref()
-            .filter(|s| matches!(*s, "compensating" | "compensated" | "compensation_failed"))
+        super::sagas::rollback_state(self.saga_step_state.as_deref())
     }
 
     pub fn saga_rollback_class(&self) -> &'static str {
-        match self.saga_step_state.as_deref() {
-            Some("compensation_failed") => "badge-error",
-            Some("compensating") => "badge-warning",
-            _ => "badge-neutral",
-        }
+        super::sagas::rollback_class(self.saga_step_state.as_deref())
     }
 }
 

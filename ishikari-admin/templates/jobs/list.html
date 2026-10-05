@@ -22,6 +22,7 @@
                 <option value="retryable" {% if current_state.as_deref() == Some("retryable") %}selected{% endif %}>Retryable</option>
                 <option value="discarded" {% if current_state.as_deref() == Some("discarded") %}selected{% endif %}>Discarded</option>
                 <option value="cancelled" {% if current_state.as_deref() == Some("cancelled") %}selected{% endif %}>Cancelled</option>
+                <option value="compensated" {% if current_state.as_deref() == Some("compensated") %}selected{% endif %}>Compensated (saga)</option>
             </select>
         </fieldset>
 

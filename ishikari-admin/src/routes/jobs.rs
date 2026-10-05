@@ -96,9 +96,19 @@ pub struct EnhancedJobInfo {
     pub pending_deps: i64,
     pub failed_deps: i64,
     pub inserted_at: chrono::DateTime<chrono::Utc>,
+    /// Saga step state, if this is a saga forward job.
+    pub saga_step_state: Option<String>,
 }
 
 impl EnhancedJobInfo {
+    pub fn saga_rollback_state(&self) -> Option<&str> {
+        super::sagas::rollback_state(self.saga_step_state.as_deref())
+    }
+
+    pub fn saga_rollback_class(&self) -> &'static str {
+        super::sagas::rollback_class(self.saga_step_state.as_deref())
+    }
+
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
@@ -443,7 +453,7 @@ pub async fn show(
 }
 
 /// Get enhanced jobs with filtering.
-async fn get_enhanced_jobs(
+pub(crate) async fn get_enhanced_jobs(
     pool: &PgPool,
     schema: Option<&str>,
     query: &EnhancedJobsQuery,
@@ -462,13 +472,24 @@ async fn get_enhanced_jobs(
         Some(s) => format!("{}.ishikari_workflows", s),
         None => "ishikari_workflows".to_string(),
     };
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
 
     let mut conditions = Vec::new();
     let mut params: Vec<String> = Vec::new();
 
-    if let Some(ref s) = query.state {
-        params.push(s.to_string());
-        conditions.push(format!("j.state::text = ${}", params.len()));
+    match query.state.as_deref() {
+        // Not a job state: completed jobs whose saga step was rolled back
+        Some("compensated") => {
+            conditions.push(super::sagas::compensated_condition(&saga_steps_table, "j"));
+        }
+        Some(s) => {
+            params.push(s.to_string());
+            conditions.push(format!("j.state::text = ${}", params.len()));
+        }
+        None => {}
     }
     if let Some(ref q) = query.queue {
         params.push(q.to_string());
@@ -515,7 +536,8 @@ async fn get_enhanced_jobs(
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.depends_on_job_id = j.id), 0) as blocking_count,
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'satisfied'), 0) as satisfied_deps,
             COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'pending'), 0) as pending_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps
+            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps,
+            (SELECT s.state FROM {steps} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
         FROM {jobs} j
         LEFT JOIN {workflows} w ON w.id = j.workflow_id
         {where_clause}
@@ -525,6 +547,7 @@ async fn get_enhanced_jobs(
         deps = deps_table,
         jobs = jobs_table,
         workflows = workflows_table,
+        steps = saga_steps_table,
         where_clause = where_clause,
         limit = limit,
         offset = offset
@@ -555,6 +578,7 @@ async fn get_enhanced_jobs(
             i64,
             i64,
             i64,
+            Option<String>,
         ),
     >(&list_query);
     for p in &params {
@@ -580,6 +604,7 @@ async fn get_enhanced_jobs(
             satisfied_deps: row.11,
             pending_deps: row.12,
             failed_deps: row.13,
+            saga_step_state: row.14,
         })
         .collect();
 
