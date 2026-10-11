@@ -1,0 +1,5 @@
+error: `queue` is set both here and as a method; keep one
+ --> tests/ui/queue_twice.rs:7:28
+  |
+7 | #[ishikari::worker(queue = "a")]
+  |                            ^^^

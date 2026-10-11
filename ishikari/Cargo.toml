@@ -38,3 +38,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 rand = "0.8.5"
+trybuild = "1"
