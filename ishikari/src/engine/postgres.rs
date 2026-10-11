@@ -89,19 +89,27 @@ impl Postgres {
         .await
     }
 
-    /// Record a successful run. False when the job had moved on.
+    /// Record a successful run, and in the same transaction release the jobs that were waiting
+    /// only on it (and complete its workflow when it was the last step). False when the job had
+    /// moved on.
     pub(crate) async fn complete(&self, job: &Job) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
-        let done = sqlx::query(&format!(
+        let mut tx = self.pool.begin().await?;
+        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
             "UPDATE {jobs} SET state = 'completed', completed_at = now(), {release} \
-             WHERE id = $1 AND state = 'executing' AND attempt = $2",
+             WHERE id = $1 AND state = 'executing' AND attempt = $2 RETURNING workflow_id",
             release = release("'completed'", ""),
         ))
         .bind(job.id)
         .bind(job.attempt)
-        .execute(&*self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(done.rows_affected() == 1)
+        let Some(workflow_id) = done else {
+            return Ok(false);
+        };
+        self.after_completed(&mut tx, job.id, workflow_id).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Record a failed run: retryable at `retry_at`, or discarded when it was the last attempt.
@@ -115,7 +123,8 @@ impl Postgres {
         retry_at: DateTime<Utc>,
     ) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
-        let done = sqlx::query(&format!(
+        let mut tx = self.pool.begin().await?;
+        let done: Option<(String, Option<i64>)> = sqlx::query_as(&format!(
             r#"
             UPDATE {jobs}
             SET state = CASE WHEN attempt >= max_attempts THEN 'discarded' ELSE 'retryable' END
@@ -125,6 +134,7 @@ impl Postgres {
                 errors = errors || $3::jsonb,
                 scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE $4 END
             WHERE id = $1 AND state = 'executing' AND attempt = $2
+            RETURNING state::text, workflow_id
             "#,
             state = self.name("ishikari_job_state"),
             release = release(
@@ -136,9 +146,16 @@ impl Postgres {
         .bind(job.attempt)
         .bind(error_record(job.attempt, kind, error))
         .bind(retry_at)
-        .execute(&*self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(done.rows_affected() == 1)
+        let Some((state, workflow_id)) = done else {
+            return Ok(false);
+        };
+        if state == "discarded" {
+            self.after_failed(&mut tx, job.id, workflow_id).await?;
+        }
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Record that the run cancelled its job. False when the job had moved on.
@@ -152,18 +169,24 @@ impl Postgres {
             .map(|r| error_record(job.attempt, ErrorKind::Cancelled, r))
             .into_iter()
             .collect();
-        let done = sqlx::query(&format!(
+        let mut tx = self.pool.begin().await?;
+        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
             "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
                  errors = errors || $3::jsonb[] \
-             WHERE id = $1 AND state = 'executing' AND attempt = $2",
+             WHERE id = $1 AND state = 'executing' AND attempt = $2 RETURNING workflow_id",
             release = release("'cancelled'", ""),
         ))
         .bind(job.id)
         .bind(job.attempt)
         .bind(reason)
-        .execute(&*self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(done.rows_affected() == 1)
+        let Some(workflow_id) = done else {
+            return Ok(false);
+        };
+        self.after_failed(&mut tx, job.id, workflow_id).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Put the job back to run again in `seconds`, without using up an attempt. False when the
@@ -184,6 +207,126 @@ impl Postgres {
         Ok(done.rows_affected() == 1)
     }
 
+    /// After `id` completed: mark what depended on it satisfied, make available the dependents
+    /// with nothing left to wait for, and complete the workflow when every job in it has. The
+    /// dependents are locked first, so two upstreams finishing at once can't both leave the
+    /// shared dependent waiting.
+    async fn after_completed(
+        &self,
+        tx: &mut sqlx::PgConnection,
+        id: i64,
+        workflow_id: Option<i64>,
+    ) -> Result<(), sqlx::Error> {
+        let (jobs, deps) = (
+            self.name("ishikari_jobs"),
+            self.name("ishikari_job_dependencies"),
+        );
+        let dependents: Vec<i64> = sqlx::query_scalar(&format!(
+            "UPDATE {deps} SET state = 'satisfied' \
+             WHERE depends_on_job_id = $1 AND state = 'pending' RETURNING job_id"
+        ))
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !dependents.is_empty() {
+            sqlx::query(&format!(
+                "SELECT id FROM {jobs} WHERE id = ANY($1) ORDER BY id FOR UPDATE"
+            ))
+            .bind(&dependents)
+            .execute(&mut *tx)
+            .await?;
+            let released = sqlx::query(&format!(
+                "UPDATE {jobs} AS j SET state = 'available', scheduled_at = now(), {release} \
+                 WHERE j.id = ANY($1) AND j.state IN ('pending', 'scheduled') \
+                   AND NOT EXISTS (SELECT 1 FROM {deps} d \
+                                   WHERE d.job_id = j.id AND d.state <> 'satisfied')",
+                release = release("'available'", "j."),
+            ))
+            .bind(&dependents)
+            .execute(&mut *tx)
+            .await?;
+            if released.rows_affected() > 0 {
+                tracing::debug!(
+                    id,
+                    released = released.rows_affected(),
+                    "released dependents"
+                );
+            }
+        }
+        if let Some(workflow_id) = workflow_id {
+            sqlx::query(&format!(
+                "UPDATE {workflows} SET state = 'completed', completed_at = now() \
+                 WHERE id = $1 AND state = 'running' \
+                   AND NOT EXISTS (SELECT 1 FROM {jobs} WHERE workflow_id = $1 AND state <> 'completed')",
+                workflows = self.name("ishikari_workflows"),
+            ))
+            .bind(workflow_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// After `id` was discarded or cancelled: everything that depends on it, directly or not,
+    /// can never run, so its dependencies are marked failed and those jobs cancelled. A workflow
+    /// that isn't a saga is marked failed (a saga's compensation is the resolver's).
+    async fn after_failed(
+        &self,
+        tx: &mut sqlx::PgConnection,
+        id: i64,
+        workflow_id: Option<i64>,
+    ) -> Result<(), sqlx::Error> {
+        let (jobs, deps) = (
+            self.name("ishikari_jobs"),
+            self.name("ishikari_job_dependencies"),
+        );
+        let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+            r#"
+            WITH RECURSIVE down(id) AS (
+                SELECT job_id FROM {deps} WHERE depends_on_job_id = $1
+                UNION
+                SELECT d.job_id FROM {deps} d JOIN down ON d.depends_on_job_id = down.id
+            )
+            SELECT id FROM down ORDER BY id
+            "#
+        ))
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !downstream.is_empty() {
+            let mut failed = downstream.clone();
+            failed.push(id);
+            sqlx::query(&format!(
+                "UPDATE {deps} SET state = 'failed' \
+                 WHERE depends_on_job_id = ANY($1) AND state = 'pending'"
+            ))
+            .bind(&failed)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(&format!(
+                "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release} \
+                 WHERE id = ANY($1) AND state IN ('pending', 'scheduled')",
+                release = release("'cancelled'", ""),
+            ))
+            .bind(&downstream)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(workflow_id) = workflow_id {
+            sqlx::query(&format!(
+                "UPDATE {workflows} SET state = 'failed', completed_at = now() \
+                 WHERE id = $1 AND state = 'running' \
+                   AND NOT EXISTS (SELECT 1 FROM {saga} WHERE workflow_id = $1)",
+                workflows = self.name("ishikari_workflows"),
+                saga = self.name("ishikari_saga_steps"),
+            ))
+            .bind(workflow_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Make up to `limit` scheduled and retryable jobs that are due available. Returns how many.
     pub(crate) async fn stage(&self, limit: i32) -> Result<usize, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
@@ -194,6 +337,10 @@ impl Postgres {
                 FROM {jobs}
                 WHERE state IN ('scheduled', 'retryable')
                   AND scheduled_at <= now()
+                  -- A workflow step from before the pending state waits for its dependencies.
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {deps} d
+                      WHERE d.job_id = {jobs}.id AND d.state <> 'satisfied')
                 ORDER BY scheduled_at, id
                 LIMIT $1
                 FOR UPDATE SKIP LOCKED
@@ -203,6 +350,7 @@ impl Postgres {
             FROM due
             WHERE j.id = due.id
             "#,
+            deps = self.name("ishikari_job_dependencies"),
             release = release("'available'", "j."),
         ))
         .bind(limit)

@@ -348,6 +348,13 @@ pub(crate) struct Row {
 }
 
 impl Row {
+    /// The same row with no unique key.
+    pub(crate) fn without_unique(mut self) -> Row {
+        self.unique_key = None;
+        self.unique_states = None;
+        self
+    }
+
     pub(crate) fn new<J>(job: &J, opts: &InsertOpts) -> Result<Row, sqlx::Error>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,

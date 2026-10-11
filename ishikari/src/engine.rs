@@ -84,6 +84,7 @@ pub struct EngineBuilder {
     crons: Vec<Cron>,
     cron_interval: Duration,
     cron_catch_up: Duration,
+    resolver_interval: Duration,
 }
 
 impl EngineBuilder {
@@ -184,6 +185,14 @@ impl EngineBuilder {
         self
     }
 
+    /// How often the dependency resolver sweeps workflows: it runs saga compensation and catches
+    /// any step a completion didn't release. Defaults to 30 seconds; steps are normally released
+    /// the moment their last upstream completes.
+    pub fn resolver_interval(mut self, interval: Duration) -> Self {
+        self.resolver_interval = interval;
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -219,6 +228,15 @@ impl EngineBuilder {
             self.node_timeout,
             self.rescue_unowned_after,
         ));
+
+        let mut resolver = crate::dependencies::DependencyResolver::new(
+            storage.pool.clone(),
+            self.resolver_interval,
+        );
+        if let Some(schema) = storage.schema() {
+            resolver = resolver.schema(schema);
+        }
+        tasks.push(resolver.start());
 
         if !self.crons.is_empty() {
             tasks.push(cron_task(
@@ -311,6 +329,7 @@ impl Engine {
             crons: Vec::new(),
             cron_interval: Duration::from_secs(15),
             cron_catch_up: Duration::from_secs(300),
+            resolver_interval: Duration::from_secs(30),
         }
     }
 

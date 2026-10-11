@@ -61,15 +61,42 @@ impl DependencyResolver {
         })
     }
 
-    /// Run the resolver loop.
+    /// Run the resolver loop. Each tick holds an advisory lock (per schema) while it resolves,
+    /// so with several nodes only one sweeps at a time; the others skip that tick.
     #[instrument(skip(self))]
     async fn run(self) {
         let mut interval = tokio::time::interval(self.interval);
+        let key = format!(
+            "ishikari:resolver:{}",
+            self.schema.as_deref().unwrap_or("public")
+        );
 
         loop {
             interval.tick().await;
-            if let Err(e) = self.resolve_once().await {
-                error!(error = %e, "dependency resolution failed");
+            let mut lock = match self.pool.acquire().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    error!(error = %e, "dependency resolver couldn't get a connection");
+                    continue;
+                }
+            };
+            let held: std::result::Result<bool, sqlx::Error> =
+                sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
+                    .bind(&key)
+                    .fetch_one(&mut *lock)
+                    .await;
+            match held {
+                Ok(true) => {
+                    if let Err(e) = self.resolve_once().await {
+                        error!(error = %e, "dependency resolution failed");
+                    }
+                    let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext($1))")
+                        .bind(&key)
+                        .execute(&mut *lock)
+                        .await;
+                }
+                Ok(false) => debug!("another node is resolving dependencies"),
+                Err(e) => error!(error = %e, "dependency resolver couldn't take its lock"),
             }
         }
     }
@@ -156,7 +183,7 @@ impl DependencyResolver {
             SELECT j.id
             FROM {} j
             INNER JOIN {} d ON d.job_id = j.id
-            WHERE j.state = 'scheduled'
+            WHERE j.state IN ('pending', 'scheduled')
             GROUP BY j.id
             HAVING COUNT(*) FILTER (WHERE d.state = 'pending') = 0
                AND COUNT(*) FILTER (WHERE d.state = 'failed') = 0
@@ -174,7 +201,7 @@ impl DependencyResolver {
             // Reset scheduled_at to now() in case this is a compensation job
             // that was scheduled far in the future (year 3000).
             let release_query = format!(
-                "UPDATE {} SET state = 'available', scheduled_at = now() WHERE id = $1 AND state = 'scheduled'",
+                "UPDATE {} SET state = 'available', scheduled_at = now() WHERE id = $1 AND state IN ('pending', 'scheduled')",
                 jobs_table
             );
 
@@ -190,7 +217,7 @@ impl DependencyResolver {
             SELECT DISTINCT j.id, j.workflow_id
             FROM {} j
             INNER JOIN {} d ON d.job_id = j.id
-            WHERE j.state = 'scheduled'
+            WHERE j.state IN ('pending', 'scheduled')
               AND d.state = 'failed'
             "#,
             jobs_table, deps_table
@@ -204,7 +231,7 @@ impl DependencyResolver {
             info!(job_id = job_id, "cancelling job with failed dependencies");
 
             let cancel_query = format!(
-                "UPDATE {} SET state = 'cancelled', cancelled_at = now() WHERE id = $1 AND state = 'scheduled'",
+                "UPDATE {} SET state = 'cancelled', cancelled_at = now() WHERE id = $1 AND state IN ('pending', 'scheduled')",
                 jobs_table
             );
 
@@ -359,7 +386,7 @@ impl DependencyResolver {
                 WHERE s.job_id = j.id
                   AND s.workflow_id = $1
                   AND s.state = 'pending'
-                  AND j.state IN ('scheduled', 'cancelled', 'discarded')
+                  AND j.state IN ('pending', 'scheduled', 'cancelled', 'discarded')
                 "#,
                 saga_steps_table, jobs_table
             );
