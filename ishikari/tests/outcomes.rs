@@ -82,7 +82,11 @@ async fn the_last_failed_attempt_is_discarded_with_its_error() {
     .await
     .unwrap();
     assert_eq!(attempt, 1);
-    assert_eq!(errors, vec![serde_json::json!("nope")]);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        (errors[0]["kind"].as_str(), errors[0]["error"].as_str()),
+        (Some("error"), Some("nope"))
+    );
     assert!(discarded);
 
     db.finish().await;

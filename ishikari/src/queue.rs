@@ -36,7 +36,7 @@
 //! # }
 //! ```
 
-use crate::{Backoff, Context, Job, Postgres, State, Status};
+use crate::{Backoff, Context, ErrorKind, Job, Postgres, State, Status};
 use chrono::Duration as ChronoDuration;
 use futures::FutureExt;
 use std::any::Any;
@@ -112,8 +112,15 @@ impl QueueBuilder {
     ///
     /// Returns a new `Queue` instance.
     pub fn build(self, storage: Arc<Postgres>, state: State) -> Queue {
+        let node = format!("{}-{}", self.name.as_str(), std::process::id());
+        self.build_on(storage, state, node.into())
+    }
+
+    /// Build the queue to run on `node` (the engine's node name).
+    pub(crate) fn build_on(self, storage: Arc<Postgres>, state: State, node: Arc<str>) -> Queue {
         let concurrency = self.concurrency.unwrap_or(10);
         Queue {
+            node,
             concurrency,
             interval: self.interval.unwrap_or(Duration::from_secs(1)),
             name: self.name,
@@ -138,6 +145,8 @@ impl QueueBuilder {
 /// * `storage` - The storage backend for job persistence.
 #[derive(Debug)]
 pub struct Queue {
+    /// The node jobs are claimed for.
+    pub node: Arc<str>,
     pub concurrency: u32,
     pub interval: Duration,
     pub name: QueueName,
@@ -171,12 +180,17 @@ impl Queue {
     /// This method spawns a new task to run the queue asynchronously.
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     pub fn start(self) {
-        info!("starting queue");
+        self.spawn();
+    }
+
+    /// Start polling in a background task, returning its handle.
+    pub(crate) fn spawn(self) -> tokio::task::JoinHandle<()> {
+        info!(queue = self.name.as_str(), "starting queue");
         tokio::spawn(async move {
             if let Err(e) = self.run().await {
                 error!("Queue run loop failed: {}", e);
             }
-        });
+        })
     }
 
     /// Runs the queue, polling for jobs at the specified interval.
@@ -216,7 +230,11 @@ async fn execute_jobs(queue: &Queue) {
     if free == 0 {
         return;
     }
-    let jobs = match queue.storage.claim(queue.name.as_str(), free as i32).await {
+    let jobs = match queue
+        .storage
+        .claim(queue.name.as_str(), &queue.node, free as i32)
+        .await
+    {
         Ok(jobs) => jobs,
         Err(e) => {
             error!(error = ?e, "failed to fetch jobs");
@@ -250,6 +268,7 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
             let written = storage
                 .error(
                     &job,
+                    ErrorKind::Error,
                     &format!("Failed to deserialize worker: {e}"),
                     retry_at,
                 )
@@ -290,7 +309,12 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
                 "job failed"
             );
             let written = storage
-                .error(&job, &e.to_string(), worker.backoff(job.attempt))
+                .error(
+                    &job,
+                    ErrorKind::Error,
+                    &e.to_string(),
+                    worker.backoff(job.attempt),
+                )
                 .await;
             log_write(&job, "error", written);
         }
@@ -300,6 +324,7 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
             let written = storage
                 .error(
                     &job,
+                    ErrorKind::Panic,
                     &format!("Worker panicked: {panic_msg}"),
                     worker.backoff(job.attempt),
                 )

@@ -18,7 +18,8 @@ pub struct TestDb {
     pub pool: PgPool,
     /// The test's schema.
     pub schema: String,
-    url: String,
+    /// The database URL.
+    pub url: String,
 }
 
 impl TestDb {
@@ -60,7 +61,8 @@ impl TestDb {
         PgPool::connect(&self.url).await.expect("connect")
     }
 
-    async fn pool_for(url: &str, schema: &str) -> PgPool {
+    /// A pool on `url` whose connections use `schema`.
+    pub async fn pool_for(url: &str, schema: &str) -> PgPool {
         let path = format!("SET search_path TO {schema}");
         PgPoolOptions::new()
             .max_connections(10)

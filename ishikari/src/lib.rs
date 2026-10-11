@@ -168,7 +168,7 @@ pub mod execution;
 
 pub use ishikari_macros::{job, worker};
 
-pub use engine::{Engine, EngineBuilder, EngineName, Postgres};
+pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres};
 pub use model::{Job, JobState};
 pub use queue::Queue;
 pub use result::{Cancel, Complete, PerformError, PerformResult, Snooze, Status};

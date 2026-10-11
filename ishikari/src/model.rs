@@ -6,6 +6,7 @@
 //! - `JobState` - Enum representing the various states a job can be in
 //!
 //! Jobs progress through different states during their lifecycle:
+//! - `Pending` - Waiting on the jobs it depends on (workflow steps)
 //! - `Available` - Ready to be processed
 //! - `Scheduled` - Scheduled for future execution
 //! - `Executing` - Currently being processed
@@ -25,6 +26,8 @@ use serde_json::Value as JsonValue;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
+    /// Waiting on the jobs it depends on (a workflow step).
+    Pending,
     Available,
     Scheduled,
     Executing,
@@ -38,6 +41,7 @@ impl JobState {
     /// The state's name in the database.
     pub fn as_str(&self) -> &'static str {
         match self {
+            JobState::Pending => "pending",
             JobState::Available => "available",
             JobState::Scheduled => "scheduled",
             JobState::Executing => "executing",
@@ -62,6 +66,7 @@ impl std::str::FromStr for JobState {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
+            "pending" => JobState::Pending,
             "available" => JobState::Available,
             "scheduled" => JobState::Scheduled,
             "executing" => JobState::Executing,

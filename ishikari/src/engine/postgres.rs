@@ -47,8 +47,13 @@ impl Postgres {
         qualified(self.schema.as_deref(), name)
     }
 
-    /// Mark up to `limit` available jobs in `queue` as executing and return them.
-    pub(crate) async fn claim(&self, queue: &str, limit: i32) -> Result<Vec<Job>, sqlx::Error> {
+    /// Mark up to `limit` available jobs in `queue` as executing by `node` and return them.
+    pub(crate) async fn claim(
+        &self,
+        queue: &str,
+        node: &str,
+        limit: i32,
+    ) -> Result<Vec<Job>, sqlx::Error> {
         if limit <= 0 {
             return Ok(vec![]);
         }
@@ -68,6 +73,7 @@ impl Postgres {
             UPDATE {jobs} AS j
             SET state = 'executing',
                 attempted_at = now(),
+                attempted_by = array_append(coalesce(j.attempted_by, ARRAY[]::text[]), $3),
                 attempt = j.attempt + 1
             FROM subset
             WHERE j.id = subset.id
@@ -76,6 +82,7 @@ impl Postgres {
         ))
         .bind(queue)
         .bind(limit)
+        .bind(node)
         .fetch_all(&*self.pool)
         .await
     }
@@ -100,6 +107,7 @@ impl Postgres {
     pub(crate) async fn error(
         &self,
         job: &Job,
+        kind: ErrorKind,
         error: &str,
         retry_at: DateTime<Utc>,
     ) -> Result<bool, sqlx::Error> {
@@ -118,7 +126,7 @@ impl Postgres {
         ))
         .bind(job.id)
         .bind(job.attempt)
-        .bind(serde_json::Value::String(error.to_string()))
+        .bind(error_record(job.attempt, kind, error))
         .bind(retry_at)
         .execute(&*self.pool)
         .await?;
@@ -133,7 +141,7 @@ impl Postgres {
     ) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let reason: Vec<serde_json::Value> = reason
-            .map(|r| serde_json::Value::String(r.to_string()))
+            .map(|r| error_record(job.attempt, ErrorKind::Cancelled, r))
             .into_iter()
             .collect();
         let done = sqlx::query(&format!(
@@ -190,6 +198,123 @@ impl Postgres {
         .await?;
         Ok(staged.rows_affected() as usize)
     }
+}
+
+impl Postgres {
+    /// Record that `node` is alive and which queues it runs.
+    pub(crate) async fn heartbeat(&self, node: &str, queues: &[String]) -> Result<(), sqlx::Error> {
+        let nodes = self.name("ishikari_nodes");
+        sqlx::query(&format!(
+            "INSERT INTO {nodes} (name, queues) VALUES ($1, $2) \
+             ON CONFLICT (name) DO UPDATE SET heartbeat_at = now(), queues = EXCLUDED.queues"
+        ))
+        .bind(node)
+        .bind(queues)
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Remove `node`'s row (it is shutting down), and rows of nodes silent for a day.
+    pub(crate) async fn forget_node(&self, node: &str) -> Result<(), sqlx::Error> {
+        let nodes = self.name("ishikari_nodes");
+        sqlx::query(&format!(
+            "DELETE FROM {nodes} WHERE name = $1 OR heartbeat_at < now() - interval '1 day'"
+        ))
+        .bind(node)
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Give back jobs whose node stopped: executing for longer than `node_timeout` on a node
+    /// that hasn't heartbeated within it (or isn't known), or claimed by a node that didn't
+    /// record itself (an older ishikari) more than `unowned_after` ago. Each becomes retryable
+    /// with a "rescued" error, or discarded when it has no attempts left. Returns the rescued
+    /// jobs' ids with the node they were taken from.
+    pub(crate) async fn rescue(
+        &self,
+        node_timeout: std::time::Duration,
+        unowned_after: std::time::Duration,
+    ) -> Result<Vec<(i64, String)>, sqlx::Error> {
+        let jobs = self.name("ishikari_jobs");
+        let nodes = self.name("ishikari_nodes");
+        sqlx::query_as(&format!(
+            r#"
+            WITH lost AS (
+                SELECT j.id, coalesce(j.attempted_by[cardinality(j.attempted_by)], 'unknown') AS node
+                FROM {jobs} j
+                WHERE j.state = 'executing'
+                  AND (
+                    (j.attempted_by IS NOT NULL
+                     AND j.attempted_at < now() - $1 * interval '1 millisecond'
+                     AND NOT EXISTS (
+                        SELECT 1 FROM {nodes} n
+                        WHERE n.name = j.attempted_by[cardinality(j.attempted_by)]
+                          AND n.heartbeat_at > now() - $1 * interval '1 millisecond'))
+                    OR (j.attempted_by IS NULL
+                        AND j.attempted_at < now() - $2 * interval '1 millisecond')
+                  )
+                FOR UPDATE OF j SKIP LOCKED
+            )
+            UPDATE {jobs} AS j
+            SET state = CASE WHEN j.attempt >= j.max_attempts THEN 'discarded' ELSE 'retryable' END
+                          ::{state},
+                discarded_at = CASE WHEN j.attempt >= j.max_attempts THEN now() END,
+                scheduled_at = now(),
+                errors = j.errors || jsonb_build_object(
+                    'attempt', j.attempt,
+                    'at', now(),
+                    'kind', 'rescued',
+                    'error', 'rescued: node ' || lost.node || ' stopped heartbeating')
+            FROM lost
+            WHERE j.id = lost.id
+            RETURNING j.id, lost.node
+            "#,
+            state = self.name("ishikari_job_state"),
+        ))
+        .bind(node_timeout.as_millis() as i64)
+        .bind(unowned_after.as_millis() as i64)
+        .fetch_all(&*self.pool)
+        .await
+    }
+}
+
+/// Why an attempt ended without completing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The worker returned an error.
+    Error,
+    /// The worker panicked.
+    Panic,
+    /// The worker ran past its timeout.
+    Timeout,
+    /// The job's node stopped and it was given back.
+    Rescued,
+    /// The worker cancelled the job.
+    Cancelled,
+}
+
+impl ErrorKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorKind::Error => "error",
+            ErrorKind::Panic => "panic",
+            ErrorKind::Timeout => "timeout",
+            ErrorKind::Rescued => "rescued",
+            ErrorKind::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// An entry of a job's `errors`: `{attempt, at, kind, error}`.
+pub(crate) fn error_record(attempt: i32, kind: ErrorKind, error: &str) -> serde_json::Value {
+    serde_json::json!({
+        "attempt": attempt,
+        "at": Utc::now(),
+        "kind": kind.as_str(),
+        "error": error,
+    })
 }
 
 impl From<sqlx::PgPool> for Postgres {

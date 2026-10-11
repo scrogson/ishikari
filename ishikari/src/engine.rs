@@ -1,13 +1,14 @@
 mod postgres;
 
 pub(crate) use postgres::qualified;
-pub use postgres::Postgres;
+pub use postgres::{ErrorKind, Postgres};
 
 use crate::{queue::QueueBuilder, Job, Stager, State, Worker};
 use serde::Serialize;
 use sqlx::PgExecutor;
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use tracing::instrument;
+use tokio::task::JoinHandle;
+use tracing::{error, instrument, warn};
 
 /// A unique identifier for an engine instance.
 ///
@@ -71,6 +72,11 @@ pub struct EngineBuilder {
     stager_limit: Option<i32>,
     state: Option<State>,
     schema: Option<String>,
+    node: Option<String>,
+    heartbeat_interval: Duration,
+    node_timeout: Duration,
+    rescue_interval: Duration,
+    rescue_unowned_after: Duration,
 }
 
 impl EngineBuilder {
@@ -116,6 +122,40 @@ impl EngineBuilder {
         self
     }
 
+    /// Names this node (this engine instance) in `ishikari_nodes` and in the jobs it runs.
+    ///
+    /// Defaults to `{engine name}-{host}-{pid}-{random}`, unique per process.
+    pub fn node_name(mut self, node: impl Into<String>) -> Self {
+        self.node = Some(node.into());
+        self
+    }
+
+    /// How often the node records that it is alive. Defaults to 15 seconds.
+    pub fn heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat_interval = interval;
+        self
+    }
+
+    /// How long a node may go without a heartbeat before the jobs it was running are given
+    /// back to their queues. Defaults to 60 seconds; keep it well above the heartbeat interval.
+    pub fn node_timeout(mut self, timeout: Duration) -> Self {
+        self.node_timeout = timeout;
+        self
+    }
+
+    /// How often to look for jobs whose node stopped. Defaults to 60 seconds.
+    pub fn rescue_interval(mut self, interval: Duration) -> Self {
+        self.rescue_interval = interval;
+        self
+    }
+
+    /// How long a job claimed by a node that didn't record itself (an ishikari older than 0.2)
+    /// may run before it is given back. Defaults to 1 hour.
+    pub fn rescue_unowned_after(mut self, after: Duration) -> Self {
+        self.rescue_unowned_after = after;
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -128,19 +168,47 @@ impl EngineBuilder {
             None => storage,
         });
         let state = self.state.unwrap_or(Arc::new(()));
+        let node: Arc<str> = self
+            .node
+            .unwrap_or_else(|| default_node_name(self.name.as_str()))
+            .into();
+        let queue_names: Vec<String> = self
+            .queues
+            .iter()
+            .map(|q| q.name.as_str().to_string())
+            .collect();
+
+        let mut tasks = Vec::new();
+        tasks.push(heartbeat(
+            storage.clone(),
+            node.clone(),
+            queue_names,
+            self.heartbeat_interval,
+        ));
+        tasks.push(rescuer(
+            storage.clone(),
+            self.rescue_interval,
+            self.node_timeout,
+            self.rescue_unowned_after,
+        ));
 
         let stager_interval = self.stager_interval.unwrap_or(Duration::from_secs(1));
         let stager_limit = self.stager_limit.unwrap_or(100);
-        let stager = Stager::new(storage.clone(), stager_interval, stager_limit);
-        let _stager_handle = stager.start();
+        tasks.push(Stager::new(storage.clone(), stager_interval, stager_limit).start());
 
         for queue in self.queues.into_iter() {
-            queue.build(storage.clone(), state.clone()).start();
+            tasks.push(
+                queue
+                    .build_on(storage.clone(), state.clone(), node.clone())
+                    .spawn(),
+            );
         }
 
         Engine {
             name: self.name,
+            node,
             storage,
+            tasks,
         }
     }
 }
@@ -157,7 +225,10 @@ impl EngineBuilder {
 /// jobs until the application terminates.
 pub struct Engine {
     name: EngineName,
+    node: Arc<str>,
     storage: Arc<Postgres>,
+    #[allow(dead_code)]
+    tasks: Vec<JoinHandle<()>>,
 }
 
 impl Engine {
@@ -173,6 +244,11 @@ impl Engine {
             stager_limit: None,
             state: None,
             schema: None,
+            node: None,
+            heartbeat_interval: Duration::from_secs(15),
+            node_timeout: Duration::from_secs(60),
+            rescue_interval: Duration::from_secs(60),
+            rescue_unowned_after: Duration::from_secs(3600),
         }
     }
 
@@ -184,6 +260,11 @@ impl Engine {
     /// The engine's name.
     pub fn name(&self) -> &EngineName {
         &self.name
+    }
+
+    /// This node's name, as recorded in `ishikari_nodes` and in `attempted_by`.
+    pub fn node(&self) -> &str {
+        &self.node
     }
 
     /// The engine's storage.
@@ -210,4 +291,55 @@ impl Engine {
     {
         crate::insert_into(self.storage.schema(), job, executor).await
     }
+}
+
+/// `{engine}-{host}-{pid}-{random}`: unique per process, readable in the admin.
+fn default_node_name(engine: &str) -> String {
+    let host = std::env::var("HOSTNAME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "localhost".into());
+    let random: u16 = rand::random();
+    format!("{engine}-{host}-{}-{random:04x}", std::process::id())
+}
+
+/// Keep this node's row fresh so its running jobs aren't taken for lost.
+fn heartbeat(
+    storage: Arc<Postgres>,
+    node: Arc<str>,
+    queues: Vec<String>,
+    every: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(every);
+        loop {
+            interval.tick().await;
+            if let Err(e) = storage.heartbeat(&node, &queues).await {
+                error!(node = %node, error = %e, "failed to record heartbeat");
+            }
+        }
+    })
+}
+
+/// Give back jobs whose node stopped heartbeating.
+fn rescuer(
+    storage: Arc<Postgres>,
+    every: Duration,
+    node_timeout: Duration,
+    unowned_after: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(every);
+        loop {
+            interval.tick().await;
+            match storage.rescue(node_timeout, unowned_after).await {
+                Ok(rescued) => {
+                    for (id, node) in rescued {
+                        warn!(id, node = %node, "rescued a job whose node stopped");
+                    }
+                }
+                Err(e) => error!(error = %e, "failed to rescue jobs"),
+            }
+        }
+    })
 }

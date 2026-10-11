@@ -21,7 +21,7 @@
 use sqlx::{PgExecutor, PgPool};
 
 /// The newest schema version.
-pub const CURRENT_VERSION: i32 = 4;
+pub const CURRENT_VERSION: i32 = 5;
 
 /// The schema used when none is given.
 pub const DEFAULT_SCHEMA: &str = "public";
@@ -31,6 +31,7 @@ const VERSIONS: [&str; CURRENT_VERSION as usize] = [
     include_str!("../migrations/v02.sql"),
     include_str!("../migrations/v03.sql"),
     include_str!("../migrations/v04.sql"),
+    include_str!("../migrations/v05.sql"),
 ];
 
 /// The SQL that takes `schema` from version `from` (0 for a fresh install) to version `to`,
@@ -138,6 +139,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid migration range")]
     fn an_empty_range_panics() {
-        sql("public", 4, 4);
+        sql("public", CURRENT_VERSION, CURRENT_VERSION);
     }
 }
