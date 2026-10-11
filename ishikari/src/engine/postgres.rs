@@ -327,6 +327,123 @@ impl Postgres {
         Ok(())
     }
 
+    /// Run a job again as soon as it can: a discarded, cancelled or retryable job starts over
+    /// (its attempts reset, its errors kept), an executing one is given back (the interrupted
+    /// attempt refunded; if its run is still going, its result is dropped), and a scheduled one
+    /// runs now. A workflow step whose upstreams haven't all completed waits for them again,
+    /// the steps its failure cancelled wait again too, and its workflow is running again.
+    /// Returns false when the job is pending, available, completed or missing.
+    pub async fn retry_job(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let (jobs, deps) = (
+            self.name("ishikari_jobs"),
+            self.name("ishikari_job_dependencies"),
+        );
+        let mut tx = self.pool.begin().await?;
+        let found: Option<Option<i64>> = sqlx::query_scalar(&format!(
+            r#"
+            UPDATE {jobs} AS j
+            SET state = CASE WHEN EXISTS (SELECT 1 FROM {deps} d
+                                          WHERE d.job_id = j.id AND d.state <> 'satisfied')
+                             THEN 'pending' ELSE 'available' END::{state},
+                attempt = CASE j.state WHEN 'executing' THEN j.attempt - 1
+                                       WHEN 'scheduled' THEN j.attempt
+                                       ELSE 0 END,
+                scheduled_at = now(),
+                discarded_at = NULL,
+                cancelled_at = NULL
+            WHERE j.id = $1 AND j.state IN ('discarded', 'cancelled', 'retryable', 'executing', 'scheduled')
+            RETURNING j.workflow_id
+            "#,
+            state = self.name("ishikari_job_state"),
+        ))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(workflow_id) = found else {
+            return Ok(false);
+        };
+        // What its failure cancelled waits again.
+        let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+            r#"
+            WITH RECURSIVE down(id) AS (
+                SELECT job_id FROM {deps} WHERE depends_on_job_id = $1
+                UNION
+                SELECT d.job_id FROM {deps} d JOIN down ON d.depends_on_job_id = down.id
+            )
+            SELECT id FROM down
+            "#
+        ))
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !downstream.is_empty() {
+            let mut upstreams = downstream.clone();
+            upstreams.push(id);
+            sqlx::query(&format!(
+                "UPDATE {deps} SET state = 'pending' \
+                 WHERE depends_on_job_id = ANY($1) AND state = 'failed'"
+            ))
+            .bind(&upstreams)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(&format!(
+                "UPDATE {jobs} SET state = 'pending', cancelled_at = NULL \
+                 WHERE id = ANY($1) AND state = 'cancelled'"
+            ))
+            .bind(&downstream)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(workflow_id) = workflow_id {
+            sqlx::query(&format!(
+                "UPDATE {workflows} SET state = 'running', completed_at = NULL \
+                 WHERE id = $1 AND state IN ('failed', 'cancelled')",
+                workflows = self.name("ishikari_workflows"),
+            ))
+            .bind(workflow_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Cancel a job that hasn't finished (waiting, available, scheduled, retryable or
+    /// executing; an executing run's result is dropped), and everything that depends on it.
+    /// Returns false when the job had already finished or is missing.
+    pub async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<bool, sqlx::Error> {
+        let jobs = self.name("ishikari_jobs");
+        let mut tx = self.pool.begin().await?;
+        let found: Option<(i32, Option<i64>)> = sqlx::query_as(&format!(
+            "SELECT attempt, workflow_id FROM {jobs} WHERE id = $1 \
+               AND state IN ('pending', 'available', 'scheduled', 'retryable', 'executing') \
+             FOR UPDATE"
+        ))
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((attempt, workflow_id)) = found else {
+            return Ok(false);
+        };
+        let reason: Vec<serde_json::Value> = reason
+            .map(|r| error_record(attempt, ErrorKind::Cancelled, r))
+            .into_iter()
+            .collect();
+        sqlx::query(&format!(
+            "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
+                 errors = errors || $2::jsonb[] \
+             WHERE id = $1",
+            release = release("'cancelled'", ""),
+        ))
+        .bind(id)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await?;
+        self.after_failed(&mut tx, id, workflow_id).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     /// Delete up to `limit` finished jobs (completed, cancelled or discarded) older than
     /// `older_than`, keeping jobs whose workflow hasn't finished, and remove their dependency
     /// rows. Then delete finished workflows left without jobs. Returns how many jobs were

@@ -277,3 +277,64 @@ async fn a_failed_saga_step_runs_the_compensations_of_the_steps_before_it() {
 
     db.finish().await;
 }
+
+#[ishikari::job]
+#[derive(Clone)]
+struct FailsUntilFixed;
+
+#[ishikari::worker(max_attempts = 1)]
+impl Worker for FailsUntilFixed {
+    async fn perform(&self, ctx: Context) -> PerformResult {
+        // Fails until the test "fixes" it by setting meta.fixed.
+        if ctx
+            .job()
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("fixed"))
+            .is_none()
+        {
+            return Err("not yet".into());
+        }
+        Complete::default().into()
+    }
+}
+
+#[tokio::test]
+async fn retrying_a_failed_step_revives_what_it_cancelled() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let wf = Dag::new("retry")
+        .add("a", FailsUntilFixed)
+        .add_after("b", Step { millis: 0 }, ["a"])
+        .add_after("c", Step { millis: 0 }, ["b"])
+        .run(&db.pool)
+        .await
+        .unwrap();
+    let engine = engine("test", db.pool.clone());
+    eventually("the workflow fails", Duration::from_secs(10), || async {
+        workflow_state(&db, wf.id).await == "failed"
+    })
+    .await;
+    assert_eq!(steps(&db, wf.id).await["c"].0, "cancelled");
+
+    let a: i64 = sqlx::query_scalar(
+        "UPDATE ishikari_jobs SET meta = meta || '{\"fixed\": true}' \
+         WHERE workflow_id = $1 AND meta->>'ishikari_step' = 'a' RETURNING id",
+    )
+    .bind(wf.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(engine.retry_job(a).await.unwrap());
+    eventually(
+        "the workflow completes",
+        Duration::from_secs(10),
+        || async { workflow_state(&db, wf.id).await == "completed" },
+    )
+    .await;
+    let s = steps(&db, wf.id).await;
+    assert!(s.values().all(|(state, ..)| state == "completed"));
+
+    db.finish().await;
+}

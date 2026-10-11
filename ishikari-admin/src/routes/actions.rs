@@ -168,7 +168,7 @@ pub async fn retry_job(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    if let Err(e) = retry_single_job(&state.pool, schema, id).await {
+    if let Err(e) = storage(&state.pool, schema).retry_job(id).await {
         error!(job_id = id, error = %e, "failed to retry job");
         return Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -188,7 +188,10 @@ pub async fn cancel_job(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    if let Err(e) = cancel_single_job(&state.pool, schema, id).await {
+    if let Err(e) = storage(&state.pool, schema)
+        .cancel_job(id, Some("cancelled from the admin"))
+        .await
+    {
         error!(job_id = id, error = %e, "failed to cancel job");
         return Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -284,7 +287,7 @@ async fn cancel_workflow_jobs(
         UPDATE {}
         SET state = 'cancelled', cancelled_at = now()
         WHERE workflow_id = $1
-          AND state IN ('available', 'scheduled', 'retryable')
+          AND state IN ('pending', 'available', 'scheduled', 'retryable', 'executing')
         "#,
         table
     );
@@ -317,7 +320,7 @@ async fn retry_workflow_jobs(
         UPDATE {}
         SET state = CASE
             WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = id AND d.state != 'satisfied')
-            THEN 'scheduled'
+            THEN 'pending'
             ELSE 'available'
         END::{},
         attempt = 0,
@@ -460,60 +463,11 @@ async fn clone_workflow_jobs(
     Ok(())
 }
 
-async fn retry_single_job(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<(), sqlx::Error> {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-    let deps_table = match schema {
-        Some(s) => format!("{}.ishikari_job_dependencies", s),
-        None => "ishikari_job_dependencies".to_string(),
-    };
-    let enum_type = match schema {
-        Some(s) => format!("{}.ishikari_job_state", s),
-        None => "ishikari_job_state".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        UPDATE {}
-        SET state = CASE
-            WHEN EXISTS (SELECT 1 FROM {} d WHERE d.job_id = $1 AND d.state != 'satisfied')
-            THEN 'scheduled'
-            ELSE 'available'
-        END::{},
-        attempt = 0,
-        errors = ARRAY[]::jsonb[]
-        WHERE id = $1
-          AND state IN ('discarded', 'cancelled', 'retryable')
-        "#,
-        jobs_table, deps_table, enum_type
-    );
-
-    sqlx::query(&query).bind(id).execute(pool).await?;
-    Ok(())
-}
-
-async fn cancel_single_job(
-    pool: &PgPool,
-    schema: Option<&str>,
-    id: i64,
-) -> Result<(), sqlx::Error> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        UPDATE {}
-        SET state = 'cancelled', cancelled_at = now()
-        WHERE id = $1
-          AND state IN ('available', 'scheduled', 'retryable')
-        "#,
-        table
-    );
-
-    sqlx::query(&query).bind(id).execute(pool).await?;
-    Ok(())
+/// The jobs storage for the admin's pool and schema.
+fn storage(pool: &PgPool, schema: Option<&str>) -> ishikari::Postgres {
+    let storage = ishikari::Postgres::new(pool.clone());
+    match schema {
+        Some(schema) => storage.with_schema(schema),
+        None => storage,
+    }
 }

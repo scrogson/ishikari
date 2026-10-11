@@ -118,6 +118,7 @@ impl SagaStepInfo {
     pub fn job_state_class(&self) -> &'static str {
         match self.job_state.as_str() {
             "available" => "badge-primary",
+            "pending" => "badge-neutral",
             "scheduled" => "badge-secondary",
             "executing" => "badge-info",
             "completed" => "badge-success",

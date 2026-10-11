@@ -404,6 +404,16 @@ impl Engine {
         report
     }
 
+    /// Run a job again as soon as it can; see [`Postgres::retry_job`].
+    pub async fn retry_job(&self, id: i64) -> Result<bool, sqlx::Error> {
+        self.storage.retry_job(id).await
+    }
+
+    /// Cancel a job and what depends on it; see [`Postgres::cancel_job`].
+    pub async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<bool, sqlx::Error> {
+        self.storage.cancel_job(id, reason).await
+    }
+
     /// This node's name, as recorded in `ishikari_nodes` and in `attempted_by`.
     pub fn node(&self) -> &str {
         &self.node
