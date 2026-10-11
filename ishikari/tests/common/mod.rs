@@ -79,14 +79,25 @@ impl TestDb {
     }
 
     /// Drop the schema. Call at the end of a test; a failed test leaves its schema behind
-    /// (`ishikari_t_*`) for inspection.
+    /// (`ishikari_t_*`) for inspection. Engines still polling the schema can deadlock with the
+    /// drop, so it is retried.
     pub async fn finish(self) {
         self.pool.close().await;
         let admin = PgPool::connect(&self.url).await.expect("connect");
-        admin
-            .execute(format!("DROP SCHEMA {} CASCADE", self.schema).as_str())
-            .await
-            .expect("drop the test schema");
+        for attempt in 1.. {
+            match admin
+                .execute(format!("DROP SCHEMA {} CASCADE", self.schema).as_str())
+                .await
+            {
+                Ok(_) => break,
+                Err(sqlx::Error::Database(e))
+                    if e.code().as_deref() == Some("40P01") && attempt < 10 =>
+                {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(e) => panic!("drop the test schema: {e}"),
+            }
+        }
     }
 
     /// A job's state, as text.
