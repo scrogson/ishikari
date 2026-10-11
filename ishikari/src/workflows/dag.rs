@@ -238,9 +238,17 @@ impl Dag {
     /// - A dependency references a non-existent step
     /// - The Dag contains a cycle
     /// - Database operations fail
-    pub async fn run<'c, A>(self, conn: A) -> Result<Workflow>
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
     where
-        A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        // Boxed so it can be awaited inside a worker's `perform` (a Send future).
+        Box::pin(self.insert(conn))
+    }
+
+    async fn insert<'c, A>(self, conn: A) -> Result<Workflow>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
     {
         if self.steps.is_empty() {
             return Err(Error::InvalidWorkflowState {

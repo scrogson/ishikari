@@ -231,7 +231,6 @@ impl Backoff {
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::instrument;
 
 /// A context for a worker that provides access to job data and shared state.
 ///
@@ -720,15 +719,13 @@ pub trait Worker: Send + Sync {
 /// apart and takes options.
 ///
 /// `conn` can be a pool, a connection or a transaction (`&mut *tx`).
-#[instrument(skip(conn))]
-pub async fn insert<'c, J, A>(job: J, conn: A) -> Result<Job, sqlx::Error>
+pub fn insert<'c, J, A>(job: J, conn: A) -> futures::future::BoxFuture<'c, Result<Job, sqlx::Error>>
 where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
-    A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+    A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
 {
-    insert_with(job, InsertOpts::new(), conn)
-        .await
-        .map(Inserted::into_job)
+    let inserted = insert_with(job, InsertOpts::new(), conn);
+    Box::pin(async move { inserted.await.map(Inserted::into_job) })
 }
 
 #[cfg(test)]

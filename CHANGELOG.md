@@ -13,7 +13,9 @@ workflows that run in order. Migration v05; regenerate with `ishikari generate m
   `Engine::builder(name)…start(Postgres::new(pool))` is unchanged.
 - `QueueBuilder::schema` is gone; set the schema on the engine (`EngineBuilder::schema`).
 - `insert`, `Engine::insert_tx` and workflow `run` take `sqlx::Acquire` (a pool, connection or
-  transaction) rather than `PgExecutor`. `&pool` and `&mut *tx` work as before.
+  transaction) rather than `PgExecutor`. `&pool` and `&mut *tx` work as before. They (and
+  `insert_with`, `insert_all`, `Workflow::progress`) return a boxed `Send` future, so they can
+  be awaited inside a worker's `perform`.
 - Job errors are records (`{attempt, at, kind, error}`) rather than strings. v05 converts old
   ones.
 - `JobState` has a `Pending` variant, for workflow steps waiting on their dependencies.

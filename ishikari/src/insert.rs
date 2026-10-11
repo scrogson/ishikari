@@ -24,6 +24,7 @@
 
 use crate::{engine::qualified, Job, JobState, Worker};
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde::Serialize;
 use sqlx::{Acquire, Postgres as Pg};
 use std::fmt::Debug;
@@ -258,35 +259,52 @@ impl Inserted {
 ///
 /// `conn` can be a pool, a connection or a transaction (`&mut *tx`), so the job can be
 /// inserted atomically with the caller's own writes.
-pub async fn insert_with<'c, J, A>(
+pub fn insert_with<'c, J, A>(
     job: J,
     opts: InsertOpts,
     conn: A,
-) -> Result<Inserted, sqlx::Error>
+) -> BoxFuture<'c, Result<Inserted, sqlx::Error>>
 where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
-    A: Acquire<'c, Database = Pg>,
+    A: Acquire<'c, Database = Pg> + Send + 'c,
 {
-    let mut conn = conn.acquire().await?;
-    let row = Row::new(&job, &opts)?;
-    insert_row(&mut conn, opts.schema.as_deref(), &row, None).await
+    // Boxed so a caller's future (a worker's `perform`, say) can be Send: an `async fn` generic
+    // over `Acquire` trips the compiler's higher-ranked Send check.
+    let row = Row::new(&job, &opts);
+    Box::pin(async move {
+        let row = row?;
+        let mut conn = conn.acquire().await?;
+        insert_row(&mut conn, opts.schema.as_deref(), &row, None).await
+    })
 }
 
 /// Insert several jobs of one type in one statement, with the same options. Returns the jobs
 /// inserted; unique duplicates are skipped.
-pub async fn insert_all<'c, J, A>(
+pub fn insert_all<'c, J, A>(
     jobs: impl IntoIterator<Item = J>,
     opts: InsertOpts,
     conn: A,
-) -> Result<Vec<Job>, sqlx::Error>
+) -> BoxFuture<'c, Result<Vec<Job>, sqlx::Error>>
 where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
-    A: Acquire<'c, Database = Pg>,
+    A: Acquire<'c, Database = Pg> + Send + 'c,
 {
     let rows = jobs
         .into_iter()
         .map(|job| Row::new(&job, &opts))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>();
+    Box::pin(insert_rows(rows, opts, conn))
+}
+
+async fn insert_rows<'c, A>(
+    rows: Result<Vec<Row>, sqlx::Error>,
+    opts: InsertOpts,
+    conn: A,
+) -> Result<Vec<Job>, sqlx::Error>
+where
+    A: Acquire<'c, Database = Pg> + Send + 'c,
+{
+    let rows = rows?;
     if rows.is_empty() {
         return Ok(vec![]);
     }

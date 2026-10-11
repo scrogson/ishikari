@@ -5,6 +5,7 @@ pub use postgres::{ErrorKind, Postgres};
 
 use crate::queue::{QueueBuilder, QueueStop};
 use crate::{Cron, InsertOpts, Inserted, Job, Stager, State, Worker};
+use futures::future::BoxFuture;
 use serde::Serialize;
 use std::{
     fmt::Debug,
@@ -12,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::watch, task::JoinHandle};
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, warn};
 
 /// A unique identifier for an engine instance.
 ///
@@ -425,40 +426,36 @@ impl Engine {
     }
 
     /// Insert a job into this engine's schema.
-    #[instrument(skip(self))]
-    pub async fn insert<J>(&self, job: J) -> Result<Job, sqlx::Error>
+    pub fn insert<J>(&self, job: J) -> BoxFuture<'_, Result<Job, sqlx::Error>>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,
     {
-        self.insert_tx(job, &*self.storage.pool).await
+        self.insert_tx(job, &*self.storage.pool)
     }
 
     /// Insert a job into this engine's schema on the given connection, for example inside the
     /// caller's transaction (`&mut *tx`).
-    #[instrument(skip(self, conn))]
-    pub async fn insert_tx<'c, J, A>(&self, job: J, conn: A) -> Result<Job, sqlx::Error>
+    pub fn insert_tx<'c, J, A>(&self, job: J, conn: A) -> BoxFuture<'c, Result<Job, sqlx::Error>>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,
-        A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
     {
-        self.insert_with(job, InsertOpts::new(), conn)
-            .await
-            .map(Inserted::into_job)
+        let inserted = self.insert_with(job, InsertOpts::new(), conn);
+        Box::pin(async move { inserted.await.map(Inserted::into_job) })
     }
 
     /// Insert a job with options into this engine's schema (unless the options name another).
-    #[instrument(skip(self, conn))]
-    pub async fn insert_with<'c, J, A>(
+    pub fn insert_with<'c, J, A>(
         &self,
         job: J,
         opts: InsertOpts,
         conn: A,
-    ) -> Result<Inserted, sqlx::Error>
+    ) -> BoxFuture<'c, Result<Inserted, sqlx::Error>>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,
-        A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
     {
-        crate::insert_with(job, opts.schema_or(self.storage.schema()), conn).await
+        crate::insert_with(job, opts.schema_or(self.storage.schema()), conn)
     }
 }
 

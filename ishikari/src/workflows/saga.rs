@@ -109,11 +109,11 @@ impl SagaStepBuilder {
     }
 
     /// Execute the saga.
-    pub async fn run<'c, A>(self, conn: A) -> Result<Workflow>
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
     where
-        A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
     {
-        self.no_compensate().run(conn).await
+        self.no_compensate().run(conn)
     }
 }
 
@@ -214,9 +214,17 @@ impl Saga {
     /// # Returns
     ///
     /// Returns the created workflow on success.
-    pub async fn run<'c, A>(self, conn: A) -> Result<Workflow>
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
     where
-        A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        // Boxed so it can be awaited inside a worker's `perform` (a Send future).
+        Box::pin(self.insert(conn))
+    }
+
+    async fn insert<'c, A>(self, conn: A) -> Result<Workflow>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
     {
         if self.steps.is_empty() {
             return Err(Error::InvalidWorkflowState {

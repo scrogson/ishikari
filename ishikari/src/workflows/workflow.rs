@@ -242,11 +242,25 @@ pub struct StepProgress {
 
 impl Workflow {
     /// The workflow `id` with every step, or `None` when there is no such workflow.
-    pub async fn progress(
-        conn: impl sqlx::Acquire<'_, Database = sqlx::Postgres>,
+    pub fn progress<'c, A>(
+        conn: A,
         id: i64,
-        schema: Option<&str>,
-    ) -> super::error::Result<Option<WorkflowProgress>> {
+        schema: Option<&'c str>,
+    ) -> futures::future::BoxFuture<'c, super::error::Result<Option<WorkflowProgress>>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        Box::pin(Self::read_progress(conn, id, schema))
+    }
+
+    async fn read_progress<'c, A>(
+        conn: A,
+        id: i64,
+        schema: Option<&'c str>,
+    ) -> super::error::Result<Option<WorkflowProgress>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
         let mut conn = conn.acquire().await?;
         let Some(workflow) = Self::get(&mut *conn, id, schema).await? else {
             return Ok(None);
