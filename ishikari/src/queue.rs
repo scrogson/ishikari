@@ -44,6 +44,7 @@ use std::panic::AssertUnwindSafe;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -111,12 +112,14 @@ impl QueueBuilder {
     ///
     /// Returns a new `Queue` instance.
     pub fn build(self, storage: Arc<Postgres>, state: State) -> Queue {
+        let concurrency = self.concurrency.unwrap_or(10);
         Queue {
-            concurrency: self.concurrency.unwrap_or(10),
+            concurrency,
             interval: self.interval.unwrap_or(Duration::from_secs(1)),
             name: self.name,
             state,
             storage,
+            slots: Arc::new(Semaphore::new(concurrency as usize)),
         }
     }
 }
@@ -140,6 +143,9 @@ pub struct Queue {
     pub name: QueueName,
     pub state: State,
     pub storage: Arc<Postgres>,
+    /// One permit per job that may run at once; a running job holds one until its outcome is
+    /// written.
+    slots: Arc<Semaphore>,
 }
 
 impl Queue {
@@ -204,11 +210,13 @@ fn extract_panic_message(panic: &Box<dyn Any + Send>) -> String {
 
 #[instrument(skip(queue), fields(queue = queue.name.as_str()))]
 async fn execute_jobs(queue: &Queue) {
-    let jobs = match queue
-        .storage
-        .claim(queue.name.as_str(), queue.concurrency as i32)
-        .await
-    {
+    // Only claim as many jobs as there are free slots, so jobs still running from earlier ticks
+    // count against the limit.
+    let free = queue.slots.available_permits();
+    if free == 0 {
+        return;
+    }
+    let jobs = match queue.storage.claim(queue.name.as_str(), free as i32).await {
         Ok(jobs) => jobs,
         Err(e) => {
             error!(error = ?e, "failed to fetch jobs");
@@ -220,11 +228,15 @@ async fn execute_jobs(queue: &Queue) {
     }
     info!(count = jobs.len(), "executing jobs");
     for job in jobs {
-        tokio::spawn(run_job(
-            Arc::clone(&queue.storage),
-            Arc::clone(&queue.state),
-            job,
-        ));
+        let slot = Arc::clone(&queue.slots)
+            .try_acquire_owned()
+            .expect("claimed no more jobs than free slots");
+        let storage = Arc::clone(&queue.storage);
+        let state = Arc::clone(&queue.state);
+        tokio::spawn(async move {
+            run_job(storage, state, job).await;
+            drop(slot);
+        });
     }
 }
 
