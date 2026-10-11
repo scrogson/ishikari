@@ -303,7 +303,7 @@ where
                             scheduled_at, unique_key, unique_states)
         SELECT r.queue, r.worker, r.args, r.max_attempts, r.priority, $6::varchar[], $7,
                CASE WHEN r.scheduled_at > now() THEN 'scheduled' ELSE 'available' END::{state},
-               r.scheduled_at, md5(r.unique_key), $8::text[]::{state}[]
+               coalesce(r.scheduled_at, now()), md5(r.unique_key), $8::text[]::{state}[]
         FROM unnest($1::text[], $2::text[], $3::jsonb[], $4::int[], $5::int[], $9::timestamptz[],
                     $10::text[])
              AS r(queue, worker, args, max_attempts, priority, scheduled_at, unique_key)
@@ -340,7 +340,8 @@ pub(crate) struct Row {
     priority: i32,
     tags: Vec<String>,
     meta: serde_json::Value,
-    scheduled_at: DateTime<Utc>,
+    /// When the caller scheduled it; `None` is the database's `now()`.
+    scheduled_at: Option<DateTime<Utc>>,
     unique_key: Option<String>,
     unique_states: Option<Vec<String>>,
     debug: String,
@@ -372,7 +373,7 @@ impl Row {
             priority: opts.priority.unwrap_or(0),
             tags: opts.tags.clone(),
             meta: opts.meta.clone().unwrap_or_else(|| serde_json::json!({})),
-            scheduled_at: opts.scheduled_at.unwrap_or(now),
+            scheduled_at: opts.scheduled_at,
             debug: format!("{job:?}"),
         })
     }
@@ -403,7 +404,7 @@ pub(crate) async fn insert_row(
             VALUES ($1, $2, $3, $4, $5, $6::varchar[], $7,
                     coalesce($8, CASE WHEN $9 > now() THEN 'scheduled' ELSE 'available' END)
                         ::{state_type},
-                    $9, md5($10), $11::text[]::{state_type}[], $12)
+                    coalesce($9, now()), md5($10), $11::text[]::{state_type}[], $12)
             ON CONFLICT (unique_key) WHERE unique_key IS NOT NULL DO NOTHING
             RETURNING *
         )

@@ -4,7 +4,7 @@ pub(crate) use postgres::qualified;
 pub use postgres::{ErrorKind, Postgres};
 
 use crate::queue::{QueueBuilder, QueueStop};
-use crate::{InsertOpts, Inserted, Job, Stager, State, Worker};
+use crate::{Cron, InsertOpts, Inserted, Job, Stager, State, Worker};
 use serde::Serialize;
 use std::{
     fmt::Debug,
@@ -81,6 +81,9 @@ pub struct EngineBuilder {
     node_timeout: Duration,
     rescue_interval: Duration,
     rescue_unowned_after: Duration,
+    crons: Vec<Cron>,
+    cron_interval: Duration,
+    cron_catch_up: Duration,
 }
 
 impl EngineBuilder {
@@ -160,6 +163,27 @@ impl EngineBuilder {
         self
     }
 
+    /// Insert a job on a schedule; see [`Cron`].
+    pub fn cron(mut self, cron: Cron) -> Self {
+        self.crons.push(cron);
+        self
+    }
+
+    /// How often to check for cron slots that are due. Defaults to 15 seconds; a slot's job is
+    /// inserted within this long of its time.
+    pub fn cron_interval(mut self, interval: Duration) -> Self {
+        self.cron_interval = interval;
+        self
+    }
+
+    /// How far back a starting node catches up on cron slots no node ran (during a deploy, for
+    /// example). Defaults to 5 minutes. Slots already inserted by any node are never inserted
+    /// again.
+    pub fn cron_catch_up(mut self, catch_up: Duration) -> Self {
+        self.cron_catch_up = catch_up;
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -195,6 +219,15 @@ impl EngineBuilder {
             self.node_timeout,
             self.rescue_unowned_after,
         ));
+
+        if !self.crons.is_empty() {
+            tasks.push(cron_task(
+                storage.clone(),
+                self.crons,
+                self.cron_interval,
+                self.cron_catch_up,
+            ));
+        }
 
         let stager_interval = self.stager_interval.unwrap_or(Duration::from_secs(1));
         let stager_limit = self.stager_limit.unwrap_or(100);
@@ -275,6 +308,9 @@ impl Engine {
             node_timeout: Duration::from_secs(60),
             rescue_interval: Duration::from_secs(60),
             rescue_unowned_after: Duration::from_secs(3600),
+            crons: Vec::new(),
+            cron_interval: Duration::from_secs(15),
+            cron_catch_up: Duration::from_secs(300),
         }
     }
 
@@ -412,6 +448,26 @@ fn rescuer(
                 }
                 Err(e) => error!(error = %e, "failed to rescue jobs"),
             }
+        }
+    })
+}
+
+/// Insert cron slots as they fall due, starting `catch_up` in the past.
+fn cron_task(
+    storage: Arc<Postgres>,
+    crons: Vec<Cron>,
+    every: Duration,
+    catch_up: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut after =
+            chrono::Utc::now() - chrono::Duration::from_std(catch_up).unwrap_or_default();
+        let mut interval = tokio::time::interval(every);
+        loop {
+            interval.tick().await;
+            let now = chrono::Utc::now();
+            crate::cron::run_due(&crons, &storage, after, now).await;
+            after = now;
         }
     })
 }

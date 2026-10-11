@@ -143,12 +143,16 @@
 // clippy (1.99+) flags as `double_must_use` in the generated code.
 #![allow(clippy::double_must_use)]
 
+// Lets `#[ishikari::job]` (which names `::ishikari`) be used inside this crate's own tests.
+extern crate self as ishikari;
+
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 #[doc(hidden)]
 pub use serde;
 use serde::Serialize;
 
+mod cron;
 mod engine;
 mod insert;
 pub mod migrations;
@@ -168,6 +172,7 @@ pub mod execution;
 
 pub use ishikari_macros::{job, worker};
 
+pub use cron::{Cron, CronError};
 pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres, Shutdown};
 pub use insert::{insert_all, insert_with, InsertOpts, Inserted, Unique};
 pub use model::{Job, JobState};
