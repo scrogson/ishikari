@@ -47,6 +47,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ishikari_workflow_runs_definition_id_fkey'
+          AND connamespace = '{ESCAPED_PREFIX}'::regnamespace
     ) THEN
         ALTER TABLE {SCHEMA}.ishikari_workflow_runs
             ADD CONSTRAINT ishikari_workflow_runs_definition_id_fkey
@@ -59,6 +60,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ishikari_workflow_runs_workflow_id_fkey'
+          AND connamespace = '{ESCAPED_PREFIX}'::regnamespace
     ) THEN
         ALTER TABLE {SCHEMA}.ishikari_workflow_runs
             ADD CONSTRAINT ishikari_workflow_runs_workflow_id_fkey
@@ -102,6 +104,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ishikari_node_executions_workflow_run_id_fkey'
+          AND connamespace = '{ESCAPED_PREFIX}'::regnamespace
     ) THEN
         ALTER TABLE {SCHEMA}.ishikari_node_executions
             ADD CONSTRAINT ishikari_node_executions_workflow_run_id_fkey

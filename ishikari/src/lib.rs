@@ -258,6 +258,7 @@ use sqlx::FromRow;
 use sqlx::PgExecutor;
 
 mod engine;
+pub mod migrations;
 mod model;
 mod queue;
 mod result;
