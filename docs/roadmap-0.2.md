@@ -233,69 +233,69 @@ Each task lands with integration tests against real Postgres, plus docs for its 
 
 ### 1. Test harness
 
-- [ ] 1.1 Integration tests in `ishikari/tests/`, against real Postgres: a helper creates a schema
+- [x] 1.1 Integration tests in `ishikari/tests/`, against real Postgres: a helper creates a schema
   per test, applies the generated migrations into it and drops it afterwards. CI applies migrations
   and runs these tests. Verify: CI green with one trivial insert → complete test.
 
 ### 2. P0 bugs, each failing test first
 
-- [ ] 2.1 One schema-aware `Storage` path for every statement (bug 3). Verify: the whole suite
+- [x] 2.1 One schema-aware `Storage` path for every statement (bug 3). Verify: the whole suite
   passes in a non-`public` schema.
-- [ ] 2.2 Guarded outcome writes, and the final attempt in one statement (bugs 4, 5). Verify: a
+- [x] 2.2 Guarded outcome writes, and the final attempt in one statement (bugs 4, 5). Verify: a
   test where the job is moved away mid-run and the late completion is ignored; a test that the
   final failure goes straight to `discarded`.
-- [ ] 2.3 Per-queue semaphore (bug 2). Verify: concurrency 2 with 10 slow jobs never has more than
+- [x] 2.3 Per-queue semaphore (bug 2). Verify: concurrency 2 with 10 slow jobs never has more than
   2 executing.
-- [ ] 2.4 The Stager survives errors and logs them (bug 6). Verify: a test with an injected failing
+- [x] 2.4 The Stager survives errors and logs them (bug 6). Verify: a test with an injected failing
   query.
-- [ ] 2.5 `#[worker]` passes every method through and moves to syn 2 (bug 7). Verify: a test
+- [x] 2.5 `#[worker]` passes every method through and moves to syn 2 (bug 7). Verify: a test
   overriding `queue()` in the impl, plus trybuild tests for the attributes.
 
 ### 3. Nodes, rescue, timeouts, shutdown
 
-- [ ] 3.1 v05 migration (nodes, unique columns, executing index, error records), `attempted_by`
+- [x] 3.1 v05 migration (nodes, unique columns, executing index, error records), `attempted_by`
   written and node heartbeats. Verify: a test that a node row appears and refreshes.
-- [ ] 3.2 Lifeline. Verify: a job left executing by a killed engine (a dropped runtime) is retried
+- [x] 3.2 Lifeline. Verify: a job left executing by a killed engine (a dropped runtime) is retried
   by a second engine after `node_timeout`; a long job on a live node is not rescued.
-- [ ] 3.3 `Worker::timeout`. Verify: a job sleeping past its timeout becomes `retryable` with a
+- [x] 3.3 `Worker::timeout`. Verify: a job sleeping past its timeout becomes `retryable` with a
   timeout error.
-- [ ] 3.4 `Engine::shutdown(grace)`, with a handle owning every task. Verify: in-flight jobs finish
+- [x] 3.4 `Engine::shutdown(grace)`, with a handle owning every task. Verify: in-flight jobs finish
   within grace; the rest return to `available` with their attempt refunded; no task outlives it.
 
 ### 4. Inserts, unique, cron
 
-- [ ] 4.1 `InsertOpts`, `insert_with`, `insert_all`, executor and transaction support. Verify: an
+- [x] 4.1 `InsertOpts`, `insert_with`, `insert_all`, executor and transaction support. Verify: an
   insert inside a rolled-back host transaction leaves nothing, and a scheduled insert runs after
   its time.
-- [ ] 4.2 Unique jobs. Verify:
+- [x] 4.2 Unique jobs. Verify:
   - a duplicate insert while the first is pending returns `Duplicate(id)`;
   - after the first completes, a new insert is `New`;
   - `period` and `states = all` give once per period.
-- [ ] 4.3 Cron. Verify: two engines on one database run an every-minute entry exactly once per
+- [x] 4.3 Cron. Verify: two engines on one database run an every-minute entry exactly once per
   minute over 3 minutes (with a mocked clock); the catch-up window is honoured.
 
 ### 5. Workflows
 
-- [ ] 5.1 v06 `pending` state, with steps inserted `pending`. Verify: the bug 1 test (a dependent
+- [x] 5.1 v06 `pending` state, with steps inserted `pending`. Verify: the bug 1 test (a dependent
   step does not run before its upstream completes, with the Stager running) passes.
-- [ ] 5.2 Release on completion and cascade on failure, in the outcome transaction. The resolver
+- [x] 5.2 Release on completion and cascade on failure, in the outcome transaction. The resolver
   becomes an engine-started safety sweep. Verify:
   - a 3-level DAG runs in order with no resolver;
   - a failed middle step cancels its dependents and fails the workflow;
   - two engines never release a step twice.
-- [ ] 5.3 Transactional `run(executor)` for DAG, pipeline and saga, with step names in meta.
+- [x] 5.3 Transactional `run(executor)` for DAG, pipeline and saga, with step names in meta.
   Verify: a workflow inserted in a rolled-back transaction leaves nothing.
-- [ ] 5.4 `Workflow::progress`. Verify: a test that the steps, states, `depends_on` and errors match
+- [x] 5.4 `Workflow::progress`. Verify: a test that the steps, states, `depends_on` and errors match
   a running DAG.
 
 ### 6. Pruner, admin, release
 
-- [ ] 6.1 Age-based, batched pruner. Verify: old completed jobs are deleted, and jobs of a running
+- [x] 6.1 Age-based, batched pruner. Verify: old completed jobs are deleted, and jobs of a running
   workflow and recent cron rows are kept.
-- [ ] 6.2 Admin: embedded assets, `pending`/`rescued` shown, rescue and cancel of executing jobs,
+- [x] 6.2 Admin: embedded assets, `pending`/`rescued` shown, rescue and cancel of executing jobs,
   mount docs. Verify: admin tests, and the admin mounted under a prefix in an example host, behind
   an auth layer.
-- [ ] 6.3 Decide on the v04 definitions (feature-gated and fixed, or cut); fix the CLI's
+- [x] 6.3 Decide on the v04 definitions (feature-gated and fixed, or cut); fix the CLI's
   foreign-key checks. Verify: `cargo test --all-features`; a second schema gets its foreign keys.
 - [ ] 6.4 Docs: README brought up to date with the real API (the engine builder, queues, cron,
   unique, workflows, shutdown, admin), CLAUDE.md fixed (mise, not Just), CHANGELOG. Release 0.2.0

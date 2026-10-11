@@ -4,113 +4,103 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-This project uses [Just](https://github.com/casey/just) as a command runner instead of traditional scripts:
+Tasks are [mise](https://mise.jdx.dev) file tasks in `.mise/tasks`:
 
-- `just dev` - Quick development workflow (format, lint, test)
-- `just build` - Build the project
-- `just test` - Run all tests
-- `just test-watch` - Run tests in watch mode
-- `just clippy` - Run Clippy linter with warnings as errors
-- `just fmt` - Format code
-- `just fmt-check` - Check code formatting without fixing
-- `just check` - Run cargo check
-- `just clean` - Clean build artifacts
+- `mise run dev` - format, lint, test
+- `mise run build`, `mise run check`, `mise run clippy`, `mise run fmt`, `mise run clean`
+- `mise run test [filter]` - all tests (`--watch` to re-run on change)
+- `mise run pg:start` / `pg:stop` - the local Postgres in `.postgres` (the `DATABASE_URL` in
+  `mise.toml`); `mise run db:setup` creates the dev database
+- `mise run demo` - the admin demo (`ishikari-admin/examples/demo.rs`)
+- `mise run version:patch|minor|major` - bump and sync the crates' versions
+- `mise run publish --dry-run` - check the crates package; `mise run publish` publishes them
 
-### Version Management
+### Tests
 
-This workspace maintains synchronized versions between `ishikari` and `ishikari-macros`:
-
-- `just version-patch` - Bump patch version and sync dependencies
-- `just version-minor` - Bump minor version and sync dependencies  
-- `just version-major` - Bump major version and sync dependencies
-
-### Release Process
-
-- `just release-bump-patch` - Complete patch release workflow (checks + version bump + dry-run)
-- `just publish-dry-run` - Test publish process without actual publishing
-- `just publish` - Publish both crates to crates.io
+Integration tests (`ishikari/tests`, `ishikari-admin/tests`) run against a real Postgres: each
+test migrates a schema of its own (`ishikari_t_*`) and drops it at the end. They use
+`ISHIKARI_TEST_DATABASE_URL`, else `DATABASE_URL`; without either they fail loudly, and
+`ISHIKARI_SKIP_DB_TESTS=1` skips them. Helpers are in `ishikari/tests/common/mod.rs`
+(`TestDb`, `eventually`). Fix a bug by writing the failing test first.
 
 ## Project Architecture
 
-Ishikari is a Rust job processing framework with PostgreSQL backend, organized as a workspace with two crates:
+A workspace of four crates:
 
-### Core Components
+- `ishikari` - the library
+- `ishikari-macros` - `#[ishikari::job]` and `#[ishikari::worker]` (syn 2)
+- `ishikari-cli` - `ishikari generate migration|version`
+- `ishikari-admin` - the dashboard: an axum router a host mounts behind its own auth
 
-- **Engine** (`engine.rs`) - Central job processing coordinator that manages queues and storage
-- **Queue** (`queue.rs`) - Job queue management with configurable concurrency and polling intervals  
-- **Storage** (`engine/storage.rs`) - Abstract storage trait; PostgreSQL implementation in `engine/postgres.rs`
-- **Worker** (`lib.rs`) - Core trait for job processing with configurable retry/backoff strategies
-- **Stager** (`stager.rs`) - Background service that moves scheduled jobs to available state
-- **Model** (`model.rs`) - Job data structures and state management
+### Core components (`ishikari/src`)
 
-### Procedural Macros (`ishikari-macros/`)
+- **`engine.rs`**:
+  - `Engine`/`EngineBuilder` start the queues, stager, heartbeat, rescuer, resolver, pruner and
+    cron task;
+  - `Engine::shutdown(grace)` stops them all.
+- **`engine/postgres.rs`**: `Postgres`, the storage (it carries the schema). Every job statement
+  is here:
+  - claiming;
+  - outcome writes, fenced on `state = 'executing' AND attempt = $n`;
+  - staging;
+  - rescue;
+  - give-back;
+  - releasing workflow dependents on completion, and cascading failures;
+  - `retry_job` and `cancel_job`;
+  - pruning;
+  - releasing unique keys.
+- **`queue.rs`**: a polling loop per queue. It tracks running jobs in a `JoinSet` (which bounds
+  concurrency) and drains on stop.
+- **`insert.rs`**: `insert`, `insert_with`, `insert_all`, `InsertOpts`, `Unique`, `Inserted`.
+- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key.
+- **`stager.rs`**: moves due scheduled and retryable jobs to available.
+- **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
+- **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into
+  hosts' migrations.
+- **`workflows/`**:
+  - `Pipeline`, `Dag`, `Saga`, sharing `step.rs` to insert steps (`pending` when they have
+    upstreams);
+  - `Workflow::progress`.
+- **`dependencies/`**: dependency rows and the `DependencyResolver`, a sweep that also runs saga
+  compensation.
+- **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs).
 
-- `#[ishikari::job]` - Derives Debug + Serialize/Deserialize for job types
-- `#[ishikari::worker]` - Implements the Worker trait with configurable queue/retry settings
+### Job lifecycle
 
-### Job Processing Lifecycle
+1. A job is inserted, optionally in the caller's transaction:
+   - `available`, or `scheduled` for later;
+   - `pending` for a workflow step waiting on its upstreams.
+2. A queue claims it: `executing`, `attempt + 1`, with the node appended to `attempted_by`.
+3. The run's outcome is one of:
+   - `completed`, which releases its dependents and completes the workflow when it was the
+     last step;
+   - `retryable` with an error record;
+   - `discarded` on the last attempt, which cancels its dependents and fails the workflow;
+   - `cancelled`;
+   - snoozed back to `scheduled`.
+4. A job whose node stops heartbeating is rescued after `node_timeout`. Shutdown gives
+   interrupted jobs back with the attempt refunded.
+5. Finished jobs are pruned after `prune_after`.
 
-1. **Job Creation**: Define struct with `#[ishikari::job]`, implement Worker trait with `#[ishikari::worker]`
-2. **Job Insertion**: Use `ishikari::insert(job, &pool)` to queue jobs
-3. **Job Scheduling**: Stager moves scheduled jobs to available state
-4. **Job Execution**: Queues fetch and execute available jobs with configured concurrency
-5. **Job Completion**: Jobs complete with status (Complete/Cancel/Snooze) or error for retry
+### Schema
 
-### Database Schema
+Each version adds to the last; never edit a released version's SQL in a way that changes what
+it creates.
+- v01: `ishikari_jobs`
+- v02: workflows
+- v03: dependencies, saga steps
+- v04: definitions, runs, node executions
+- v05: nodes, unique keys, error records, the `pending` state
 
-- Uses PostgreSQL with single `jobs` table
-- Migration files in `migrations/` directory
-- Job states: Available, Scheduled, Executing, Retryable, Completed, Discarded, Cancelled
+The installed version is the comment on `ishikari_jobs`. A new version means a new
+`migrations/v0N.sql` and a bump of `CURRENT_VERSION`.
 
-### Key Design Patterns
+### Key design patterns
 
-- **Type-safe Job Serialization**: Jobs serialize as `Box<dyn Worker>` using typetag for dynamic dispatch
-- **Shared State**: Engine supports generic state (typically database pools, config) accessible via Context
-- **Backoff Strategies**: Fixed, Linear, Exponential, ExponentialJitter, or Custom retry delays
-- **Queue Isolation**: Different job types can use separate queues with different concurrency limits
-
-## Development Notes
-
-- Tests run against actual PostgreSQL database (requires DATABASE_URL)
-- Uses sqlx for database operations with compile-time query checking
-- Examples in `ishikari/examples/` demonstrate worker patterns
-- All jobs must implement Debug, Serialize, and Worker traits
-- Worker trait methods: `perform()` (required), `queue()`, `max_attempts()`, `backoff()` (optional)
-
-## Migration Management
-
-Ishikari uses `ishikari-cli` to generate migrations that integrate with sqlx's migration system:
-
-### Setup Process
-
-```bash
-# 1. Install CLI
-cargo install ishikari-cli
-
-# 2. Generate migrations
-ishikari generate migration                    # Default schema
-ishikari gen migration --schema tenant_1       # Custom schema (short alias)
-ishikari g migration --output db/migrations    # Custom directory (shortest alias)
-
-# 3. Apply migrations
-sqlx migrate run --database-url $DATABASE_URL
-```
-
-### Runtime Migrations (Optional)
-
-For applications that need automatic migration on startup:
-
-```rust
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = PgPool::connect(&database_url).await?;
-    
-    // Embedded migrations (generated by CLI)
-    sqlx::migrate!("./migrations").run(&pool).await?;
-    
-    // Start your application...
-    Ok(())
-}
-```
-
-This approach provides clean separation: CLI generates the SQL, sqlx handles the runtime execution. Perfect for CI/CD pipelines, team development, and containerized applications.
+- **Type-safe job serialization**: jobs serialize as `Box<dyn Worker>` using typetag for dynamic
+  dispatch.
+- **Shared state**: the engine's `with_state` value is available to workers via
+  `Context::state`.
+- **Backoff**: Fixed, Linear, Exponential, ExponentialJitter or Custom.
+- **Postgres is the coordinator**: `SKIP LOCKED` claims, attempt fencing, unique indexes (cron
+  slots, unique jobs) and advisory locks (the resolver). No leader election.

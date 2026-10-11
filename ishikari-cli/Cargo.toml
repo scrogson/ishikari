@@ -1,6 +1,6 @@
 [package]
 name = "ishikari-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Command-line tool for Ishikari job processing framework"
 license = "MIT"
@@ -12,7 +12,7 @@ name = "ishikari"
 path = "src/main.rs"
 
 [dependencies]
-ishikari = { version = "0.1.1", path = "../ishikari" }
+ishikari = { version = "0.2.0", path = "../ishikari" }
 clap = { version = "4.0", features = ["derive", "env"] }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }

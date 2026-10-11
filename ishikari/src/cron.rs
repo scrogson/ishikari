@@ -17,7 +17,7 @@
 //! let engine = Engine::builder("app")
 //!     .with_queue(Queue::builder("default"))
 //!     // Every day at 7:00 in Chicago.
-//!     .cron(Cron::new("daily-digest", "0 7 * * *", || Digest)?.timezone(chrono_tz::America::Chicago))
+//!     .cron(Cron::new("daily-digest", "0 7 * * *", || Digest)?.timezone(ishikari::chrono_tz::America::Chicago))
 //!     .start(Postgres::new(pool));
 //! # Ok(())
 //! # }

@@ -147,6 +147,8 @@
 extern crate self as ishikari;
 
 use chrono::{DateTime, Duration, Utc};
+/// Time zones for [`Cron::timezone`].
+pub use chrono_tz;
 use rand::Rng;
 #[doc(hidden)]
 pub use serde;
