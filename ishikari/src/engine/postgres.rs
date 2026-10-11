@@ -327,6 +327,62 @@ impl Postgres {
         Ok(())
     }
 
+    /// Delete up to `limit` finished jobs (completed, cancelled or discarded) older than
+    /// `older_than`, keeping jobs whose workflow hasn't finished, and remove their dependency
+    /// rows. Then delete finished workflows left without jobs. Returns how many jobs were
+    /// deleted.
+    pub(crate) async fn prune(
+        &self,
+        older_than: std::time::Duration,
+        limit: i64,
+    ) -> Result<usize, sqlx::Error> {
+        let (jobs, deps, workflows) = (
+            self.name("ishikari_jobs"),
+            self.name("ishikari_job_dependencies"),
+            self.name("ishikari_workflows"),
+        );
+        let mut tx = self.pool.begin().await?;
+        let deleted: Vec<i64> = sqlx::query_scalar(&format!(
+            r#"
+            WITH doomed AS (
+                SELECT j.id FROM {jobs} j
+                WHERE j.state IN ('completed', 'cancelled', 'discarded')
+                  AND coalesce(j.completed_at, j.cancelled_at, j.discarded_at, j.inserted_at)
+                      < now() - $1 * interval '1 millisecond'
+                  AND (j.workflow_id IS NULL OR EXISTS (
+                        SELECT 1 FROM {workflows} w
+                        WHERE w.id = j.workflow_id
+                          AND w.state IN ('completed', 'failed', 'cancelled', 'compensated')))
+                ORDER BY j.id
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+            )
+            DELETE FROM {jobs} WHERE id IN (SELECT id FROM doomed) RETURNING id
+            "#
+        ))
+        .bind(older_than.as_millis() as i64)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !deleted.is_empty() {
+            sqlx::query(&format!(
+                "DELETE FROM {deps} WHERE job_id = ANY($1) OR depends_on_job_id = ANY($1)"
+            ))
+            .bind(&deleted)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(&format!(
+                "DELETE FROM {workflows} w \
+                 WHERE w.state IN ('completed', 'failed', 'cancelled', 'compensated') \
+                   AND NOT EXISTS (SELECT 1 FROM {jobs} j WHERE j.workflow_id = w.id)"
+            ))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(deleted.len())
+    }
+
     /// Make up to `limit` scheduled and retryable jobs that are due available. Returns how many.
     pub(crate) async fn stage(&self, limit: i32) -> Result<usize, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");

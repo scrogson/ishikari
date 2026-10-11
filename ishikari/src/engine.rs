@@ -85,6 +85,8 @@ pub struct EngineBuilder {
     cron_interval: Duration,
     cron_catch_up: Duration,
     resolver_interval: Duration,
+    prune_after: Option<Duration>,
+    prune_interval: Duration,
 }
 
 impl EngineBuilder {
@@ -193,6 +195,26 @@ impl EngineBuilder {
         self
     }
 
+    /// Delete finished jobs (completed, cancelled, discarded) this long after they finished,
+    /// and finished workflows with them. Defaults to 7 days; never less than the cron catch-up,
+    /// so a recent cron slot isn't forgotten and run again.
+    pub fn prune_after(mut self, after: Duration) -> Self {
+        self.prune_after = Some(after);
+        self
+    }
+
+    /// Keep finished jobs forever.
+    pub fn no_pruning(mut self) -> Self {
+        self.prune_after = None;
+        self
+    }
+
+    /// How often to prune (1,000 jobs at a time). Defaults to 60 seconds.
+    pub fn prune_interval(mut self, interval: Duration) -> Self {
+        self.prune_interval = interval;
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -237,6 +259,14 @@ impl EngineBuilder {
             resolver = resolver.schema(schema);
         }
         tasks.push(resolver.start());
+
+        if let Some(after) = self.prune_after {
+            tasks.push(pruner(
+                storage.clone(),
+                after.max(self.cron_catch_up),
+                self.prune_interval,
+            ));
+        }
 
         if !self.crons.is_empty() {
             tasks.push(cron_task(
@@ -330,6 +360,8 @@ impl Engine {
             cron_interval: Duration::from_secs(15),
             cron_catch_up: Duration::from_secs(300),
             resolver_interval: Duration::from_secs(30),
+            prune_after: Some(Duration::from_secs(7 * 24 * 3600)),
+            prune_interval: Duration::from_secs(60),
         }
     }
 
@@ -487,6 +519,26 @@ fn cron_task(
             let now = chrono::Utc::now();
             crate::cron::run_due(&crons, &storage, after, now).await;
             after = now;
+        }
+    })
+}
+
+/// Delete old finished jobs, 1,000 at a time, until none are left, then wait for the next tick.
+fn pruner(storage: Arc<Postgres>, after: Duration, every: Duration) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(every);
+        loop {
+            interval.tick().await;
+            loop {
+                match storage.prune(after, 1000).await {
+                    Ok(0) => break,
+                    Ok(n) => tracing::debug!(n, "pruned finished jobs"),
+                    Err(e) => {
+                        error!(error = %e, "failed to prune jobs");
+                        break;
+                    }
+                }
+            }
         }
     })
 }
