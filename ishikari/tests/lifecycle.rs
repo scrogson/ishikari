@@ -37,7 +37,7 @@ async fn an_inserted_job_runs_to_completion() {
     .unwrap();
     assert_eq!(db.state(job.id).await, "available");
 
-    let _engine = Engine::<Postgres>::builder("test")
+    let _engine = Engine::builder("test")
         .with_queue(Queue::builder("default").interval(Duration::from_millis(20)))
         .start(Postgres::new(db.pool.clone()));
 

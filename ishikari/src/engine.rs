@@ -1,13 +1,12 @@
 mod postgres;
-mod storage;
 
+pub(crate) use postgres::qualified;
 pub use postgres::Postgres;
-pub use storage::Storage;
 
 use crate::{queue::QueueBuilder, Job, Stager, State, Worker};
 use serde::Serialize;
-use sqlx::{FromRow, PgExecutor};
-use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
+use sqlx::PgExecutor;
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::instrument;
 
 /// A unique identifier for an engine instance.
@@ -23,7 +22,6 @@ impl From<&str> for EngineName {
 }
 
 impl EngineName {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -37,6 +35,7 @@ impl EngineName {
 /// - The stager limit (maximum number of jobs to process per interval)
 /// - Multiple queues with different configurations
 /// - Custom state to be shared across queues
+/// - The schema the jobs live in
 ///
 /// # Example
 /// ```rust,no_run
@@ -53,7 +52,7 @@ impl EngineName {
 ///     let shared_state = Arc::new(());
 ///
 ///     // Build and start the engine
-///     let engine = Engine::<Postgres>::builder("my-engine")
+///     let engine = Engine::builder("my-engine")
 ///         .stager_interval(Duration::from_secs(5))
 ///         .stager_limit(50)
 ///         .with_state(shared_state)
@@ -65,23 +64,16 @@ impl EngineName {
 /// # }
 /// ```
 #[derive(Debug)]
-pub struct EngineBuilder<S>
-where
-    S: Storage + 'static,
-{
+pub struct EngineBuilder {
     name: EngineName,
-    queues: Vec<QueueBuilder<S>>,
+    queues: Vec<QueueBuilder>,
     stager_interval: Option<Duration>,
     stager_limit: Option<i32>,
     state: Option<State>,
     schema: Option<String>,
-    storage: PhantomData<S>,
 }
 
-impl<S> EngineBuilder<S>
-where
-    S: Storage + 'static,
-{
+impl EngineBuilder {
     /// Sets the interval at which the stager checks for scheduled jobs.
     ///
     /// Defaults to 1 second if not specified.
@@ -101,7 +93,7 @@ where
     /// Adds a queue to the engine.
     ///
     /// Multiple queues can be added, each with its own configuration.
-    pub fn with_queue(mut self, queue_builder: QueueBuilder<S>) -> Self {
+    pub fn with_queue(mut self, queue_builder: QueueBuilder) -> Self {
         self.queues.push(queue_builder);
         self
     }
@@ -115,10 +107,10 @@ where
         self
     }
 
-    /// Sets the schema for this engine.
+    /// Sets the schema the engine's jobs live in.
     ///
-    /// All jobs inserted through this engine and all queues will use this schema.
-    /// If not specified, defaults to the public schema.
+    /// Every job the engine inserts, runs, stages or records is read and written there. If not
+    /// specified, the storage's schema is used (the connection's search path by default).
     pub fn schema<T: Into<String>>(mut self, schema: T) -> Self {
         self.schema = Some(schema.into());
         self
@@ -129,9 +121,12 @@ where
     /// This will:
     /// 1. Initialize the stager with the configured interval and limit
     /// 2. Build and start all configured queues
-    /// 3. Return an [`Engine`] instance that can be used to manage the queues
-    pub fn start(self, storage: impl Into<Arc<S>>) -> Engine<S> {
-        let storage = storage.into();
+    /// 3. Return an [`Engine`] instance that can be used to insert jobs
+    pub fn start(self, storage: Postgres) -> Engine {
+        let storage = Arc::new(match self.schema {
+            Some(schema) => storage.with_schema(schema),
+            None => storage,
+        });
         let state = self.state.unwrap_or(Arc::new(()));
 
         let stager_interval = self.stager_interval.unwrap_or(Duration::from_secs(1));
@@ -140,21 +135,12 @@ where
         let _stager_handle = stager.start();
 
         for queue in self.queues.into_iter() {
-            // If queue doesn't have a schema set, use engine's schema
-            let queue_with_schema = match (&queue.schema, &self.schema) {
-                (None, Some(schema)) => queue.schema(schema.clone()),
-                _ => queue,
-            };
-            let queue = queue_with_schema.build(storage.clone(), state.clone());
-            queue.start();
+            queue.build(storage.clone(), state.clone()).start();
         }
 
         Engine {
             name: self.name,
-            stager_interval,
-            stager_limit,
             storage,
-            schema: self.schema,
         }
     }
 }
@@ -164,32 +150,22 @@ where
 /// The engine is responsible for:
 /// - Managing multiple job queues
 /// - Running the stager to process scheduled jobs
-/// - Coordinating between queues and the storage backend
+/// - Inserting jobs into its schema
 ///
 /// An engine instance is created using the [`EngineBuilder`] and represents
 /// a running job processing system. Once started, it will continue processing
 /// jobs until the application terminates.
-#[allow(dead_code)]
-pub struct Engine<S>
-where
-    S: Storage + 'static,
-{
+pub struct Engine {
     name: EngineName,
-    storage: Arc<S>,
-    stager_interval: Duration,
-    stager_limit: i32,
-    schema: Option<String>,
+    storage: Arc<Postgres>,
 }
 
-impl<S> Engine<S>
-where
-    S: Storage + 'static,
-{
+impl Engine {
     /// Creates a new builder for configuring an engine instance.
     ///
     /// The name parameter is used to identify this engine instance and should be
     /// unique within your application.
-    pub fn builder(name: &str) -> EngineBuilder<S> {
+    pub fn builder(name: &str) -> EngineBuilder {
         EngineBuilder {
             name: name.into(),
             queues: Vec::new(),
@@ -197,76 +173,41 @@ where
             stager_limit: None,
             state: None,
             schema: None,
-            storage: PhantomData,
         }
     }
-}
 
-impl Engine<Postgres> {
-    /// Create a new Postgres engine builder.
-    ///
-    /// This is a convenience method for creating an engine with Postgres storage.
-    pub fn postgres() -> EngineBuilder<Postgres> {
+    /// Create a new engine builder named "default".
+    pub fn postgres() -> EngineBuilder {
         Self::builder("default")
     }
 
-    /// Insert a job using this engine's schema configuration.
-    ///
-    /// This method will insert the job into the schema configured for this engine.
-    /// If no schema was configured, it will use the public schema.
+    /// The engine's name.
+    pub fn name(&self) -> &EngineName {
+        &self.name
+    }
+
+    /// The engine's storage.
+    pub fn storage(&self) -> &Postgres {
+        &self.storage
+    }
+
+    /// Insert a job into this engine's schema.
     #[instrument(skip(self))]
     pub async fn insert<J>(&self, job: J) -> Result<Job, sqlx::Error>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,
     {
-        self.insert_impl(job, &*self.storage.pool).await
+        self.insert_tx(job, &*self.storage.pool).await
     }
 
-    /// Insert a job using this engine's schema configuration within a transaction.
-    ///
-    /// This method will insert the job into the schema configured for this engine
-    /// within the provided transaction.
+    /// Insert a job into this engine's schema with the given executor, for example inside the
+    /// caller's transaction.
     #[instrument(skip(self, executor))]
     pub async fn insert_tx<'a, J, E>(&self, job: J, executor: E) -> Result<Job, sqlx::Error>
     where
         J: Debug + Serialize + Worker + Send + Sync + 'static,
         E: PgExecutor<'a>,
     {
-        self.insert_impl(job, executor).await
-    }
-
-    /// Internal implementation for inserting jobs with schema support
-    async fn insert_impl<'a, J, E>(&self, job: J, executor: E) -> Result<Job, sqlx::Error>
-    where
-        J: Debug + Serialize + Worker + Send + Sync + 'static,
-        E: PgExecutor<'a>,
-    {
-        // Build table name based on engine's schema
-        let table_name = match &self.schema {
-            Some(schema) => format!("{}.ishikari_jobs", schema),
-            None => "ishikari_jobs".to_string(),
-        };
-
-        let query = format!(
-            "insert into {} (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *",
-            table_name
-        );
-
-        let args = serde_json::to_value(&job as &dyn Worker)
-            .map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-        let row = sqlx::query(&query)
-            .bind(job.queue())
-            .bind(J::worker())
-            .bind(args)
-            .bind(job.max_attempts())
-            .fetch_one(executor)
-            .await?;
-
-        let inserted = Job::from_row(&row)?;
-
-        tracing::info!("Job inserted id={}, args={:?}", inserted.id, job);
-
-        Ok(inserted)
+        crate::insert_into(self.storage.schema(), job, executor).await
     }
 }
