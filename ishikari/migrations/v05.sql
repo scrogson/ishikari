@@ -33,6 +33,19 @@ SET errors = ARRAY(
 )
 WHERE EXISTS (SELECT 1 FROM unnest(errors) AS e WHERE jsonb_typeof(e) = 'string');
 
+-- Node executions (workflow definitions): the columns and status the execution code uses
+ALTER TABLE {SCHEMA}.ishikari_node_executions ADD COLUMN IF NOT EXISTS skip_reason TEXT;
+ALTER TABLE {SCHEMA}.ishikari_node_executions
+    ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE {SCHEMA}.ishikari_node_executions
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE {SCHEMA}.ishikari_node_executions ALTER COLUMN started_at DROP NOT NULL;
+ALTER TABLE {SCHEMA}.ishikari_node_executions ALTER COLUMN started_at DROP DEFAULT;
+ALTER TABLE {SCHEMA}.ishikari_node_executions DROP CONSTRAINT IF EXISTS valid_execution_status;
+ALTER TABLE {SCHEMA}.ishikari_node_executions
+    ADD CONSTRAINT valid_execution_status
+    CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped'));
+
 -- Workflow steps wait in `pending` until their dependencies are met. Last, because a new enum
 -- value can't be used in the transaction that adds it.
 ALTER TYPE {SCHEMA}.ishikari_job_state ADD VALUE IF NOT EXISTS 'pending';
