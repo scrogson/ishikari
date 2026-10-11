@@ -1,4 +1,4 @@
-error: unknown worker option; expected `queue` or `max_attempts`
+error: unknown worker option; expected `queue`, `max_attempts` or `timeout`
  --> tests/ui/unknown_option.rs:7:20
   |
 7 | #[ishikari::worker(queues = "a")]

@@ -3,12 +3,17 @@ mod postgres;
 pub(crate) use postgres::qualified;
 pub use postgres::{ErrorKind, Postgres};
 
-use crate::{queue::QueueBuilder, Job, Stager, State, Worker};
+use crate::queue::{QueueBuilder, QueueStop};
+use crate::{Job, Stager, State, Worker};
 use serde::Serialize;
 use sqlx::PgExecutor;
-use std::{fmt::Debug, sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
-use tracing::{error, instrument, warn};
+use std::{
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{sync::watch, task::JoinHandle};
+use tracing::{error, info, instrument, warn};
 
 /// A unique identifier for an engine instance.
 ///
@@ -196,19 +201,29 @@ impl EngineBuilder {
         let stager_limit = self.stager_limit.unwrap_or(100);
         tasks.push(Stager::new(storage.clone(), stager_interval, stager_limit).start());
 
-        for queue in self.queues.into_iter() {
-            tasks.push(
+        let (stop, stop_rx) = watch::channel(None);
+        let queues = self
+            .queues
+            .into_iter()
+            .map(|queue| {
                 queue
-                    .build_on(storage.clone(), state.clone(), node.clone())
-                    .spawn(),
-            );
-        }
+                    .build_on(
+                        storage.clone(),
+                        state.clone(),
+                        node.clone(),
+                        stop_rx.clone(),
+                    )
+                    .spawn()
+            })
+            .collect();
 
         Engine {
             name: self.name,
             node,
             storage,
             tasks,
+            queues,
+            stop,
         }
     }
 }
@@ -227,8 +242,20 @@ pub struct Engine {
     name: EngineName,
     node: Arc<str>,
     storage: Arc<Postgres>,
-    #[allow(dead_code)]
+    /// Heartbeat, rescuer and stager.
     tasks: Vec<JoinHandle<()>>,
+    queues: Vec<JoinHandle<QueueStop>>,
+    stop: watch::Sender<Option<Instant>>,
+}
+
+/// What [`Engine::shutdown`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shutdown {
+    /// Jobs that finished during the grace period.
+    pub finished: usize,
+    /// Jobs interrupted when the grace period ran out, given back to their queues with the
+    /// attempt refunded.
+    pub returned: usize,
 }
 
 impl Engine {
@@ -260,6 +287,35 @@ impl Engine {
     /// The engine's name.
     pub fn name(&self) -> &EngineName {
         &self.name
+    }
+
+    /// Stop the engine: stop claiming jobs, wait up to `grace` for running jobs to finish, give
+    /// the rest back to their queues (with the attempt refunded), stop the background tasks
+    /// and remove this node's row. Call it from the host's shutdown signal (SIGTERM) so a deploy
+    /// doesn't leave jobs to the rescuer.
+    ///
+    /// Jobs given back were interrupted mid-run, so workers should be safe to run twice.
+    pub async fn shutdown(self, grace: Duration) -> Shutdown {
+        let _ = self.stop.send(Some(Instant::now() + grace));
+        let mut report = Shutdown::default();
+        for queue in self.queues {
+            match queue.await {
+                Ok(stop) => {
+                    report.finished += stop.finished;
+                    report.returned += stop.returned;
+                }
+                Err(e) => error!(error = %e, "a queue task failed while stopping"),
+            }
+        }
+        for task in self.tasks {
+            task.abort();
+            let _ = task.await;
+        }
+        if let Err(e) = self.storage.forget_node(&self.node).await {
+            error!(node = %self.node, error = %e, "failed to remove the node's row");
+        }
+        info!(node = %self.node, finished = report.finished, returned = report.returned, "engine stopped");
+        report
     }
 
     /// This node's name, as recorded in `ishikari_nodes` and in `attempted_by`.

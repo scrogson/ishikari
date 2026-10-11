@@ -10,12 +10,14 @@ use syn::{parse_macro_input, DeriveInput, ImplItem, ItemImpl, LitInt, LitStr};
 /// - `queue = "name"`: the queue jobs of this type go to (`queue()`).
 /// - `max_attempts = N`: how many times a job is tried before it is discarded
 ///   (`max_attempts()`).
+/// - `timeout = "30s"`: how long one attempt may run (`timeout()`), in `ms`, `s`, `m` or `h`.
 ///
 /// Setting an option both as an attribute and as a method is an error.
 #[proc_macro_attribute]
 pub fn worker(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut queue: Option<LitStr> = None;
     let mut max_attempts: Option<LitInt> = None;
+    let mut timeout: Option<(LitStr, u64)> = None;
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("queue") {
             queue = Some(meta.value()?.parse()?);
@@ -23,8 +25,18 @@ pub fn worker(attr: TokenStream, item: TokenStream) -> TokenStream {
         } else if meta.path.is_ident("max_attempts") {
             max_attempts = Some(meta.value()?.parse()?);
             Ok(())
+        } else if meta.path.is_ident("timeout") {
+            let lit: LitStr = meta.value()?.parse()?;
+            let millis = parse_duration_millis(&lit.value()).ok_or_else(|| {
+                syn::Error::new(
+                    lit.span(),
+                    "expected a duration such as \"500ms\", \"30s\", \"5m\" or \"1h\"",
+                )
+            })?;
+            timeout = Some((lit, millis));
+            Ok(())
         } else {
-            Err(meta.error("unknown worker option; expected `queue` or `max_attempts`"))
+            Err(meta.error("unknown worker option; expected `queue`, `max_attempts` or `timeout`"))
         }
     });
     parse_macro_input!(attr with parser);
@@ -67,6 +79,21 @@ pub fn worker(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         });
     }
+    if let Some((lit, millis)) = &timeout {
+        if defines("timeout") {
+            return syn::Error::new(
+                lit.span(),
+                "`timeout` is set both here and as a method; keep one",
+            )
+            .to_compile_error()
+            .into();
+        }
+        generated.push(syn::parse_quote! {
+            fn timeout(&self) -> ::std::option::Option<::std::time::Duration> {
+                ::std::option::Option::Some(::std::time::Duration::from_millis(#millis))
+            }
+        });
+    }
     input.items.extend(generated);
 
     quote! {
@@ -75,6 +102,22 @@ pub fn worker(attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
     }
     .into()
+}
+
+/// `"500ms"`, `"30s"`, `"5m"` or `"1h"` in milliseconds.
+fn parse_duration_millis(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let split = s.find(|c: char| !c.is_ascii_digit())?;
+    let (n, unit) = s.split_at(split);
+    let n: u64 = n.parse().ok()?;
+    let factor = match unit.trim() {
+        "ms" => 1,
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        _ => return None,
+    };
+    n.checked_mul(factor)
 }
 
 /// Derive what a job type needs: `Debug`, `Serialize` and `Deserialize` (through ishikari's

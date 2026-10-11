@@ -215,6 +215,23 @@ impl Postgres {
         Ok(())
     }
 
+    /// Put interrupted jobs, given as (id, attempt), back to available with the attempt
+    /// refunded. Jobs that moved on meanwhile are left alone. Returns how many were put back.
+    pub(crate) async fn give_back(&self, jobs: &[(i64, i32)]) -> Result<usize, sqlx::Error> {
+        let table = self.name("ishikari_jobs");
+        let (ids, attempts): (Vec<i64>, Vec<i32>) = jobs.iter().copied().unzip();
+        let done = sqlx::query(&format!(
+            "UPDATE {table} AS j SET state = 'available', attempt = j.attempt - 1 \
+             FROM unnest($1::bigint[], $2::int[]) AS r(id, attempt) \
+             WHERE j.id = r.id AND j.state = 'executing' AND j.attempt = r.attempt"
+        ))
+        .bind(ids)
+        .bind(attempts)
+        .execute(&*self.pool)
+        .await?;
+        Ok(done.rows_affected() as usize)
+    }
+
     /// Remove `node`'s row (it is shutting down), and rows of nodes silent for a day.
     pub(crate) async fn forget_node(&self, node: &str) -> Result<(), sqlx::Error> {
         let nodes = self.name("ishikari_nodes");

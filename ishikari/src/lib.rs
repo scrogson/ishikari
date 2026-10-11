@@ -168,9 +168,9 @@ pub mod execution;
 
 pub use ishikari_macros::{job, worker};
 
-pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres};
+pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres, Shutdown};
 pub use model::{Job, JobState};
-pub use queue::Queue;
+pub use queue::{Queue, QueueStop};
 pub use result::{Cancel, Complete, PerformError, PerformResult, Snooze, Status};
 pub use stager::Stager;
 
@@ -550,6 +550,12 @@ pub trait Worker: Send + Sync {
     /// Returns a time 5 seconds in the future with exponential backoff if not overridden.
     fn backoff(&self, attempt: i32) -> DateTime<Utc> {
         Backoff::Exponential(Duration::seconds(5)).next_retry(attempt)
+    }
+
+    /// How long one attempt may run. When it runs longer, the attempt fails with a timeout
+    /// error and is retried like any other error. `None` (the default) lets it run.
+    fn timeout(&self) -> Option<std::time::Duration> {
+        None
     }
 
     /// Performs the actual job processing.

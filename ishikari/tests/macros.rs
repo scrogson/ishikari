@@ -26,7 +26,7 @@ impl Worker for ByMethods {
 #[ishikari::job]
 struct ByAttributes;
 
-#[ishikari::worker(queue = "reports", max_attempts = 2)]
+#[ishikari::worker(queue = "reports", max_attempts = 2, timeout = "90s")]
 impl Worker for ByAttributes {
     async fn perform(&self, _ctx: Context) -> PerformResult {
         Complete::default().into()
@@ -52,6 +52,11 @@ fn options_come_from_methods_or_attributes() {
     assert_eq!(ByMethods.max_attempts(), 3);
     assert_eq!(ByAttributes.queue(), "reports");
     assert_eq!(ByAttributes.max_attempts(), 2);
+    assert_eq!(
+        ByAttributes.timeout(),
+        Some(std::time::Duration::from_secs(90))
+    );
+    assert_eq!(ByMethods.timeout(), None);
     assert_eq!(WithDerives { n: 1 }.queue(), "default");
     assert_eq!(WithDerives { n: 1 }.max_attempts(), 20);
     assert_eq!(WithDerives { n: 1 }.clone(), WithDerives { n: 1 });
