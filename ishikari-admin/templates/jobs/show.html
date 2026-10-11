@@ -22,12 +22,17 @@
         </div>
     </div>
     <div class="flex flex-wrap gap-2">
-        {% if job.state == "discarded" || job.state == "cancelled" || job.state == "retryable" %}
+        {% if job.state == "discarded" || job.state == "cancelled" || job.state == "retryable" || job.state == "scheduled" %}
         <form method="post" action="{{ base_path }}/jobs/{{ job.id }}/retry">
-            <button type="submit" class="btn btn-primary btn-sm">Retry</button>
+            <button type="submit" class="btn btn-primary btn-sm">{% if job.state == "scheduled" %}Run now{% else %}Retry{% endif %}</button>
         </form>
         {% endif %}
-        {% if job.state == "available" || job.state == "scheduled" || job.state == "retryable" %}
+        {% if job.state == "executing" %}
+        <form method="post" action="{{ base_path }}/jobs/{{ job.id }}/retry">
+            <button type="submit" class="btn btn-sm" onclick="return confirm('Give this job back to its queue? If it is still running, its result will be ignored.')">Give back</button>
+        </form>
+        {% endif %}
+        {% if job.state == "pending" || job.state == "available" || job.state == "scheduled" || job.state == "retryable" || job.state == "executing" %}
         <form method="post" action="{{ base_path }}/jobs/{{ job.id }}/cancel">
             <button type="submit" class="btn btn-error btn-soft btn-sm" onclick="return confirm('Cancel this job?')">Cancel</button>
         </form>

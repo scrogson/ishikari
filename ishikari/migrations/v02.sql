@@ -43,6 +43,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ishikari_jobs_workflow_id_fkey'
+          AND connamespace = '{ESCAPED_PREFIX}'::regnamespace
     ) THEN
         ALTER TABLE {SCHEMA}.ishikari_jobs
             ADD CONSTRAINT ishikari_jobs_workflow_id_fkey

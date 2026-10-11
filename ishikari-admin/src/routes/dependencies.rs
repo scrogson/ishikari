@@ -56,6 +56,7 @@ impl DependencyInfo {
 fn state_to_class(state: &str) -> &'static str {
     match state {
         "available" => "badge-primary",
+        "pending" => "badge-neutral",
         "scheduled" => "badge-secondary",
         "executing" => "badge-info",
         "completed" => "badge-success",

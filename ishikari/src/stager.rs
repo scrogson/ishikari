@@ -5,7 +5,6 @@
 //!
 //! - Moving scheduled jobs to available when their scheduled time arrives
 //! - Moving retryable jobs to available after their backoff period expires
-//! - Pruning old completed/discarded jobs to keep the database clean
 //!
 //! The stager runs on a configurable interval and processes a limited number of jobs
 //! per iteration to avoid overwhelming the database.
@@ -22,119 +21,40 @@
 //!     let pool = PgPool::connect(&database_url).await?;
 //!     let storage = Arc::new(Postgres::new(pool));
 //!
-//!     let stager = Stager::new(
-//!         storage,
-//!         Duration::from_secs(30),
-//!         100
-//!     );
-//!
+//!     let stager = Stager::new(storage, Duration::from_secs(30), 100);
 //!     stager.start();
 //! #   Ok(())
 //! # }
 //! ```
 
-use crate::engine::Storage;
-use std::pin::pin;
+use crate::Postgres;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, info, instrument};
 
-/// A component responsible for periodically moving jobs from scheduled/retryable states to available state.
+/// A component responsible for periodically moving jobs from scheduled/retryable states to
+/// available state.
 ///
-/// The Stager runs in the background and periodically checks for jobs that are ready to be processed.
-/// It moves jobs from scheduled/retryable states to the available state in batches, up to a specified limit.
-///
-/// # Type Parameters
-///
-/// * `S` - The storage implementation that must implement the `Storage` trait
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use ishikari::{Storage, Stager, Job};
-/// use std::sync::Arc;
-/// use std::time::Duration;
-/// use async_trait::async_trait;
-/// use chrono::Utc;
-///
-/// // Create your storage implementation
-/// struct MyStorage;
-///
-/// #[async_trait]
-/// impl Storage for MyStorage {
-///     type Error = std::io::Error;
-///     
-///     async fn stage_jobs(&self, _limit: i32) -> Result<usize, Self::Error> {
-///         Ok(0)
-///     }
-///
-///     async fn cancel_job(&self, _id: i64, _reason: Option<&str>) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn complete_job(&self, _id: i64) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn discard_job(&self, _id: i64) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn error_job(&self, _id: i64, _error: &str, _at: chrono::DateTime<Utc>) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn retry_job(&self, _id: i64) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn snooze_job(&self, _id: i64, _seconds: u64) -> Result<(), Self::Error> {
-///         Ok(())
-///     }
-///
-///     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-///         Ok(vec![])
-///     }
-///
-///     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-///         Ok(vec![])
-///     }
-///
-///     async fn fetch_and_execute_jobs(&self, _worker_id: &str, _schema: Option<&str>, _limit: i32) -> Result<Vec<Job>, Self::Error> {
-///         Ok(vec![])
-///     }
-/// }
-///
-/// let storage = Arc::new(MyStorage);
-/// let stager = Stager::new(storage, Duration::from_secs(1), 100);
-/// let handle = stager.start();
-/// ```
+/// The Stager runs in the background and periodically checks for jobs that are ready to be
+/// processed. It moves jobs from scheduled/retryable states to the available state in batches,
+/// up to a specified limit. A failed database call is logged and retried on the next tick; it
+/// never stops the stager.
 #[derive(Debug)]
-pub struct Stager<S>
-where
-    S: Storage + 'static,
-{
-    storage: Arc<S>,
+pub struct Stager {
+    storage: Arc<Postgres>,
     interval: Duration,
     limit: i32,
 }
 
-impl<S> Stager<S>
-where
-    S: Storage + 'static,
-{
+impl Stager {
     /// Creates a new Stager instance.
     ///
     /// # Arguments
     ///
-    /// * `storage` - An Arc-wrapped storage implementation
+    /// * `storage` - The job storage
     /// * `interval` - The duration between staging attempts
     /// * `limit` - The maximum number of jobs to stage in each attempt
-    ///
-    /// # Returns
-    ///
-    /// A new `Stager` instance
-    pub fn new(storage: Arc<S>, interval: Duration, limit: i32) -> Self {
+    pub fn new(storage: Arc<Postgres>, interval: Duration, limit: i32) -> Self {
         Self {
             storage,
             interval,
@@ -142,33 +62,33 @@ where
         }
     }
 
-    /// Starts the stager in a background task.
-    ///
-    /// This method spawns a new task that will periodically attempt to stage jobs
-    /// according to the configured interval and limit.
-    ///
-    /// # Returns
-    ///
-    /// A `JoinHandle` that can be used to await the completion of the stager task.
-    /// The task will run indefinitely until cancelled.
+    /// Starts the stager in a background task, which runs until it is aborted.
     #[instrument(skip(self))]
-    pub fn start(self) -> tokio::task::JoinHandle<Result<(), S::Error>> {
+    pub fn start(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             info!("starting stager");
-            let mut interval = pin!(tokio::time::interval(self.interval));
-
+            let mut interval = tokio::time::interval(self.interval);
             loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        let count = self.storage.stage_jobs(self.limit).await?;
-                        debug!(count = count, "staging jobs");
-
-                        if count > 0 {
-                            info!(count = count, "staged jobs");
-                        }
-                    }
-                }
+                interval.tick().await;
+                self.stage_once().await;
             }
         })
+    }
+
+    /// Stage one batch, logging rather than returning a failure.
+    pub async fn stage_once(&self) -> usize {
+        match self.storage.stage(self.limit).await {
+            Ok(count) => {
+                debug!(count, "staging jobs");
+                if count > 0 {
+                    info!(count, "staged jobs");
+                }
+                count
+            }
+            Err(e) => {
+                error!(error = %e, "failed to stage jobs; retrying next tick");
+                0
+            }
+        }
     }
 }

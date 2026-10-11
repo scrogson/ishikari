@@ -50,10 +50,11 @@ mod dag;
 pub mod error;
 mod pipeline;
 mod saga;
+mod step;
 mod workflow;
 
 pub use dag::Dag;
 pub use error::{Error, Result};
 pub use pipeline::Pipeline;
 pub use saga::{Saga, SagaStepBuilder};
-pub use workflow::{Workflow, WorkflowState};
+pub use workflow::{StepProgress, Workflow, WorkflowProgress, WorkflowState};

@@ -4,7 +4,6 @@
 //! to wait for other jobs to complete before executing.
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
 /// The state of a job dependency.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,7 +56,7 @@ impl Dependencies {
     ///
     /// The job will not execute until all its dependencies are satisfied.
     pub async fn add(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         depends_on_job_id: i64,
         schema: Option<&str>,
@@ -83,7 +82,7 @@ impl Dependencies {
 
     /// Get all dependencies for a job.
     pub async fn for_job(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         schema: Option<&str>,
     ) -> crate::workflows::error::Result<Vec<Dependency>> {
@@ -114,7 +113,7 @@ impl Dependencies {
 
     /// Check if all dependencies for a job are satisfied.
     pub async fn all_satisfied(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         schema: Option<&str>,
     ) -> crate::workflows::error::Result<bool> {
@@ -135,7 +134,7 @@ impl Dependencies {
 
     /// Mark a dependency as satisfied.
     pub async fn mark_satisfied(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         depends_on_job_id: i64,
         schema: Option<&str>,
@@ -161,7 +160,7 @@ impl Dependencies {
 
     /// Mark a dependency as failed.
     pub async fn mark_failed(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         depends_on_job_id: i64,
         schema: Option<&str>,
@@ -187,7 +186,7 @@ impl Dependencies {
 
     /// Get all jobs that are waiting on a specific job to complete.
     pub async fn dependents(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         job_id: i64,
         schema: Option<&str>,
     ) -> crate::workflows::error::Result<Vec<i64>> {

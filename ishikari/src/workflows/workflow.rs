@@ -5,7 +5,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
 /// Row type for workflow database queries.
 type WorkflowRow = (
@@ -70,7 +69,7 @@ impl WorkflowState {
 }
 
 /// A workflow instance.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workflow {
     /// Unique identifier for this workflow instance.
     pub id: i64,
@@ -89,7 +88,7 @@ pub struct Workflow {
 impl Workflow {
     /// Create a new workflow.
     pub async fn create(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         name: &str,
         metadata: serde_json::Value,
         schema: Option<&str>,
@@ -126,7 +125,7 @@ impl Workflow {
 
     /// Get a workflow by ID.
     pub async fn get(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         schema: Option<&str>,
     ) -> super::error::Result<Option<Self>> {
@@ -154,7 +153,7 @@ impl Workflow {
 
     /// Update the workflow state.
     pub async fn set_state(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         state: WorkflowState,
         schema: Option<&str>,
@@ -184,7 +183,7 @@ impl Workflow {
 
     /// Mark the workflow as completed.
     pub async fn complete(
-        pool: &PgPool,
+        pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         schema: Option<&str>,
     ) -> super::error::Result<()> {
@@ -192,12 +191,101 @@ impl Workflow {
     }
 
     /// Mark the workflow as failed.
-    pub async fn fail(pool: &PgPool, id: i64, schema: Option<&str>) -> super::error::Result<()> {
+    pub async fn fail(
+        pool: impl sqlx::PgExecutor<'_>,
+        id: i64,
+        schema: Option<&str>,
+    ) -> super::error::Result<()> {
         Self::set_state(pool, id, WorkflowState::Failed, schema).await
     }
 
     /// Mark the workflow as cancelled.
-    pub async fn cancel(pool: &PgPool, id: i64, schema: Option<&str>) -> super::error::Result<()> {
+    pub async fn cancel(
+        pool: impl sqlx::PgExecutor<'_>,
+        id: i64,
+        schema: Option<&str>,
+    ) -> super::error::Result<()> {
         Self::set_state(pool, id, WorkflowState::Cancelled, schema).await
+    }
+}
+
+/// A workflow and where each of its steps is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowProgress {
+    pub workflow: Workflow,
+    /// In the order the steps were inserted.
+    pub steps: Vec<StepProgress>,
+}
+
+/// One step of a workflow: its job's state, attempts, errors and timings.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StepProgress {
+    /// The step's name (a DAG's step name, a pipeline's or saga's position, or
+    /// `compensate-{n}`); the job id when the step has none.
+    pub name: String,
+    pub job_id: i64,
+    pub worker: String,
+    pub state: crate::JobState,
+    pub attempt: i32,
+    pub max_attempts: i32,
+    /// Each failed attempt's `{attempt, at, kind, error}`.
+    pub errors: Vec<serde_json::Value>,
+    /// The names of the steps this one waits for.
+    pub depends_on: Vec<String>,
+    pub inserted_at: DateTime<Utc>,
+    pub scheduled_at: DateTime<Utc>,
+    pub attempted_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub discarded_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+}
+
+impl Workflow {
+    /// The workflow `id` with every step, or `None` when there is no such workflow.
+    pub fn progress<'c, A>(
+        conn: A,
+        id: i64,
+        schema: Option<&'c str>,
+    ) -> futures::future::BoxFuture<'c, super::error::Result<Option<WorkflowProgress>>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        Box::pin(Self::read_progress(conn, id, schema))
+    }
+
+    async fn read_progress<'c, A>(
+        conn: A,
+        id: i64,
+        schema: Option<&'c str>,
+    ) -> super::error::Result<Option<WorkflowProgress>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        let mut conn = conn.acquire().await?;
+        let Some(workflow) = Self::get(&mut *conn, id, schema).await? else {
+            return Ok(None);
+        };
+        let table = |t: &str| crate::engine::qualified(schema, t);
+        let (jobs, deps) = (table("ishikari_jobs"), table("ishikari_job_dependencies"));
+        let steps = sqlx::query_as::<_, StepProgress>(&format!(
+            r#"
+            SELECT coalesce(j.meta->>'ishikari_step', j.id::text) AS name,
+                   j.id AS job_id, j.worker, j.state, j.attempt, j.max_attempts, j.errors,
+                   coalesce(
+                       (SELECT array_agg(coalesce(u.meta->>'ishikari_step', u.id::text) ORDER BY u.id)
+                        FROM {deps} d JOIN {jobs} u ON u.id = d.depends_on_job_id
+                        WHERE d.job_id = j.id),
+                       ARRAY[]::text[]) AS depends_on,
+                   j.inserted_at, j.scheduled_at, j.attempted_at, j.completed_at,
+                   j.discarded_at, j.cancelled_at
+            FROM {jobs} j
+            WHERE j.workflow_id = $1
+            ORDER BY j.id
+            "#
+        ))
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(Some(WorkflowProgress { workflow, steps }))
     }
 }

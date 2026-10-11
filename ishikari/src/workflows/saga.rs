@@ -32,68 +32,20 @@
 //! ```
 
 use super::error::{Error, Result};
+use super::step::{ErasedStep, StepStart};
 use super::workflow::Workflow;
 use crate::dependencies::Dependencies;
-use crate::{Job, Worker};
+use crate::Worker;
 use serde::Serialize;
-use sqlx::PgPool;
 use std::fmt::Debug;
 use tracing::info;
 
 /// A step in a saga with optional compensation.
 struct SagaStep {
     /// The forward job to execute.
-    forward: Box<dyn ErasedJob + Send + Sync>,
+    forward: Box<dyn ErasedStep>,
     /// The compensation job to run on rollback (optional).
-    compensation: Option<Box<dyn ErasedJob + Send + Sync>>,
-}
-
-/// Trait for type-erased job insertion.
-#[async_trait::async_trait]
-trait ErasedJob: Debug + Send + Sync {
-    /// Insert the job into the database and return the job.
-    async fn insert_job(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-        has_dependencies: bool,
-    ) -> std::result::Result<Job, sqlx::Error>;
-
-    /// Insert a compensation job into the database.
-    /// Compensation jobs are scheduled far in the future so they won't be
-    /// automatically picked up by the Stager.
-    async fn insert_as_compensation(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-    ) -> std::result::Result<Job, sqlx::Error>;
-}
-
-#[async_trait::async_trait]
-impl<J> ErasedJob for J
-where
-    J: Debug + Serialize + Worker + Send + Sync + Clone + 'static,
-{
-    async fn insert_job(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-        has_dependencies: bool,
-    ) -> std::result::Result<Job, sqlx::Error> {
-        insert_job_with_workflow(pool, self.clone(), workflow_id, schema, has_dependencies).await
-    }
-
-    async fn insert_as_compensation(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-    ) -> std::result::Result<Job, sqlx::Error> {
-        insert_compensation_job(pool, self.clone(), workflow_id, schema).await
-    }
+    compensation: Option<Box<dyn ErasedStep>>,
 }
 
 impl Debug for SagaStep {
@@ -109,7 +61,7 @@ impl Debug for SagaStep {
 #[must_use = "SagaStepBuilder does nothing until run() is called"]
 pub struct SagaStepBuilder {
     saga: Saga,
-    forward: Box<dyn ErasedJob + Send + Sync>,
+    forward: Box<dyn ErasedStep>,
 }
 
 impl SagaStepBuilder {
@@ -157,8 +109,11 @@ impl SagaStepBuilder {
     }
 
     /// Execute the saga.
-    pub async fn run(self, pool: &PgPool) -> Result<Workflow> {
-        self.no_compensate().run(pool).await
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        self.no_compensate().run(conn)
     }
 }
 
@@ -259,7 +214,18 @@ impl Saga {
     /// # Returns
     ///
     /// Returns the created workflow on success.
-    pub async fn run(self, pool: &PgPool) -> Result<Workflow> {
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        // Boxed so it can be awaited inside a worker's `perform` (a Send future).
+        Box::pin(self.insert(conn))
+    }
+
+    async fn insert<'c, A>(self, conn: A) -> Result<Workflow>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
         if self.steps.is_empty() {
             return Err(Error::InvalidWorkflowState {
                 id: 0,
@@ -269,9 +235,11 @@ impl Saga {
         }
 
         let schema = self.schema.as_deref();
+        // One transaction (a savepoint inside the caller's): all of the saga, or none.
+        let mut conn = conn.acquire().await?;
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
 
-        // Create the workflow
-        let workflow = Workflow::create(pool, &self.name, self.metadata, schema).await?;
+        let workflow = Workflow::create(&mut *tx, &self.name, self.metadata, schema).await?;
 
         info!(
             workflow_id = workflow.id,
@@ -280,18 +248,20 @@ impl Saga {
             "starting saga"
         );
 
-        // Insert all forward jobs and track saga steps
+        // Each forward step waits for the one before it. Steps are named by position, from 1;
+        // a step's compensation is "compensate-{n}".
         let mut prev_job_id: Option<i64> = None;
-
         for (step_order, step) in self.steps.iter().enumerate() {
-            let has_dependencies = prev_job_id.is_some();
-
-            // Insert the forward job
+            let start = if prev_job_id.is_some() {
+                StepStart::Waiting
+            } else {
+                StepStart::Ready
+            };
+            let name = (step_order + 1).to_string();
             let forward_job = step
                 .forward
-                .insert_job(pool, workflow.id, schema, has_dependencies)
+                .insert_step(&mut tx, schema, workflow.id, &name, start)
                 .await?;
-
             info!(
                 workflow_id = workflow.id,
                 job_id = forward_job.id,
@@ -299,35 +269,29 @@ impl Saga {
                 "inserted saga forward step"
             );
 
-            // If there's a previous job, add a dependency
             if let Some(prev_id) = prev_job_id {
-                Dependencies::add(pool, forward_job.id, prev_id, schema).await?;
+                Dependencies::add(&mut *tx, forward_job.id, prev_id, schema).await?;
             }
 
-            // Insert the compensation job (if any) scheduled far in the future.
-            // It will only run if triggered by the resolver during rollback.
-            let compensation_job_id = if let Some(ref comp) = step.compensation {
-                // Compensation jobs are scheduled to year 3000 so they won't be
-                // picked up by the Stager. Only released explicitly during rollback.
-                let comp_job = comp
-                    .insert_as_compensation(pool, workflow.id, schema)
-                    .await?;
-
-                info!(
-                    workflow_id = workflow.id,
-                    job_id = comp_job.id,
-                    step = step_order,
-                    "inserted saga compensation step"
-                );
-
-                Some(comp_job.id)
-            } else {
-                None
+            // The compensation waits, parked, until a rollback releases it.
+            let compensation_job_id = match &step.compensation {
+                Some(comp) => {
+                    let comp_job = comp
+                        .insert_step(
+                            &mut tx,
+                            schema,
+                            workflow.id,
+                            &format!("compensate-{name}"),
+                            StepStart::Compensation,
+                        )
+                        .await?;
+                    Some(comp_job.id)
+                }
+                None => None,
             };
 
-            // Record the saga step
             insert_saga_step(
-                pool,
+                &mut tx,
                 workflow.id,
                 forward_job.id,
                 compensation_job_id,
@@ -339,13 +303,14 @@ impl Saga {
             prev_job_id = Some(forward_job.id);
         }
 
+        tx.commit().await?;
         Ok(workflow)
     }
 }
 
 /// Insert a saga step record.
 async fn insert_saga_step(
-    pool: &PgPool,
+    pool: &mut sqlx::PgConnection,
     workflow_id: i64,
     job_id: i64,
     compensation_job_id: Option<i64>,
@@ -376,112 +341,10 @@ async fn insert_saga_step(
     Ok(())
 }
 
-/// Insert a job with a workflow ID.
-async fn insert_job_with_workflow<J>(
-    pool: &PgPool,
-    job: J,
-    workflow_id: i64,
-    schema: Option<&str>,
-    has_dependencies: bool,
-) -> std::result::Result<Job, sqlx::Error>
-where
-    J: Debug + Serialize + Worker + Send + Sync + 'static,
-{
-    insert_job_impl(pool, job, workflow_id, schema, has_dependencies, false).await
-}
-
-/// Insert a compensation job with a workflow ID.
-/// Compensation jobs are scheduled far in the future so they won't be picked up
-/// by the Stager. They're only released explicitly during saga compensation.
-async fn insert_compensation_job<J>(
-    pool: &PgPool,
-    job: J,
-    workflow_id: i64,
-    schema: Option<&str>,
-) -> std::result::Result<Job, sqlx::Error>
-where
-    J: Debug + Serialize + Worker + Send + Sync + 'static,
-{
-    insert_job_impl(pool, job, workflow_id, schema, true, true).await
-}
-
-/// Internal job insertion with compensation flag.
-async fn insert_job_impl<J>(
-    pool: &PgPool,
-    job: J,
-    workflow_id: i64,
-    schema: Option<&str>,
-    has_dependencies: bool,
-    is_compensation: bool,
-) -> std::result::Result<Job, sqlx::Error>
-where
-    J: Debug + Serialize + Worker + Send + Sync + 'static,
-{
-    let table_name = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let state = if has_dependencies {
-        "scheduled"
-    } else {
-        "available"
-    };
-
-    let enum_type = match schema {
-        Some(s) => format!("{}.ishikari_job_state", s),
-        None => "ishikari_job_state".to_string(),
-    };
-
-    let args =
-        serde_json::to_value(&job as &dyn Worker).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-    // Compensation jobs are scheduled far in the future (year 3000) so they won't
-    // be picked up by the Stager. They're only released explicitly during rollback.
-    if is_compensation {
-        let query = format!(
-            r#"
-            INSERT INTO {} (queue, worker, args, max_attempts, workflow_id, state, scheduled_at)
-            VALUES ($1, $2, $3, $4, $5, $6::{}, '3000-01-01'::timestamptz)
-            RETURNING *
-            "#,
-            table_name, enum_type
-        );
-
-        sqlx::query_as::<_, Job>(&query)
-            .bind(job.queue())
-            .bind(J::worker())
-            .bind(args)
-            .bind(job.max_attempts())
-            .bind(workflow_id)
-            .bind(state)
-            .fetch_one(pool)
-            .await
-    } else {
-        let query = format!(
-            r#"
-            INSERT INTO {} (queue, worker, args, max_attempts, workflow_id, state)
-            VALUES ($1, $2, $3, $4, $5, $6::{})
-            RETURNING *
-            "#,
-            table_name, enum_type
-        );
-
-        sqlx::query_as::<_, Job>(&query)
-            .bind(job.queue())
-            .bind(J::worker())
-            .bind(args)
-            .bind(job.max_attempts())
-            .bind(workflow_id)
-            .bind(state)
-            .fetch_one(pool)
-            .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Job;
     use serde_json::json;
 
     // Dummy job for testing - only implements ErasedJob directly
@@ -489,22 +352,14 @@ mod tests {
     struct DummyJob;
 
     #[async_trait::async_trait]
-    impl ErasedJob for DummyJob {
-        async fn insert_job(
+    impl ErasedStep for DummyJob {
+        async fn insert_step(
             &self,
-            _pool: &PgPool,
-            _workflow_id: i64,
+            _conn: &mut sqlx::PgConnection,
             _schema: Option<&str>,
-            _has_dependencies: bool,
-        ) -> std::result::Result<Job, sqlx::Error> {
-            unimplemented!("DummyJob is only for validation tests")
-        }
-
-        async fn insert_as_compensation(
-            &self,
-            _pool: &PgPool,
             _workflow_id: i64,
-            _schema: Option<&str>,
+            _name: &str,
+            _start: StepStart,
         ) -> std::result::Result<Job, sqlx::Error> {
             unimplemented!("DummyJob is only for validation tests")
         }

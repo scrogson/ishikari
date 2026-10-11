@@ -15,6 +15,7 @@
             <legend class="fieldset-legend">State</legend>
             <select name="state" class="select select-sm w-full" hx-get="{{ base_path }}/api/jobs" hx-target="#jobs-table" hx-trigger="change" hx-include="#jobs-filter-form">
                 <option value="">All States</option>
+                <option value="pending" {% if current_state.as_deref() == Some("pending") %}selected{% endif %}>Pending (waiting on dependencies)</option>
                 <option value="available" {% if current_state.as_deref() == Some("available") %}selected{% endif %}>Available</option>
                 <option value="scheduled" {% if current_state.as_deref() == Some("scheduled") %}selected{% endif %}>Scheduled</option>
                 <option value="executing" {% if current_state.as_deref() == Some("executing") %}selected{% endif %}>Executing</option>

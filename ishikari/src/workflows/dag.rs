@@ -20,11 +20,11 @@
 //! ```
 
 use super::error::{Error, Result};
+use super::step::{ErasedStep, StepStart};
 use super::workflow::Workflow;
 use crate::dependencies::Dependencies;
-use crate::{Job, Worker};
+use crate::Worker;
 use serde::Serialize;
-use sqlx::PgPool;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use tracing::info;
@@ -34,38 +34,9 @@ struct DagStep {
     /// The name of this step (for referencing in dependencies).
     name: String,
     /// The job to execute for this step.
-    job: Box<dyn ErasedJob + Send + Sync>,
+    job: Box<dyn ErasedStep>,
     /// Names of steps this step depends on.
     depends_on: Vec<String>,
-}
-
-/// Trait for type-erased job insertion.
-#[async_trait::async_trait]
-trait ErasedJob: Debug + Send + Sync {
-    /// Insert the job into the database and return the job.
-    async fn insert_job(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-        has_dependencies: bool,
-    ) -> std::result::Result<Job, sqlx::Error>;
-}
-
-#[async_trait::async_trait]
-impl<J> ErasedJob for J
-where
-    J: Debug + Serialize + Worker + Send + Sync + Clone + 'static,
-{
-    async fn insert_job(
-        &self,
-        pool: &PgPool,
-        workflow_id: i64,
-        schema: Option<&str>,
-        has_dependencies: bool,
-    ) -> std::result::Result<Job, sqlx::Error> {
-        insert_job_with_workflow(pool, self.clone(), workflow_id, schema, has_dependencies).await
-    }
 }
 
 impl Debug for DagStep {
@@ -267,7 +238,18 @@ impl Dag {
     /// - A dependency references a non-existent step
     /// - The Dag contains a cycle
     /// - Database operations fail
-    pub async fn run(self, pool: &PgPool) -> Result<Workflow> {
+    pub fn run<'c, A>(self, conn: A) -> futures::future::BoxFuture<'c, Result<Workflow>>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
+        // Boxed so it can be awaited inside a worker's `perform` (a Send future).
+        Box::pin(self.insert(conn))
+    }
+
+    async fn insert<'c, A>(self, conn: A) -> Result<Workflow>
+    where
+        A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
+    {
         if self.steps.is_empty() {
             return Err(Error::InvalidWorkflowState {
                 id: 0,
@@ -280,9 +262,11 @@ impl Dag {
         self.validate()?;
 
         let schema = self.schema.as_deref();
+        // One transaction (a savepoint inside the caller's): all of the workflow, or none.
+        let mut conn = conn.acquire().await?;
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
 
-        // Create the workflow
-        let workflow = Workflow::create(pool, &self.name, self.metadata, schema).await?;
+        let workflow = Workflow::create(&mut *tx, &self.name, self.metadata, schema).await?;
 
         info!(
             workflow_id = workflow.id,
@@ -293,104 +277,37 @@ impl Dag {
 
         // Insert all jobs and track their IDs by name
         let mut job_ids: HashMap<String, i64> = HashMap::new();
-
         for step in &self.steps {
-            let has_dependencies = !step.depends_on.is_empty();
-
-            // Insert the job
+            let start = if step.depends_on.is_empty() {
+                StepStart::Ready
+            } else {
+                StepStart::Waiting
+            };
             let job = step
                 .job
-                .insert_job(pool, workflow.id, schema, has_dependencies)
+                .insert_step(&mut tx, schema, workflow.id, &step.name, start)
                 .await?;
-
-            info!(
-                workflow_id = workflow.id,
-                job_id = job.id,
-                step = %step.name,
-                has_dependencies = has_dependencies,
-                "inserted Dag step"
-            );
-
+            info!(workflow_id = workflow.id, job_id = job.id, step = %step.name, "inserted Dag step");
             job_ids.insert(step.name.clone(), job.id);
         }
 
         // Create dependencies
         for step in &self.steps {
             let job_id = job_ids[&step.name];
-
             for dep_name in &step.depends_on {
-                let dep_job_id = job_ids[dep_name];
-
-                Dependencies::add(pool, job_id, dep_job_id, schema).await?;
-
-                info!(
-                    workflow_id = workflow.id,
-                    job_id = job_id,
-                    depends_on = dep_job_id,
-                    step = %step.name,
-                    dep_step = %dep_name,
-                    "added dependency"
-                );
+                Dependencies::add(&mut *tx, job_id, job_ids[dep_name], schema).await?;
             }
         }
 
+        tx.commit().await?;
         Ok(workflow)
     }
-}
-
-/// Insert a job with a workflow ID.
-async fn insert_job_with_workflow<J>(
-    pool: &PgPool,
-    job: J,
-    workflow_id: i64,
-    schema: Option<&str>,
-    has_dependencies: bool,
-) -> std::result::Result<Job, sqlx::Error>
-where
-    J: Debug + Serialize + Worker + Send + Sync + 'static,
-{
-    let table_name = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let state = if has_dependencies {
-        "scheduled"
-    } else {
-        "available"
-    };
-
-    let enum_type = match schema {
-        Some(s) => format!("{}.ishikari_job_state", s),
-        None => "ishikari_job_state".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        INSERT INTO {} (queue, worker, args, max_attempts, workflow_id, state)
-        VALUES ($1, $2, $3, $4, $5, $6::{})
-        RETURNING *
-        "#,
-        table_name, enum_type
-    );
-
-    let args =
-        serde_json::to_value(&job as &dyn Worker).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-    sqlx::query_as::<_, Job>(&query)
-        .bind(job.queue())
-        .bind(J::worker())
-        .bind(args)
-        .bind(job.max_attempts())
-        .bind(workflow_id)
-        .bind(state)
-        .fetch_one(pool)
-        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Job;
 
     #[test]
     fn test_cycle_detection() {
@@ -478,13 +395,14 @@ mod tests {
     struct DummyJob;
 
     #[async_trait::async_trait]
-    impl ErasedJob for DummyJob {
-        async fn insert_job(
+    impl ErasedStep for DummyJob {
+        async fn insert_step(
             &self,
-            _pool: &PgPool,
-            _workflow_id: i64,
+            _conn: &mut sqlx::PgConnection,
             _schema: Option<&str>,
-            _has_dependencies: bool,
+            _workflow_id: i64,
+            _name: &str,
+            _start: StepStart,
         ) -> std::result::Result<Job, sqlx::Error> {
             unimplemented!("DummyJob is only for validation tests")
         }

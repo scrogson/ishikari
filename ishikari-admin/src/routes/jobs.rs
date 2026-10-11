@@ -113,6 +113,7 @@ impl EnhancedJobInfo {
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
             "available" => "badge-primary",
+            "pending" => "badge-neutral",
             "scheduled" => "badge-secondary",
             "executing" => "badge-info",
             "completed" => "badge-success",
@@ -215,6 +216,7 @@ impl EnhancedJobDetail {
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
             "available" => "badge-primary",
+            "pending" => "badge-neutral",
             "scheduled" => "badge-secondary",
             "executing" => "badge-info",
             "completed" => "badge-success",
@@ -273,19 +275,30 @@ impl EnhancedJobDetail {
             .filter_map(|(i, e)| {
                 if e.is_null() {
                     None
-                } else {
-                    let msg = if let Some(s) = e.as_str() {
-                        s.to_string()
-                    } else if let Some(obj) = e.as_object() {
-                        obj.get("message")
-                            .or_else(|| obj.get("error"))
-                            .or_else(|| obj.get("reason"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| e.to_string())
-                    } else {
-                        e.to_string()
+                } else if let Some(obj) = e.as_object() {
+                    // An error record: {attempt, at, kind, error}.
+                    let attempt = obj
+                        .get("attempt")
+                        .and_then(|a| a.as_i64())
+                        .map(|a| a as i32)
+                        .unwrap_or((i + 1) as i32);
+                    let text = obj
+                        .get("message")
+                        .or_else(|| obj.get("error"))
+                        .or_else(|| obj.get("reason"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| e.to_string());
+                    let msg = match obj.get("kind").and_then(|k| k.as_str()) {
+                        Some(kind) if kind != "error" => format!("{kind}: {text}"),
+                        _ => text,
                     };
+                    Some((attempt, msg))
+                } else {
+                    let msg = e
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| e.to_string());
                     Some(((i + 1) as i32, msg))
                 }
             })
@@ -354,6 +367,7 @@ impl JobDependency {
     pub fn job_state_class(&self) -> &'static str {
         match self.job_state.as_str() {
             "available" => "badge-primary",
+            "pending" => "badge-neutral",
             "scheduled" => "badge-secondary",
             "executing" => "badge-info",
             "completed" => "badge-success",

@@ -39,7 +39,6 @@ use axum::{
 };
 use sqlx::PgPool;
 use std::sync::Arc;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 pub mod routes;
@@ -260,8 +259,6 @@ pub fn app(state: AppState) -> Router {
         .route("/builder", get(routes::frontend::serve_builder))
         // Embedded CSS/JS for the admin UI
         .route("/assets/{file}", get(routes::assets::serve))
-        // Static files
-        .nest_service("/static", ServeDir::new("static"))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

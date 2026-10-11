@@ -1,0 +1,5 @@
+error: expected a duration such as "500ms", "30s", "5m" or "1h"
+ --> tests/ui/bad_timeout.rs:7:30
+  |
+7 | #[ishikari::worker(timeout = "soon")]
+  |                              ^^^^^^

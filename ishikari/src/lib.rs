@@ -65,73 +65,18 @@
 //!
 //! ## Queue Management
 //!
-//! Jobs are processed through queues, which handle the scheduling and execution:
+//! Jobs are processed through queues, run by an [`Engine`]:
 //!
 //! ```rust,no_run
-//! use ishikari::{Queue, Storage, Job};
-//! use std::sync::Arc;
+//! use ishikari::{Engine, Postgres, Queue};
 //! use std::time::Duration;
-//! use async_trait::async_trait;
-//! use chrono::{DateTime, Utc};
 //!
-//! struct MyStorage;
-//!
-//! #[async_trait]
-//! impl Storage for MyStorage {
-//!     type Error = std::io::Error;
-//!     
-//!     async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn complete_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn discard_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn error_job(&self, id: i64, error: &str, next_retry: DateTime<Utc>) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn retry_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn snooze_job(&self, id: i64, seconds: u64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//!     
-//!     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//!     
-//!     async fn stage_jobs(&self, limit: i32) -> Result<usize, Self::Error> {
-//!         Ok(0)
-//!     }
-//!     
-//!     async fn fetch_and_execute_jobs(&self, queue: &str, schema: Option<&str>, limit: i32) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//! }
-//!
-//! async fn setup_queue() {
-//!     let storage = Arc::new(MyStorage);
-//!     let state = Arc::new(());
-//!
-//!     let queue = Queue::builder("my_queue")
-//!         .concurrency(5)
-//!         .interval(Duration::from_secs(1))
-//!         .build(storage, state);
-//!
-//!     queue.start();
-//! }
+//! # async fn example(pool: sqlx::PgPool) {
+//! let engine = Engine::builder("my-app")
+//!     .with_queue(Queue::builder("default").concurrency(5))
+//!     .with_queue(Queue::builder("email").concurrency(2).interval(Duration::from_millis(500)))
+//!     .start(Postgres::new(pool));
+//! # }
 //! ```
 //!
 //! ## Error Handling
@@ -175,69 +120,18 @@
 //! }
 //! ```
 //!
-//! ## Storage Backends
+//! ## Storage
 //!
-//! Ishikari supports different storage backends through the `Storage` trait:
-//!
-//! ```rust,no_run
-//! use ishikari::{Storage, Job};
-//! use async_trait::async_trait;
-//! use chrono::{DateTime, Utc};
-//!
-//! struct MyStorage;
-//!
-//! #[async_trait]
-//! impl Storage for MyStorage {
-//!     type Error = std::io::Error;
-//!     
-//!     async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn complete_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn discard_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn error_job(&self, id: i64, error: &str, next_retry: DateTime<Utc>) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn retry_job(&self, id: i64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn snooze_job(&self, id: i64, seconds: u64) -> Result<(), Self::Error> {
-//!         Ok(())
-//!     }
-//!     
-//!     async fn fetch_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//!     
-//!     async fn prune_jobs(&self) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//!     
-//!     async fn stage_jobs(&self, limit: i32) -> Result<usize, Self::Error> {
-//!         Ok(0)
-//!     }
-//!     
-//!     async fn fetch_and_execute_jobs(&self, queue: &str, schema: Option<&str>, limit: i32) -> Result<Vec<Job>, Self::Error> {
-//!         Ok(vec![])
-//!     }
-//! }
-//! ```
+//! Jobs live in Postgres, in the connection's default schema or in one given with
+//! [`EngineBuilder::schema`] (or [`Postgres::with_schema`]). [`migrations`] holds the schema's
+//! SQL.
 //!
 //! # Features
 //!
 //! - **Flexible Job Types**: Define custom job types with the `Worker` trait
 //! - **Configurable Queues**: Control concurrency and polling intervals
 //! - **Robust Error Handling**: Built-in support for retries and error reporting
-//! - **Extensible Storage**: Implement custom storage backends
+//! - **Postgres-backed**: Jobs are rows, inserted in the same transaction as your own writes
 //! - **Async Support**: Built on async/await for efficient resource usage
 //!
 //! # Examples
@@ -249,15 +143,21 @@
 // clippy (1.99+) flags as `double_must_use` in the generated code.
 #![allow(clippy::double_must_use)]
 
+// Lets `#[ishikari::job]` (which names `::ishikari`) be used inside this crate's own tests.
+extern crate self as ishikari;
+
 use chrono::{DateTime, Duration, Utc};
+/// Time zones for [`Cron::timezone`].
+pub use chrono_tz;
 use rand::Rng;
 #[doc(hidden)]
 pub use serde;
 use serde::Serialize;
-use sqlx::FromRow;
-use sqlx::PgExecutor;
 
+mod cron;
 mod engine;
+mod insert;
+pub mod migrations;
 mod model;
 mod queue;
 mod result;
@@ -274,9 +174,11 @@ pub mod execution;
 
 pub use ishikari_macros::{job, worker};
 
-pub use engine::{Engine, EngineBuilder, Postgres, Storage};
+pub use cron::{Cron, CronError};
+pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres, Shutdown};
+pub use insert::{insert_all, insert_with, InsertOpts, Inserted, Unique};
 pub use model::{Job, JobState};
-pub use queue::Queue;
+pub use queue::{Queue, QueueStop};
 pub use result::{Cancel, Complete, PerformError, PerformResult, Snooze, Status};
 pub use stager::Stager;
 
@@ -329,7 +231,6 @@ impl Backoff {
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{info, instrument};
 
 /// A context for a worker that provides access to job data and shared state.
 ///
@@ -658,6 +559,18 @@ pub trait Worker: Send + Sync {
         Backoff::Exponential(Duration::seconds(5)).next_retry(attempt)
     }
 
+    /// Uniqueness for jobs of this type when the insert doesn't set any (see [`Unique`]).
+    /// `None` (the default) inserts every job.
+    fn unique(&self) -> Option<Unique> {
+        None
+    }
+
+    /// How long one attempt may run. When it runs longer, the attempt fails with a timeout
+    /// error and is retried like any other error. `None` (the default) lets it run.
+    fn timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Performs the actual job processing.
     ///
     /// This is the main method that implements the job's business logic. It receives
@@ -801,29 +714,18 @@ pub trait Worker: Send + Sync {
 /// #   Ok(())
 /// # }
 /// ```
-#[instrument(skip(executor))]
-pub async fn insert<'a, J, E>(job: J, executor: E) -> Result<Job, sqlx::Error>
+/// Insert a job with the worker's options. Returns the new job, or the existing one when the
+/// worker is [unique](Worker::unique) and a matching job is held; [`insert_with`] tells them
+/// apart and takes options.
+///
+/// `conn` can be a pool, a connection or a transaction (`&mut *tx`).
+pub fn insert<'c, J, A>(job: J, conn: A) -> futures::future::BoxFuture<'c, Result<Job, sqlx::Error>>
 where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
-    E: PgExecutor<'a>,
+    A: sqlx::Acquire<'c, Database = sqlx::Postgres> + Send + 'c,
 {
-    // Serialize the job args, returning error if serialization fails
-    let args =
-        serde_json::to_value(&job as &dyn Worker).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-    let row = sqlx::query(r#"insert into ishikari_jobs (queue, worker, args, max_attempts) values ($1, $2, $3, $4) returning *"#)
-        .bind(job.queue())
-        .bind(J::worker())
-        .bind(args)
-        .bind(job.max_attempts())
-        .fetch_one(executor)
-        .await?;
-
-    let inserted = Job::from_row(&row)?;
-
-    info!("Job inserted id={}, args={:?}", inserted.id, job);
-
-    Ok(inserted)
+    let inserted = insert_with(job, InsertOpts::new(), conn);
+    Box::pin(async move { inserted.await.map(Inserted::into_job) })
 }
 
 #[cfg(test)]
