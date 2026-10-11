@@ -148,9 +148,9 @@ use rand::Rng;
 #[doc(hidden)]
 pub use serde;
 use serde::Serialize;
-use sqlx::PgExecutor;
 
 mod engine;
+mod insert;
 pub mod migrations;
 mod model;
 mod queue;
@@ -169,6 +169,7 @@ pub mod execution;
 pub use ishikari_macros::{job, worker};
 
 pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres, Shutdown};
+pub use insert::{insert_all, insert_with, InsertOpts, Inserted, Unique};
 pub use model::{Job, JobState};
 pub use queue::{Queue, QueueStop};
 pub use result::{Cancel, Complete, PerformError, PerformResult, Snooze, Status};
@@ -223,7 +224,7 @@ impl Backoff {
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 /// A context for a worker that provides access to job data and shared state.
 ///
@@ -552,6 +553,12 @@ pub trait Worker: Send + Sync {
         Backoff::Exponential(Duration::seconds(5)).next_retry(attempt)
     }
 
+    /// Uniqueness for jobs of this type when the insert doesn't set any (see [`Unique`]).
+    /// `None` (the default) inserts every job.
+    fn unique(&self) -> Option<Unique> {
+        None
+    }
+
     /// How long one attempt may run. When it runs longer, the attempt fails with a timeout
     /// error and is retried like any other error. `None` (the default) lets it run.
     fn timeout(&self) -> Option<std::time::Duration> {
@@ -701,43 +708,20 @@ pub trait Worker: Send + Sync {
 /// #   Ok(())
 /// # }
 /// ```
-#[instrument(skip(executor))]
-pub async fn insert<'a, J, E>(job: J, executor: E) -> Result<Job, sqlx::Error>
+/// Insert a job with the worker's options. Returns the new job, or the existing one when the
+/// worker is [unique](Worker::unique) and a matching job is held; [`insert_with`] tells them
+/// apart and takes options.
+///
+/// `conn` can be a pool, a connection or a transaction (`&mut *tx`).
+#[instrument(skip(conn))]
+pub async fn insert<'c, J, A>(job: J, conn: A) -> Result<Job, sqlx::Error>
 where
     J: Debug + Serialize + Worker + Send + Sync + 'static,
-    E: PgExecutor<'a>,
+    A: sqlx::Acquire<'c, Database = sqlx::Postgres>,
 {
-    insert_into(None, job, executor).await
-}
-
-/// Insert a job into `schema` (the connection's search path when `None`).
-pub(crate) async fn insert_into<'a, J, E>(
-    schema: Option<&str>,
-    job: J,
-    executor: E,
-) -> Result<Job, sqlx::Error>
-where
-    J: Debug + Serialize + Worker + Send + Sync + 'static,
-    E: PgExecutor<'a>,
-{
-    // Serialize the job args, returning error if serialization fails
-    let args =
-        serde_json::to_value(&job as &dyn Worker).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-    let inserted = sqlx::query_as::<_, Job>(&format!(
-        "INSERT INTO {} (queue, worker, args, max_attempts) VALUES ($1, $2, $3, $4) RETURNING *",
-        engine::qualified(schema, "ishikari_jobs")
-    ))
-    .bind(job.queue())
-    .bind(J::worker())
-    .bind(args)
-    .bind(job.max_attempts())
-    .fetch_one(executor)
-    .await?;
-
-    info!("Job inserted id={}, args={:?}", inserted.id, job);
-
-    Ok(inserted)
+    insert_with(job, InsertOpts::new(), conn)
+        .await
+        .map(Inserted::into_job)
 }
 
 #[cfg(test)]
