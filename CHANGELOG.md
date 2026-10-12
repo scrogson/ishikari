@@ -2,7 +2,7 @@
 
 ## 0.2.1
 
-`ishikari-admin` only; `ishikari` is unchanged at 0.2.0.
+All four crates move to 0.2.1 together; only `ishikari-admin` changed.
 
 ### Added
 
