@@ -235,7 +235,7 @@ pub fn app(state: AppState) -> Router {
         )
         // API endpoints for htmx
         .route("/api/jobs", get(routes::api::enhanced_jobs_table))
-        .route("/api/stats", get(routes::api::stats))
+        .route("/api/stats", get(routes::api::stats_or_counts))
         .route("/api/dependencies", get(routes::api::dependencies_table))
         .route("/api/sagas", get(routes::api::sagas_table))
         .route("/api/workflows", get(routes::api::workflows_table))

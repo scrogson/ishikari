@@ -1,0 +1,96 @@
+//! A migrated schema of a test's own and requests against the admin.
+//!
+//! Uses `ISHIKARI_TEST_DATABASE_URL`, else `DATABASE_URL`; `ISHIKARI_SKIP_DB_TESTS=1` skips.
+
+#![allow(dead_code)]
+
+use axum::body::Body;
+use axum::http::Request;
+use axum::response::Response;
+use axum::Router;
+use sqlx::PgPool;
+use tower::ServiceExt;
+
+pub struct TestDb {
+    pub pool: PgPool,
+    pub schema: String,
+}
+
+impl TestDb {
+    /// A fresh, migrated schema, or `None` when database tests are switched off.
+    pub async fn new() -> Option<TestDb> {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return None;
+        }
+        let url = std::env::var("ISHIKARI_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .expect(
+                "set ISHIKARI_TEST_DATABASE_URL (or DATABASE_URL), or ISHIKARI_SKIP_DB_TESTS=1",
+            );
+        let pool = PgPool::connect(&url).await.expect("connect");
+        let schema = format!(
+            "ishikari_admin_t_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        );
+        ishikari::migrations::migrate(&pool, &schema)
+            .await
+            .expect("migrate the test schema");
+        Some(TestDb { pool, schema })
+    }
+
+    /// A job of `worker` in `state`, written directly.
+    pub async fn job(&self, worker: &str, state: &str) {
+        sqlx::query(&format!(
+            "INSERT INTO {s}.ishikari_jobs (worker, state) VALUES ($1, $2::{s}.ishikari_job_state)",
+            s = self.schema
+        ))
+        .bind(worker)
+        .bind(state)
+        .execute(&self.pool)
+        .await
+        .expect("insert a job");
+    }
+
+    /// A job of `worker` that failed for good, with `error` its last attempt's error record.
+    pub async fn discarded(&self, worker: &str, error: &str) -> i64 {
+        let record = serde_json::json!({
+            "attempt": 1, "at": "2026-10-11T12:00:00Z", "kind": "error", "error": error
+        });
+        sqlx::query_scalar(&format!(
+            "INSERT INTO {s}.ishikari_jobs (worker, state, attempt, max_attempts, errors, attempted_at, discarded_at)
+             VALUES ($1, 'discarded', 1, 1, ARRAY[$2::jsonb], now(), now()) RETURNING id",
+            s = self.schema
+        ))
+        .bind(worker)
+        .bind(record)
+        .fetch_one(&self.pool)
+        .await
+        .expect("insert a discarded job")
+    }
+
+    pub async fn drop(self) {
+        sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
+            .execute(&self.pool)
+            .await
+            .expect("drop the test schema");
+    }
+}
+
+/// GET `path` with these headers.
+pub async fn get(app: &Router, path: &str, headers: &[(&str, &str)]) -> Response {
+    let mut req = Request::get(path);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    app.clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+pub async fn body(res: Response) -> String {
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&bytes).into_owned()
+}

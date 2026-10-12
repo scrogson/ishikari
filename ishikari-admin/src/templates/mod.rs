@@ -38,6 +38,13 @@ pub struct DashboardTemplate {
     pub recent_failures: Vec<RecentFailure>,
 }
 
+/// The dashboard's job counts, refreshed in place.
+#[derive(Template, WebTemplate)]
+#[template(path = "partials/stats.html")]
+pub struct StatsPartial {
+    pub stats: JobStats,
+}
+
 /// Queues list page template.
 #[derive(Template, WebTemplate)]
 #[template(path = "queues/list.html")]

@@ -333,17 +333,17 @@ async fn fetch_failure_patterns(
     pool: &PgPool,
     table: &str,
 ) -> Result<Vec<FailurePattern>, sqlx::Error> {
-    // Extract first error type from errors array for failed jobs
+    // The kind of each discarded job's last error (`errors` is a jsonb[] of error records)
     let query = format!(
         r#"
         SELECT
             worker,
-            COALESCE(errors->-1->>'kind', 'unknown') as error_type,
+            COALESCE(errors[cardinality(errors)]->>'kind', 'unknown') as error_type,
             COUNT(*) as count,
             MAX(inserted_at) as last_seen
         FROM {}
         WHERE state = 'discarded'
-          AND jsonb_array_length(errors) > 0
+          AND cardinality(errors) > 0
         GROUP BY worker, error_type
         ORDER BY count DESC
         LIMIT 15

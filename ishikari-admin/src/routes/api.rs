@@ -4,7 +4,8 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Serialize;
@@ -20,10 +21,10 @@ use super::dependencies::{DependenciesQuery, DependencyInfo};
 use super::jobs::{get_enhanced_jobs, EnhancedJobsQuery};
 use super::sagas::{SagaInfo, SagasQuery};
 use super::workflows::{WorkflowInfo, WorkflowJobInfo, WorkflowsQuery};
-use crate::routes::dashboard::{JobStats, WorkflowStats};
+use crate::routes::dashboard::{get_stats, JobStats, WorkflowStats};
 use crate::templates::{
     DefinitionsTablePartial, DependenciesTablePartial, EnhancedJobsTablePartial, SagasTablePartial,
-    WorkflowJobsPartial, WorkflowsTablePartial,
+    StatsPartial, WorkflowJobsPartial, WorkflowsTablePartial,
 };
 use crate::AppState;
 
@@ -34,63 +35,24 @@ pub struct StatsResponse {
     pub workflows: WorkflowStats,
 }
 
-/// Get job and workflow statistics.
-pub async fn stats(State(state): State<AppState>) -> Json<StatsResponse> {
-    let jobs = get_job_stats(&state.pool, state.schema()).await;
-    let workflows = get_workflow_stats_api(&state.pool, state.schema()).await;
-    Json(StatsResponse { jobs, workflows })
+/// `/api/stats`: the job counts' HTML for htmx (the dashboard refreshing them), else
+/// [`stats`]' JSON.
+pub async fn stats_or_counts(headers: HeaderMap, state: State<AppState>) -> Response {
+    if headers.contains_key("hx-request") {
+        StatsPartial {
+            stats: get_stats(&state.pool, state.schema()).await,
+        }
+        .into_response()
+    } else {
+        stats(state).await.into_response()
+    }
 }
 
-async fn get_job_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        SELECT
-            COUNT(*) FILTER (WHERE state = 'available') as available,
-            COUNT(*) FILTER (WHERE state = 'scheduled') as scheduled,
-            COUNT(*) FILTER (WHERE state = 'executing') as executing,
-            COUNT(*) FILTER (WHERE state = 'retryable') as retryable,
-            COUNT(*) FILTER (WHERE state = 'completed') as completed,
-            COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
-            COUNT(*) FILTER (WHERE state = 'cancelled') as cancelled,
-            COUNT(*) as total
-        FROM {}
-        "#,
-        table
-    );
-
-    let row: Option<(i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-
-    match row {
-        Some((
-            available,
-            scheduled,
-            executing,
-            retryable,
-            completed,
-            discarded,
-            cancelled,
-            total,
-        )) => JobStats {
-            available,
-            scheduled,
-            executing,
-            retryable,
-            completed,
-            discarded,
-            cancelled,
-            total,
-        },
-        None => JobStats::default(),
-    }
+/// Get job and workflow statistics.
+pub async fn stats(State(state): State<AppState>) -> Json<StatsResponse> {
+    let jobs = get_stats(&state.pool, state.schema()).await;
+    let workflows = get_workflow_stats_api(&state.pool, state.schema()).await;
+    Json(StatsResponse { jobs, workflows })
 }
 
 async fn get_workflow_stats_api(pool: &PgPool, schema: Option<&str>) -> WorkflowStats {
