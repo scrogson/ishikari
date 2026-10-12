@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.1
+
+`ishikari-admin` only; `ishikari` is unchanged at 0.2.0.
+
+### Added
+
+- **The dashboard inside the host's own layout:** `app_with_layout(state, layout)` renders each
+  page through the host's `Layout` (`fn render(&self, parts: &Parts, page: Page) -> Response`).
+  It gets the request's parts, so whatever the host's auth middleware put in the extensions, and
+  the `Page`: its title, body, the dashboard's sections and the current one. htmx fragments are
+  never wrapped. `app` is unchanged: standalone pages.
+- **`admin-embed.css`** (`embed_stylesheet_href(base_path)`): the dashboard's daisyUI components
+  and Tailwind utilities without themes, reset or root styles, so the host's daisyUI theme
+  colors it. `Page::nav_html` renders the sections as a row of links for a layout.
+- **Pending on the dashboard:** the count of workflow steps waiting on their upstreams, next to
+  the other states (`JobStats::pending`).
+- Asset links carry the crate's version, so an upgrade isn't hidden behind the browser's cache.
+
+### Fixed
+
+- The dashboard's counts no longer turn into raw JSON when they refresh: `/api/stats` answers
+  htmx with the counts' HTML, and other clients with JSON as before.
+- Recent Failures on the dashboard, and the failure patterns on Analytics, were always empty:
+  their queries read the jobs' errors as JSON rather than an array of error records.
+- The queue page's state filter replaces the page's content, not the whole body.
+
 ## 0.2.0
 
 Production readiness: jobs survive restarts and crashed nodes, plus unique jobs, cron and

@@ -30,7 +30,10 @@ A workspace of four crates:
 - `ishikari` - the library
 - `ishikari-macros` - `#[ishikari::job]` and `#[ishikari::worker]` (syn 2)
 - `ishikari-cli` - `ishikari generate migration|version`
-- `ishikari-admin` - the dashboard: an axum router a host mounts behind its own auth
+- `ishikari-admin` - the dashboard: an axum router a host mounts behind its own auth, as
+  standalone pages or inside the host's layout (`Layout`, `app_with_layout`). Its CSS is built
+  from `styles/` (`mise run admin:css`) into `assets/admin.css` (with themes) and
+  `assets/admin-embed.css` (no themes, for a host's layout); both are committed.
 
 ### Core components (`ishikari/src`)
 
