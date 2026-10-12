@@ -2,6 +2,9 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
+use axum::response::{IntoResponse, Response};
+
+use crate::layout::{respond, Content};
 
 use crate::routes::analytics::Analytics;
 use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
@@ -27,9 +30,57 @@ mod filters {
     }
 }
 
+/// Pages: the standalone page as their response, their title and content blocks for a host's
+/// layout.
+macro_rules! pages {
+    ($($page:ty),* $(,)?) => {$(
+        impl Content for $page {
+            fn title(&self) -> askama::Result<String> {
+                self.as_title().render()
+            }
+            fn content(&self) -> askama::Result<String> {
+                self.as_content().render()
+            }
+            fn base_path(&self) -> &str {
+                &self.base_path
+            }
+            fn nav_items(&self) -> &[NavItem] {
+                &self.nav_items
+            }
+        }
+
+        impl IntoResponse for $page {
+            fn into_response(self) -> Response {
+                respond(self)
+            }
+        }
+    )*};
+}
+
+pages!(
+    DashboardTemplate,
+    QueuesListTemplate,
+    QueueDetailTemplate,
+    WorkflowsListTemplate,
+    WorkflowDetailTemplate,
+    DependenciesListTemplate,
+    DependencyDetailTemplate,
+    SagasListTemplate,
+    SagaDetailTemplate,
+    ResolverStatusTemplate,
+    EnhancedJobsListTemplate,
+    EnhancedJobDetailTemplate,
+    AnalyticsTemplate,
+    DefinitionsListTemplate,
+    DefinitionDetailTemplate,
+    DefinitionImportTemplate,
+    DefinitionRunTemplate,
+    DefinitionEditTemplate,
+);
+
 /// Dashboard page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "dashboard.html")]
+#[derive(Template)]
+#[template(path = "dashboard.html", blocks = ["title", "content"])]
 pub struct DashboardTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -38,9 +89,16 @@ pub struct DashboardTemplate {
     pub recent_failures: Vec<RecentFailure>,
 }
 
-/// Queues list page template.
+/// The dashboard's job counts, refreshed in place.
 #[derive(Template, WebTemplate)]
-#[template(path = "queues/list.html")]
+#[template(path = "partials/stats.html")]
+pub struct StatsPartial {
+    pub stats: JobStats,
+}
+
+/// Queues list page template.
+#[derive(Template)]
+#[template(path = "queues/list.html", blocks = ["title", "content"])]
 pub struct QueuesListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -48,8 +106,8 @@ pub struct QueuesListTemplate {
 }
 
 /// Queue detail page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "queues/show.html")]
+#[derive(Template)]
+#[template(path = "queues/show.html", blocks = ["title", "content"])]
 pub struct QueueDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -63,8 +121,8 @@ pub struct QueueDetailTemplate {
 }
 
 /// Workflows list page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "workflows/list.html")]
+#[derive(Template)]
+#[template(path = "workflows/list.html", blocks = ["title", "content"])]
 pub struct WorkflowsListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -77,8 +135,8 @@ pub struct WorkflowsListTemplate {
 }
 
 /// Workflow detail page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "workflows/show.html")]
+#[derive(Template)]
+#[template(path = "workflows/show.html", blocks = ["title", "content"])]
 pub struct WorkflowDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -105,8 +163,8 @@ pub struct WorkflowJobsPartial {
 }
 
 /// Dependencies list page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "dependencies/list.html")]
+#[derive(Template)]
+#[template(path = "dependencies/list.html", blocks = ["title", "content"])]
 pub struct DependenciesListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -120,8 +178,8 @@ pub struct DependenciesListTemplate {
 }
 
 /// Dependency detail page template (job with its dependencies).
-#[derive(Template, WebTemplate)]
-#[template(path = "dependencies/show.html")]
+#[derive(Template)]
+#[template(path = "dependencies/show.html", blocks = ["title", "content"])]
 pub struct DependencyDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -139,8 +197,8 @@ pub struct DependenciesTablePartial {
 }
 
 /// Sagas list page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "sagas/list.html")]
+#[derive(Template)]
+#[template(path = "sagas/list.html", blocks = ["title", "content"])]
 pub struct SagasListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -152,8 +210,8 @@ pub struct SagasListTemplate {
 }
 
 /// Saga detail page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "sagas/show.html")]
+#[derive(Template)]
+#[template(path = "sagas/show.html", blocks = ["title", "content"])]
 pub struct SagaDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -172,8 +230,8 @@ pub struct SagasTablePartial {
 }
 
 /// Resolver status page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "resolver/status.html")]
+#[derive(Template)]
+#[template(path = "resolver/status.html", blocks = ["title", "content"])]
 pub struct ResolverStatusTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -185,8 +243,8 @@ pub struct ResolverStatusTemplate {
 }
 
 /// Enhanced jobs list page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "jobs/list.html")]
+#[derive(Template)]
+#[template(path = "jobs/list.html", blocks = ["title", "content"])]
 pub struct EnhancedJobsListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -208,8 +266,8 @@ pub struct EnhancedJobsListTemplate {
 }
 
 /// Enhanced job detail page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "jobs/show.html")]
+#[derive(Template)]
+#[template(path = "jobs/show.html", blocks = ["title", "content"])]
 pub struct EnhancedJobDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -227,8 +285,8 @@ pub struct EnhancedJobsTablePartial {
 }
 
 /// Analytics dashboard template.
-#[derive(Template, WebTemplate)]
-#[template(path = "analytics/index.html")]
+#[derive(Template)]
+#[template(path = "analytics/index.html", blocks = ["title", "content"])]
 pub struct AnalyticsTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -236,8 +294,8 @@ pub struct AnalyticsTemplate {
 }
 
 /// Workflow definitions list page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "definitions/list.html")]
+#[derive(Template)]
+#[template(path = "definitions/list.html", blocks = ["title", "content"])]
 pub struct DefinitionsListTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -250,8 +308,8 @@ pub struct DefinitionsListTemplate {
 }
 
 /// Workflow definition detail page template.
-#[derive(Template, WebTemplate)]
-#[template(path = "definitions/show.html")]
+#[derive(Template)]
+#[template(path = "definitions/show.html", blocks = ["title", "content"])]
 pub struct DefinitionDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -259,8 +317,8 @@ pub struct DefinitionDetailTemplate {
 }
 
 /// Workflow definition import form template.
-#[derive(Template, WebTemplate)]
-#[template(path = "definitions/import.html")]
+#[derive(Template)]
+#[template(path = "definitions/import.html", blocks = ["title", "content"])]
 pub struct DefinitionImportTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -269,8 +327,8 @@ pub struct DefinitionImportTemplate {
 }
 
 /// Workflow definition run form template.
-#[derive(Template, WebTemplate)]
-#[template(path = "definitions/run.html")]
+#[derive(Template)]
+#[template(path = "definitions/run.html", blocks = ["title", "content"])]
 pub struct DefinitionRunTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
@@ -290,8 +348,8 @@ pub struct DefinitionsTablePartial {
 }
 
 /// Workflow definition editor (React SPA wrapper).
-#[derive(Template, WebTemplate)]
-#[template(path = "definitions/edit.html")]
+#[derive(Template)]
+#[template(path = "definitions/edit.html", blocks = ["title", "content"])]
 pub struct DefinitionEditTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,

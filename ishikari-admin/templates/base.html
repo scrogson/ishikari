@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Ishikari Admin{% endblock %}</title>
+    <title>{% block title %}{% endblock %} - Ishikari Admin</title>
     <script>
         // Apply saved theme before first paint to avoid a flash
         try {
@@ -11,8 +11,8 @@
             if (t) document.documentElement.dataset.theme = t;
         } catch (_) {}
     </script>
-    <link rel="stylesheet" href="{{ base_path }}/assets/admin.css">
-    <script src="{{ base_path }}/assets/htmx.min.js"></script>
+    <link rel="stylesheet" href="{{ base_path }}/assets/admin.css?v={{ crate::layout::ASSET_VERSION }}">
+    <script src="{{ base_path }}/assets/htmx.min.js?v={{ crate::layout::ASSET_VERSION }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body class="min-h-screen bg-base-200 text-base-content antialiased">
@@ -41,7 +41,7 @@
                 </label>
             </header>
 
-            <main class="{% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 lg:p-8{% endblock %}">
+            <main class="ishikari-admin {% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 lg:p-8{% endblock %}">
                 {% block content %}{% endblock %}
             </main>
         </div>
@@ -85,28 +85,6 @@
             if (best) best.classList.add("menu-active");
         })();
 
-        // Tooltip for [data-tip] elements (e.g. full worker paths). Fixed-position
-        // so it isn't clipped by scrolling table containers.
-        (function () {
-            const tip = document.createElement("div");
-            tip.className = "pointer-events-none fixed z-50 hidden max-w-lg rounded-field bg-neutral px-2 py-1 font-mono text-xs text-neutral-content shadow-lg break-all";
-            tip.setAttribute("role", "tooltip");
-            document.body.appendChild(tip);
-            function hide() { tip.classList.add("hidden"); }
-            document.addEventListener("mouseover", function (e) {
-                const el = e.target.closest("[data-tip]");
-                if (!el) return hide();
-                tip.textContent = el.dataset.tip;
-                tip.classList.remove("hidden");
-                const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
-                const left = Math.min(Math.max(8, r.left), window.innerWidth - t.width - 8);
-                const top = r.top - t.height - 6 < 8 ? r.bottom + 6 : r.top - t.height - 6;
-                tip.style.left = left + "px";
-                tip.style.top = top + "px";
-            });
-            window.addEventListener("scroll", hide, true);
-        })();
-
         // Theme toggle (dark is the default)
         (function () {
             const toggle = document.getElementById("theme-toggle");
@@ -118,5 +96,6 @@
             });
         })();
     </script>
+    <script src="{{ base_path }}/assets/admin.js?v={{ crate::layout::ASSET_VERSION }}"></script>
 </body>
 </html>

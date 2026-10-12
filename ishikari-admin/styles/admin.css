@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@import "./components.css";
 
 /* Templates, plus Rust sources that return class names (e.g. state_class()) */
 @source "../templates";
@@ -31,39 +32,11 @@
   --radius-field: 0.5rem;
 }
 
-@layer components {
-  /* Pretty-printed JSON / YAML blocks */
-  .code-block {
-    @apply bg-base-300 rounded-box p-4 overflow-x-auto font-mono text-sm leading-relaxed;
-  }
-}
-
 #sidebar-nav {
   --menu-active-bg: var(--color-primary);
   --menu-active-fg: var(--color-primary-content);
 }
 
-/* Soft neutral/ghost badges are near-invisible on dark bases; tint from base-content */
-.badge-soft.badge-neutral {
-  --badge-color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
-}
-.badge-ghost {
-  background-color: color-mix(in oklab, var(--color-base-content) 8%, transparent);
-  border-color: transparent;
-}
-
-/* Let wide content (pre, tables) scroll inside cards instead of stretching the page */
-.drawer-content,
-.card-body {
+.drawer-content {
   min-width: 0;
-}
-dd {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-[data-tip] {
-  cursor: help;
-  text-decoration: underline dotted color-mix(in oklab, currentColor 35%, transparent);
-  text-underline-offset: 3px;
 }

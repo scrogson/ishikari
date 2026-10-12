@@ -91,7 +91,7 @@ async fn get_workflow_stats(pool: &PgPool, schema: Option<&str>) -> WorkflowStat
     }
 }
 
-/// Job statistics by state.
+/// Job statistics by state. `total` counts every job, [`pending`](Self::pending) ones included.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct JobStats {
     pub available: i64,
@@ -104,8 +104,25 @@ pub struct JobStats {
     pub total: i64,
 }
 
-/// Get job statistics.
-async fn get_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
+impl JobStats {
+    /// Workflow steps waiting on their upstreams: the jobs in none of the other states.
+    ///
+    /// Counted from `total` rather than kept as a field, so that the struct (which callers can
+    /// build) keeps its 0.2.0 fields.
+    pub fn pending(&self) -> i64 {
+        let others = self.available
+            + self.scheduled
+            + self.executing
+            + self.retryable
+            + self.completed
+            + self.discarded
+            + self.cancelled;
+        (self.total - others).max(0)
+    }
+}
+
+/// Get job statistics, all from one snapshot (so `total` minus the rest is the pending jobs).
+pub(crate) async fn get_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
     let table = match schema {
         Some(s) => format!("{}.ishikari_jobs", s),
         None => "ishikari_jobs".to_string(),
@@ -180,10 +197,11 @@ async fn get_recent_failures(
 
     let query = format!(
         r#"
-        SELECT id, worker, queue, errors->-1->>'message' as error, updated_at
+        SELECT id, worker, queue, errors[cardinality(errors)]->>'error' as error,
+            COALESCE(discarded_at, attempted_at, inserted_at) as failed_at
         FROM {}
         WHERE state IN ('discarded', 'retryable')
-        ORDER BY updated_at DESC
+        ORDER BY failed_at DESC
         LIMIT $1
         "#,
         table
@@ -199,7 +217,10 @@ async fn get_recent_failures(
         .bind(limit)
         .fetch_all(pool)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "reading recent failures");
+            Vec::new()
+        });
 
     rows.into_iter()
         .map(|(id, worker, queue, error, failed_at)| RecentFailure {

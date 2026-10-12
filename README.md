@@ -172,6 +172,38 @@ let app = Router::new()
     .layer(axum::middleware::from_fn(require_admin)); // your auth
 ```
 
+Each page is a standalone page with its own sidebar and light/dark theme. To show the pages inside
+your app's admin instead (your header, navigation and daisyUI 5 theme), implement `Layout` and
+build the router with `app_with_layout`:
+
+```rust
+use ishikari_admin::{embed_stylesheet_href, Layout, Page};
+
+struct MyAdmin;
+
+impl Layout for MyAdmin {
+    // `parts` is the request: its extensions carry what your auth middleware put there.
+    fn render(&self, parts: &Parts, page: Page) -> Response {
+        let Some(user) = parts.extensions.get::<User>() else {
+            return StatusCode::UNAUTHORIZED.into_response();
+        };
+        // Your page, with in <head> your theme, htmx 2 and
+        // <link rel="stylesheet" href="{embed_stylesheet_href(&page.base_path)}">,
+        // and in your main area `page.nav_html()` (the dashboard's sections) and `page.body`.
+        my_admin_page(user, &page.title, &page.nav_html(), &page.body)
+    }
+}
+
+let admin = ishikari_admin::app_with_layout(
+    ishikari_admin::AppState::new(pool.clone()).with_base_path("/jobs"),
+    MyAdmin,
+);
+```
+
+The embed stylesheet has the dashboard's daisyUI components and Tailwind utilities but no themes
+and no reset, so your theme colors it; your page brings Tailwind's preflight (or its own reset).
+htmx fragments (the tables and counts that refresh in place) never go through the layout.
+
 ## Development
 
 Tests run against a real Postgres. Each test makes and drops a schema of its own.

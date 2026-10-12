@@ -2,14 +2,15 @@
 
 {% macro stat(label, value, color) %}
 <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">{{ label }}</div>
+    <div class="truncate text-xs font-medium text-base-content/60">{{ label }}</div>
     <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
 </div>
 {% endmacro %}
 
-{% block title %}{{ queue_name }} Queue - Ishikari Admin{% endblock %}
+{% block title %}{{ queue_name }} Queue{% endblock %}
 
 {% block content %}
+<div id="queue-page" class="space-y-6">
 <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
         <h1 class="text-2xl font-bold tracking-tight">Queue: {{ queue_name }}</h1>
@@ -33,7 +34,7 @@
     <div class="card-body gap-4">
         <div class="flex flex-wrap items-end justify-between gap-4">
             <h2 class="card-title text-base">Jobs in Queue</h2>
-            <form hx-get="{{ base_path }}/queues/{{ queue_name }}" hx-target="body" hx-trigger="change" hx-push-url="true">
+            <form hx-get="{{ base_path }}/queues/{{ queue_name }}" hx-select="#queue-page" hx-target="#queue-page" hx-swap="outerHTML" hx-trigger="change" hx-push-url="true">
                 <fieldset class="fieldset py-0">
                     <legend class="fieldset-legend">State</legend>
                     <select name="state" class="select select-sm w-48">
@@ -56,4 +57,5 @@
         </div>
     </div>
 </section>
+</div>
 {% endblock %}

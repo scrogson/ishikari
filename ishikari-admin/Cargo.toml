@@ -1,6 +1,6 @@
 [package]
 name = "ishikari-admin"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Admin dashboard for ishikari job queue"
 license = "MIT"
@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 
 # Templating
-askama = "0.14"
+askama = { version = "0.14", features = ["blocks"] }
 askama_web = { version = "0.14", features = ["axum-0.8"] }
 
 # Serialization

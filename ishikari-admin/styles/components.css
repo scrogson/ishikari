@@ -1,0 +1,34 @@
+/* The dashboard's own rules, for both stylesheets. Scoped to its pages' wrapper so a host
+   page embedding them keeps its own. */
+
+@layer components {
+  /* Pretty-printed JSON / YAML blocks */
+  .ishikari-admin .code-block {
+    @apply bg-base-300 rounded-box p-4 overflow-x-auto font-mono text-sm leading-relaxed;
+  }
+}
+
+/* Soft neutral/ghost badges are near-invisible on dark bases; tint from base-content */
+.ishikari-admin .badge-soft.badge-neutral {
+  --badge-color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+}
+.ishikari-admin .badge-ghost {
+  background-color: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  border-color: transparent;
+}
+
+/* Let wide content (pre, tables) scroll inside cards instead of stretching the page */
+.ishikari-admin,
+.ishikari-admin .card-body {
+  min-width: 0;
+}
+.ishikari-admin dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ishikari-admin [data-tip] {
+  cursor: help;
+  text-decoration: underline dotted color-mix(in oklab, currentColor 35%, transparent);
+  text-underline-offset: 3px;
+}

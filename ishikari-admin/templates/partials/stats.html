@@ -1,13 +1,14 @@
 {% macro stat(label, value, color) %}
 <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">{{ label }}</div>
+    <div class="truncate text-xs font-medium text-base-content/60">{{ label }}</div>
     <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
 </div>
 {% endmacro %}
-<div class="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-8">
+<div class="grid grid-cols-3 gap-3 sm:gap-4 xl:grid-cols-9">
     {% call stat("Available", stats.available, "text-primary") %}
     {% call stat("Executing", stats.executing, "text-info") %}
     {% call stat("Scheduled", stats.scheduled, "text-secondary") %}
+    {% call stat("Pending", stats.pending(), "text-base-content/70") %}
     {% call stat("Retryable", stats.retryable, "text-warning") %}
     {% call stat("Completed", stats.completed, "text-success") %}
     {% call stat("Discarded", stats.discarded, "text-error") %}
