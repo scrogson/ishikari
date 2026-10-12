@@ -2,7 +2,7 @@
 
 {% macro stat(label, value, color) %}
 <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-    <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">{{ label }}</div>
+    <div class="truncate text-xs font-medium text-base-content/60">{{ label }}</div>
     <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
 </div>
 {% endmacro %}

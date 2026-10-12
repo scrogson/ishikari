@@ -36,6 +36,36 @@ async fn the_dashboards_refresh_gets_the_counts_as_html() {
     db.drop().await;
 }
 
+/// Workflow steps waiting on their upstreams are counted on their own.
+#[tokio::test]
+async fn the_dashboard_counts_pending_jobs() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    db.job("app::workers::Step", "pending").await;
+    db.job("app::workers::Step", "pending").await;
+    db.job("app::workers::Step", "available").await;
+    let app = ishikari_admin::app(AppState::with_schema(db.pool.clone(), &db.schema));
+
+    let html = body(get(&app, "/", &[]).await).await;
+    let pending = html
+        .split(">Pending</div>")
+        .nth(1)
+        .expect("a Pending count");
+    let count = pending.split("</div>").next().unwrap();
+    assert!(count.trim_end().ends_with(">2"), "{count}");
+
+    let html = body(get(&app, "/api/stats", &[("hx-request", "true")]).await).await;
+    let pending = html
+        .split(">Pending</div>")
+        .nth(1)
+        .expect("a Pending count");
+    let count = pending.split("</div>").next().unwrap();
+    assert!(count.trim_end().ends_with(">2"), "refreshed: {count}");
+
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn the_dashboard_lists_recent_failures_with_their_errors() {
     let Some(db) = TestDb::new().await else {
