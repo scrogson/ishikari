@@ -1,6 +1,6 @@
 [package]
 name = "ishikari"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Atomic, transaction-safe job queueing for Rust applications. Backed by PostgreSQL. Features include reliable background job execution, queue management, retry mechanisms, and flexible backoff strategies."
 license = "MIT"
@@ -16,7 +16,7 @@ chrono-tz = "0.10"
 croner = "4"
 figment = { version = "0.10.12", features = ["env", "yaml"] }
 futures = "0.3.29"
-ishikari-macros = { version = "0.2.0", path = "../ishikari-macros" }
+ishikari-macros = { version = "0.2.1", path = "../ishikari-macros" }
 rand = "0.8.5"
 regex = "1.10"
 serde = { version = "1.0.193", features = ["derive"] }
