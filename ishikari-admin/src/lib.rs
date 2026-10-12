@@ -27,6 +27,9 @@
 //!     // ... serve the app
 //! }
 //! ```
+//!
+//! Each page is a standalone page. To show them inside the host app's own admin layout and
+//! theme, see [`app_with_layout`] and [`Layout`].
 
 // Handlers return `Result<_, axum::response::Response>`; boxing the error
 // to satisfy clippy (1.99+) would just add an allocation per error response.
@@ -41,8 +44,11 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+pub mod layout;
 pub mod routes;
 pub mod templates;
+
+pub use layout::{embed_stylesheet_href, Layout, Page};
 
 // Re-export commonly used types
 pub use routes::dashboard::{JobStats, RecentFailure};
@@ -173,8 +179,47 @@ impl AppState {
 /// Build the application router with all admin routes.
 ///
 /// This returns a router that can be extended with additional routes
-/// or mounted at a different path.
+/// or mounted at a different path. Each page is a standalone page of its own; see
+/// [`app_with_layout`] to show them inside the host's layout.
 pub fn app(state: AppState) -> Router {
+    routes().layer(TraceLayer::new_for_http()).with_state(state)
+}
+
+/// [`app`], each page inside the host's [`Layout`] (its own header, navigation and theme)
+/// rather than the dashboard's standalone page. htmx fragments are never wrapped.
+///
+/// ```rust,no_run
+/// # use axum::{http::request::Parts, response::{Html, IntoResponse, Response}, Router};
+/// # use ishikari_admin::{AppState, Page};
+/// # async fn f(pool: sqlx::PgPool) {
+/// let layout = |_parts: &Parts, page: Page| -> Response {
+///     Html(format!(
+///         r#"<html data-theme="mine"><head><link rel="stylesheet" href="{}"></head>
+///            <body><main>{}{}</main></body></html>"#,
+///         ishikari_admin::embed_stylesheet_href(&page.base_path),
+///         page.nav_html(),
+///         page.body,
+///     ))
+///     .into_response()
+/// };
+/// let admin = ishikari_admin::app_with_layout(
+///     AppState::new(pool).with_base_path("/jobs"),
+///     layout,
+/// );
+/// let app: Router = Router::new().nest("/jobs", admin);
+/// # }
+/// ```
+pub fn app_with_layout(state: AppState, layout: impl Layout + 'static) -> Router {
+    let layout: Arc<dyn Layout> = Arc::new(layout);
+    routes()
+        .layer(axum::middleware::from_fn(move |req, next| {
+            layout::wrap(layout.clone(), req, next)
+        }))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+fn routes() -> Router<AppState> {
     Router::new()
         // Dashboard
         .route("/", get(routes::dashboard::index))
@@ -259,8 +304,6 @@ pub fn app(state: AppState) -> Router {
         .route("/builder", get(routes::frontend::serve_builder))
         // Embedded CSS/JS for the admin UI
         .route("/assets/{file}", get(routes::assets::serve))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }
 
 /// Build the application router mounted at a specific path.

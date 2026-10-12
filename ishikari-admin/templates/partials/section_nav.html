@@ -1,0 +1,16 @@
+<nav class="ishikari-admin mb-6" aria-label="Job dashboard">
+    <ul class="menu menu-horizontal menu-sm w-full flex-nowrap gap-1 overflow-x-auto rounded-box border border-base-300 bg-base-100 p-1">
+        {% for item in page.nav %}
+        <li class="shrink-0">
+            <a href="{{ item.href }}"{% if self.is_active(loop.index0) %} class="menu-active" aria-current="page"{% endif %}>
+                {% if let Some(icon) = item.icon %}
+                <svg class="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
+                </svg>
+                {% endif %}
+                {{ item.label }}
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+</nav>
