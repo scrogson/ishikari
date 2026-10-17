@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
+
+All four crates move to 0.2.2 together; `ishikari` and `ishikari-admin` changed. Fixes only, no
+migration.
 
 ### Fixed
 
