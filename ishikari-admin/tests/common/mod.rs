@@ -97,6 +97,35 @@ pub async fn post(app: Router, path: String) -> Response {
         .unwrap()
 }
 
+/// POST a form (`application/x-www-form-urlencoded`) to `path`.
+pub async fn post_form(app: &Router, path: &str, form: &[(&str, &str)]) -> Response {
+    let body = form
+        .iter()
+        .map(|(k, v)| format!("{k}={}", urlencode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    app.clone()
+        .oneshot(
+            Request::post(path)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// Poll `check` every 20 ms until it returns true, panicking after `timeout`.
 pub async fn eventually<F, Fut>(what: &str, timeout: Duration, mut check: F)
 where

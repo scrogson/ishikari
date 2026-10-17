@@ -4,8 +4,9 @@
 
 use async_trait::async_trait;
 use handlebars::Handlebars;
+use ishikari::execution::{NodeJob, NodeRunner};
 use ishikari::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -14,8 +15,8 @@ use tokio::time::sleep;
 
 // ============ Workflow Node Job State ============
 
-/// State required for NodeJob execution.
-/// Must be registered with the ishikari Engine.
+/// What the demo's node types need. Its `NodeRunner` goes in the engine's state, in a
+/// `NodeJobs`.
 #[derive(Clone)]
 pub struct NodeJobState {
     /// Database pool for storing outputs.
@@ -92,25 +93,27 @@ fn evaluate_value(
 }
 
 // ============ Workflow Node Job ============
-// This mimics ishikari::execution::NodeJob for the demo
 
-/// A job that executes a workflow node.
-/// Uses the same serialization name as ishikari::execution::NodeJob.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeJob {
-    /// The workflow run ID.
-    pub workflow_run_id: i64,
-    /// The node ID within the workflow.
-    pub node_id: String,
-    /// The node type (e.g., "echo", "http/get").
-    pub node_type: String,
-    /// Raw inputs with unresolved expressions.
-    pub raw_inputs: HashMap<String, serde_json::Value>,
-    /// Optional condition for execution.
-    pub condition: Option<String>,
+/// The demo's node types, run for `ishikari::execution::NodeJob`s (the admin's definition runs).
+#[async_trait]
+impl NodeRunner for NodeJobState {
+    async fn run(&self, job: &NodeJob, _ctx: Context) -> PerformResult {
+        Node(job).perform(self).await
+    }
 }
 
-impl NodeJob {
+/// A node being run.
+struct Node<'a>(&'a NodeJob);
+
+impl std::ops::Deref for Node<'_> {
+    type Target = NodeJob;
+
+    fn deref(&self) -> &NodeJob {
+        self.0
+    }
+}
+
+impl Node<'_> {
     /// Load workflow inputs from the database.
     async fn load_workflow_inputs(
         &self,
@@ -345,18 +348,8 @@ impl NodeJob {
     }
 }
 
-#[typetag::serde(name = "ishikari::execution::NodeJob")]
-#[async_trait]
-impl Worker for NodeJob {
-    fn queue(&self) -> &'static str {
-        "workflows"
-    }
-
-    fn max_attempts(&self) -> i32 {
-        3
-    }
-
-    async fn perform(&self, ctx: Context) -> PerformResult {
+impl Node<'_> {
+    async fn perform(&self, state: &NodeJobState) -> PerformResult {
         let start_time = Instant::now();
 
         tracing::info!(
@@ -366,8 +359,6 @@ impl Worker for NodeJob {
             "Executing workflow node"
         );
 
-        // Get the state to access the database pool
-        let state = ctx.state::<NodeJobState>()?;
         let schema = state.schema.as_deref();
 
         // Load workflow inputs and upstream node outputs
