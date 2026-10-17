@@ -9,6 +9,8 @@ use axum::http::Request;
 use axum::response::Response;
 use axum::Router;
 use sqlx::PgPool;
+use std::future::Future;
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 pub struct TestDb {
@@ -86,6 +88,28 @@ pub async fn get(app: &Router, path: &str, headers: &[(&str, &str)]) -> Response
         .oneshot(req.body(Body::empty()).unwrap())
         .await
         .unwrap()
+}
+
+/// POST to `path`, with no body.
+pub async fn post(app: Router, path: String) -> Response {
+    app.oneshot(Request::post(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// Poll `check` every 20 ms until it returns true, panicking after `timeout`.
+pub async fn eventually<F, Fut>(what: &str, timeout: Duration, mut check: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let start = Instant::now();
+    while !check().await {
+        if start.elapsed() > timeout {
+            panic!("timed out after {timeout:?} waiting for: {what}");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 pub async fn body(res: Response) -> String {

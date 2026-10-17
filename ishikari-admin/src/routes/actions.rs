@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
 };
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use tracing::{error, info};
 
 use crate::AppState;
@@ -16,42 +16,26 @@ pub async fn cancel_workflow(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    // First check if workflow exists and is cancellable
-    let workflow = get_workflow(&state.pool, schema, id).await;
-    if workflow.is_none() {
-        return Err((axum::http::StatusCode::NOT_FOUND, "Workflow not found").into_response());
-    }
-
-    let (_, workflow_state) = workflow.unwrap();
-    if workflow_state == "completed"
-        || workflow_state == "cancelled"
-        || workflow_state == "compensated"
-    {
-        return Err((
-            axum::http::StatusCode::BAD_REQUEST,
-            format!("Cannot cancel workflow in state: {}", workflow_state),
-        )
-            .into_response());
-    }
-
-    // Cancel all pending/scheduled/available jobs in the workflow
-    if let Err(e) = cancel_workflow_jobs(&state.pool, schema, id).await {
-        error!(workflow_id = id, error = %e, "failed to cancel workflow jobs");
-        return Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to cancel workflow",
-        )
-            .into_response());
-    }
-
-    // Update workflow state
-    if let Err(e) = set_workflow_state(&state.pool, schema, id, "cancelled").await {
-        error!(workflow_id = id, error = %e, "failed to update workflow state");
-        return Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to update workflow state",
-        )
-            .into_response());
+    match cancel(&state.pool, schema, id).await {
+        Ok(Outcome::Done) => {}
+        Ok(Outcome::NotFound) => {
+            return Err((axum::http::StatusCode::NOT_FOUND, "Workflow not found").into_response())
+        }
+        Ok(Outcome::Refused(workflow_state)) => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Cannot cancel workflow in state: {}", workflow_state),
+            )
+                .into_response())
+        }
+        Err(e) => {
+            error!(workflow_id = id, error = %e, "failed to cancel workflow");
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to cancel workflow",
+            )
+                .into_response());
+        }
     }
 
     info!(workflow_id = id, "workflow cancelled");
@@ -68,35 +52,25 @@ pub async fn retry_workflow(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    // Check if workflow exists
-    let workflow = get_workflow(&state.pool, schema, id).await;
-    if workflow.is_none() {
-        return Err((axum::http::StatusCode::NOT_FOUND, "Workflow not found").into_response());
-    }
-
-    let (_, workflow_state) = workflow.unwrap();
-    if workflow_state != "failed" && workflow_state != "running" {
-        return Err((
-            axum::http::StatusCode::BAD_REQUEST,
-            format!("Cannot retry workflow in state: {}", workflow_state),
-        )
-            .into_response());
-    }
-
-    // Reset failed/discarded jobs to available
-    if let Err(e) = retry_workflow_jobs(&state.pool, schema, id).await {
-        error!(workflow_id = id, error = %e, "failed to retry workflow jobs");
-        return Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to retry workflow",
-        )
-            .into_response());
-    }
-
-    // Set workflow back to running if it was failed
-    if workflow_state == "failed" {
-        if let Err(e) = set_workflow_state(&state.pool, schema, id, "running").await {
-            error!(workflow_id = id, error = %e, "failed to update workflow state");
+    match retry(&state.pool, schema, id).await {
+        Ok(Outcome::Done) => {}
+        Ok(Outcome::NotFound) => {
+            return Err((axum::http::StatusCode::NOT_FOUND, "Workflow not found").into_response())
+        }
+        Ok(Outcome::Refused(workflow_state)) => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Cannot retry workflow in state: {}", workflow_state),
+            )
+                .into_response())
+        }
+        Err(e) => {
+            error!(workflow_id = id, error = %e, "failed to retry workflow");
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retry workflow",
+            )
+                .into_response());
         }
     }
 
@@ -206,21 +180,6 @@ pub async fn cancel_job(
 
 // Helper functions
 
-async fn get_workflow(pool: &PgPool, schema: Option<&str>, id: i64) -> Option<(i64, String)> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_workflows", s),
-        None => "ishikari_workflows".to_string(),
-    };
-
-    let query = format!("SELECT id, state FROM {} WHERE id = $1", table);
-    sqlx::query_as(&query)
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-}
-
 async fn get_workflow_full(
     pool: &PgPool,
     schema: Option<&str>,
@@ -240,16 +199,81 @@ async fn get_workflow_full(
         .flatten()
 }
 
+/// What became of a workflow action.
+enum Outcome {
+    Done,
+    NotFound,
+    /// The workflow's state, which the action doesn't apply to.
+    Refused(String),
+}
+
+/// Cancel the workflow's unfinished jobs, then the workflow, in one transaction. The workflow's
+/// row is locked after the jobs' (the order the engine takes them in) and its state checked
+/// then, so a last step completing meanwhile leaves it completed.
+async fn cancel(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    cancel_workflow_jobs(&mut tx, schema, id).await?;
+    let outcome = match lock_workflow(&mut tx, schema, id).await? {
+        None => Outcome::NotFound,
+        Some(state) if matches!(state.as_str(), "completed" | "cancelled" | "compensated") => {
+            Outcome::Refused(state)
+        }
+        Some(_) => {
+            set_workflow_state(&mut tx, schema, id, "cancelled").await?;
+            Outcome::Done
+        }
+    };
+    // Otherwise dropped, so rolled back.
+    if let Outcome::Done = outcome {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// Reset the workflow's discarded and cancelled jobs, then set a failed workflow running, in
+/// one transaction: the reset jobs can't run before the workflow is running again, so the last
+/// of them to complete completes it. Locks as `cancel` does.
+async fn retry(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    retry_workflow_jobs(&mut tx, schema, id).await?;
+    let outcome = match lock_workflow(&mut tx, schema, id).await? {
+        None => Outcome::NotFound,
+        Some(state) if state == "failed" => {
+            set_workflow_state(&mut tx, schema, id, "running").await?;
+            Outcome::Done
+        }
+        Some(state) if state == "running" => Outcome::Done,
+        Some(state) => Outcome::Refused(state),
+    };
+    if let Outcome::Done = outcome {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// The workflow's state, with its row locked until the transaction ends. `NO KEY`, so inserts
+/// of its jobs (whose foreign key checks take `KEY SHARE`) aren't held up.
+async fn lock_workflow(
+    tx: &mut PgConnection,
+    schema: Option<&str>,
+    id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let workflows = qualified(schema, "ishikari_workflows");
+    sqlx::query_scalar(&format!(
+        "SELECT state FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+}
+
 async fn set_workflow_state(
-    pool: &PgPool,
+    tx: &mut PgConnection,
     schema: Option<&str>,
     id: i64,
     state: &str,
 ) -> Result<(), sqlx::Error> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_workflows", s),
-        None => "ishikari_workflows".to_string(),
-    };
+    let table = qualified(schema, "ishikari_workflows");
 
     let query = if state == "completed"
         || state == "failed"
@@ -261,60 +285,130 @@ async fn set_workflow_state(
             table
         )
     } else {
-        format!("UPDATE {} SET state = $1 WHERE id = $2", table)
+        format!(
+            "UPDATE {} SET state = $1, completed_at = NULL WHERE id = $2",
+            table
+        )
     };
 
     sqlx::query(&query)
         .bind(state)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     Ok(())
 }
 
+/// Cancel the workflow's unfinished jobs as `Postgres::cancel_job` cancels one: why recorded in
+/// their errors, their unique keys released, the dependencies on them failed, and what depends
+/// on them outside the workflow, which can never run now, cancelled too.
 async fn cancel_workflow_jobs(
-    pool: &PgPool,
+    tx: &mut PgConnection,
     schema: Option<&str>,
     workflow_id: i64,
 ) -> Result<(), sqlx::Error> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        UPDATE {}
-        SET state = 'cancelled', cancelled_at = now()
-        WHERE workflow_id = $1
-          AND state IN ('pending', 'available', 'scheduled', 'retryable', 'executing')
-        "#,
-        table
+    let (jobs, deps) = (
+        qualified(schema, "ishikari_jobs"),
+        qualified(schema, "ishikari_job_dependencies"),
     );
 
-    sqlx::query(&query).bind(workflow_id).execute(pool).await?;
+    // Locked in id order, as the engine locks a step's dependents.
+    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+        r#"
+        SELECT id FROM {jobs}
+        WHERE workflow_id = $1
+          AND state IN ('pending', 'available', 'scheduled', 'retryable', 'executing')
+        ORDER BY id
+        FOR UPDATE
+        "#
+    ))
+    .bind(workflow_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // Each with an error record of why, as the engine's error records are made.
+    sqlx::query(&format!(
+        "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
+             errors = errors || jsonb_build_object('attempt', attempt, 'at', $2::jsonb, \
+                                                   'kind', $3::text, 'error', $4::text) \
+         WHERE id = ANY($1)",
+        release = RELEASE_CANCELLED,
+    ))
+    .bind(&ids)
+    .bind(serde_json::json!(chrono::Utc::now()))
+    .bind(ishikari::ErrorKind::Cancelled.as_str())
+    .bind("workflow cancelled from the admin")
+    .execute(&mut *tx)
+    .await?;
+
+    let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+        r#"
+        WITH RECURSIVE down(id) AS (
+            SELECT job_id FROM {deps} WHERE depends_on_job_id = ANY($1)
+            UNION
+            SELECT d.job_id FROM {deps} d JOIN down ON d.depends_on_job_id = down.id
+        )
+        SELECT id FROM down ORDER BY id
+        "#
+    ))
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await?;
+    if !downstream.is_empty() {
+        let mut failed = ids;
+        failed.extend(&downstream);
+        sqlx::query(&format!(
+            "UPDATE {deps} SET state = 'failed' \
+             WHERE depends_on_job_id = ANY($1) AND state = 'pending'"
+        ))
+        .bind(&failed)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(&format!(
+            "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release} \
+             WHERE id = ANY($1) AND state IN ('pending', 'scheduled')",
+            release = RELEASE_CANCELLED,
+        ))
+        .bind(&downstream)
+        .execute(&mut *tx)
+        .await?;
+    }
     Ok(())
 }
 
+/// `unique_key = …` for a job being cancelled: kept when cancelled is one of its unique states,
+/// released otherwise (as the engine does).
+const RELEASE_CANCELLED: &str =
+    "unique_key = CASE WHEN 'cancelled' = ANY(unique_states::text[]) THEN unique_key END";
+
 async fn retry_workflow_jobs(
-    pool: &PgPool,
+    tx: &mut PgConnection,
     schema: Option<&str>,
     workflow_id: i64,
 ) -> Result<(), sqlx::Error> {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-    let deps_table = match schema {
-        Some(s) => format!("{}.ishikari_job_dependencies", s),
-        None => "ishikari_job_dependencies".to_string(),
-    };
-    let enum_type = match schema {
-        Some(s) => format!("{}.ishikari_job_state", s),
-        None => "ishikari_job_state".to_string(),
-    };
+    let jobs_table = qualified(schema, "ishikari_jobs");
+    let deps_table = qualified(schema, "ishikari_job_dependencies");
+    let enum_type = qualified(schema, "ishikari_job_state");
 
-    // Reset discarded jobs to retryable, reset attempt count
+    // Locked in id order, as `cancel_workflow_jobs` does.
+    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+        r#"
+        SELECT id FROM {}
+        WHERE workflow_id = $1
+          AND state IN ('discarded', 'cancelled')
+        ORDER BY id
+        FOR UPDATE
+        "#,
+        jobs_table
+    ))
+    .bind(workflow_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // Start them over as `Postgres::retry_job` does: attempts reset, errors kept as the history
+    // of their earlier runs, no longer discarded or cancelled.
     let query = format!(
         r#"
         UPDATE {}
@@ -324,14 +418,15 @@ async fn retry_workflow_jobs(
             ELSE 'available'
         END::{},
         attempt = 0,
-        errors = ARRAY[]::jsonb[]
-        WHERE workflow_id = $1
-          AND state IN ('discarded', 'cancelled')
+        scheduled_at = now(),
+        discarded_at = NULL,
+        cancelled_at = NULL
+        WHERE id = ANY($1)
         "#,
         jobs_table, deps_table, enum_type
     );
 
-    sqlx::query(&query).bind(workflow_id).execute(pool).await?;
+    sqlx::query(&query).bind(&ids).execute(&mut *tx).await?;
 
     // Also reset failed dependencies
     let reset_deps = format!(
@@ -348,7 +443,7 @@ async fn retry_workflow_jobs(
 
     sqlx::query(&reset_deps)
         .bind(workflow_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     Ok(())
@@ -461,6 +556,14 @@ async fn clone_workflow_jobs(
     }
 
     Ok(())
+}
+
+/// `schema.name`, or `name` when no schema is set.
+fn qualified(schema: Option<&str>, name: &str) -> String {
+    match schema {
+        Some(schema) => format!("{schema}.{name}"),
+        None => name.to_string(),
+    }
 }
 
 /// The jobs storage for the admin's pool and schema.
