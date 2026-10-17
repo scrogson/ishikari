@@ -2,13 +2,18 @@
 //!
 //! This module handles:
 //! - Serving the embedded React SPA assets (when `embed-frontend` feature is enabled)
-//! - SPA routing fallback to index.html
+//! - Sending the builder's other paths to the definition editor, which runs it
 
 use axum::{
     body::Body,
     http::{header, Response, StatusCode, Uri},
     response::IntoResponse,
 };
+#[cfg(feature = "embed-frontend")]
+use axum::{extract::State, response::Redirect};
+
+#[cfg(feature = "embed-frontend")]
+use crate::AppState;
 
 #[cfg(feature = "embed-frontend")]
 use rust_embed::Embed;
@@ -19,48 +24,31 @@ use rust_embed::Embed;
 #[prefix = ""]
 struct FrontendAssets;
 
-/// Serve embedded static assets for the workflow builder.
+/// Serve the workflow builder's embedded assets (`frontend/dist`).
 ///
-/// When the `embed-frontend` feature is enabled, this serves files from the
-/// embedded `frontend/dist` directory. For SPA routing, requests to unknown
-/// paths return `index.html`.
+/// The builder runs inside the definition editor, which gives it its configuration (the API's
+/// base path), so anything else under `/builder` goes to the editor.
 #[cfg(feature = "embed-frontend")]
-pub async fn serve_builder(uri: Uri) -> impl IntoResponse {
+pub async fn serve_builder(State(state): State<AppState>, uri: Uri) -> Response<Body> {
     let path = uri.path().trim_start_matches("/builder/");
-
-    // Try to serve the exact file
-    if let Some(content) = FrontendAssets::get(path) {
-        let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, mime.as_ref())
-            .body(Body::from(content.data.into_owned()))
-            .unwrap();
+    if !path.starts_with("assets/") {
+        return Redirect::to(&format!("{}/definitions/new", state.base_path)).into_response();
     }
 
-    // For assets directory, return 404
-    if path.starts_with("assets/") {
-        return Response::builder()
+    match FrontendAssets::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("Not found"))
-            .unwrap();
+            .unwrap(),
     }
-
-    // SPA fallback: serve index.html for all other routes
-    if let Some(content) = FrontendAssets::get("index.html") {
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html")
-            .body(Body::from(content.data.into_owned()))
-            .unwrap();
-    }
-
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Body::from(
-            "Frontend not found. Run `npm run build` in the frontend directory.",
-        ))
-        .unwrap()
 }
 
 /// Placeholder when embed-frontend feature is disabled.
@@ -147,7 +135,7 @@ pub async fn serve_builder(uri: Uri) -> impl IntoResponse {
 /// Check if frontend assets are available.
 #[cfg(feature = "embed-frontend")]
 pub fn has_frontend_assets() -> bool {
-    FrontendAssets::get("index.html").is_some()
+    FrontendAssets::get("assets/index.js").is_some()
 }
 
 #[cfg(not(feature = "embed-frontend"))]
