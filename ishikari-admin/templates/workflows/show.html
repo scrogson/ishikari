@@ -1,207 +1,272 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Workflow #{{ workflow.id }}{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-4">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">{{ workflow.name }}</h1>
-        <p class="text-sm text-base-content/60">Workflow #{{ workflow.id }}</p>
+<header class="ik-page-header">
+    <div class="min-w-0">
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/workflows">Workflows</a><span aria-hidden="true">/</span><span>#{{ workflow.id }}</span></nav>
+        <h1 class="ik-title flex flex-wrap items-center gap-3">{{ workflow.name }} <span class="ik-badge ik-dot {{ workflow.state_class() }}">{{ workflow.state }}</span></h1>
     </div>
-    <div class="flex items-center gap-2">
-        <span class="badge badge-soft {{ workflow.state_class() }}">{{ workflow.state }}</span>
+    <div class="flex flex-wrap items-center gap-2">
+        <form method="post" action="{{ base_path }}/workflows/{{ workflow.id }}/clone">
+            <button type="submit" class="ik-btn ik-btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                Clone
+            </button>
+        </form>
         {% if workflow.state == "running" || workflow.state == "failed" %}
         <form method="post" action="{{ base_path }}/workflows/{{ workflow.id }}/cancel">
-            <button type="submit" class="btn btn-error btn-soft btn-sm" onclick="return confirm('Cancel this workflow?')">Cancel</button>
+            <button type="submit" class="ik-btn ik-btn-danger ik-btn-sm" onclick="return confirm('Cancel this workflow?')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+                Cancel
+            </button>
         </form>
         {% endif %}
         {% if workflow.state == "failed" %}
         <form method="post" action="{{ base_path }}/workflows/{{ workflow.id }}/retry">
-            <button type="submit" class="btn btn-primary btn-sm">Retry</button>
+            <button type="submit" class="ik-btn ik-btn-primary ik-btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                Retry
+            </button>
         </form>
         {% endif %}
-        <form method="post" action="{{ base_path }}/workflows/{{ workflow.id }}/clone">
-            <button type="submit" class="btn btn-ghost btn-sm">Clone</button>
-        </form>
     </div>
+</header>
+
+<div class="grid items-start gap-6 lg:grid-cols-3">
+    <section class="ik-card lg:col-span-2">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Details</h2>
+            </div>
+        </div>
+        <div class="ik-card-body space-y-5">
+            {% if !jobs.is_empty() %}
+            <div>
+                <div class="mb-2 flex items-baseline justify-between text-sm">
+                    <span class="ik-muted">Jobs by state</span>
+                    <span class="font-semibold tabular-nums">{{ jobs.len() }}</span>
+                </div>
+                <div class="ik-meter" role="img" aria-label="Jobs by state">
+                    {% for job in jobs %}<span class="{{ job.state_class() }}" style="flex: 1 1 0%" title="#{{ job.id }}: {{ job.state }}"></span>{% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            <dl class="ik-dl">
+                <dt>ID</dt>
+                <dd class="ik-mono">#{{ workflow.id }}</dd>
+
+                <dt>Name</dt>
+                <dd>{{ workflow.name }}</dd>
+
+                <dt>State</dt>
+                <dd><span class="ik-badge ik-dot {{ workflow.state_class() }}">{{ workflow.state }}</span></dd>
+
+                <dt>Created</dt>
+                <dd class="tabular-nums">{{ workflow.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+
+                {% match workflow.completed_at %}
+                {% when Some with (completed) %}
+                <dt>Completed</dt>
+                <dd class="tabular-nums">{{ completed.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+                {% when None %}
+                {% endmatch %}
+            </dl>
+        </div>
+    </section>
+
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Metadata</h2>
+            </div>
+        </div>
+        <div class="ik-card-body">
+            <pre class="ik-code">{{ workflow.metadata_pretty()|highlight_json }}</pre>
+        </div>
+    </section>
 </div>
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Details</h2>
-        <dl class="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
-            <dt class="text-base-content/60">ID</dt>
-            <dd class="font-mono">#{{ workflow.id }}</dd>
-
-            <dt class="text-base-content/60">Name</dt>
-            <dd>{{ workflow.name }}</dd>
-
-            <dt class="text-base-content/60">State</dt>
-            <dd><span class="badge badge-soft badge-sm {{ workflow.state_class() }}">{{ workflow.state }}</span></dd>
-
-            <dt class="text-base-content/60">Created</dt>
-            <dd>{{ workflow.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
-
-            {% match workflow.completed_at %}
-            {% when Some with (completed) %}
-            <dt class="text-base-content/60">Completed</dt>
-            <dd>{{ completed.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
-            {% when None %}
-            {% endmatch %}
-        </dl>
-    </div>
-</section>
-
-{% if workflow.has_run_inputs() || workflow.has_run_outputs() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Workflow I/O</h2>
-        <div class="grid gap-6 md:grid-cols-2">
-            {% if workflow.has_run_inputs() %}
-            <div>
-                <h3 class="mb-2 text-sm font-medium text-info">Input</h3>
-                <pre class="code-block border-l-4 border-info">{{ workflow.run_inputs_pretty() }}</pre>
-            </div>
-            {% endif %}
-
-            {% if workflow.has_run_outputs() %}
-            <div>
-                <h3 class="mb-2 text-sm font-medium text-success">Output</h3>
-                <pre class="code-block border-l-4 border-success">{{ workflow.run_outputs_pretty() }}</pre>
-            </div>
-            {% endif %}
+{% if !jobs.is_empty() %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Job graph</h2>
+            <p class="ik-card-desc">Drag to pan, ctrl/⌘ + scroll to zoom, hover a job to trace it</p>
         </div>
     </div>
-</section>
-{% endif %}
-
-{% if workflow.has_node_executions() %}
-<details class="collapse collapse-arrow border border-base-300 bg-base-100 shadow-sm">
-    <summary class="collapse-title font-semibold">Node Executions ({{ workflow.node_executions.len() }})</summary>
-    <div class="collapse-content space-y-4">
-        {% for exec in workflow.node_executions %}
-        <div class="rounded-box border-l-4 bg-base-200 p-4 {% if exec.status == "completed" %}border-success{% elif exec.status == "failed" %}border-error{% else %}border-base-300{% endif %}">
-            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                    <code class="text-sm font-semibold">{{ exec.node_id }}</code>
-                    <span class="badge badge-soft badge-xs {{ exec.status_class() }}">{{ exec.status }}</span>
-                    <span class="text-xs text-base-content/50">{{ exec.node_type }}</span>
-                </div>
-                <div class="flex items-center gap-2 text-xs text-base-content/50">
-                    {% if let Some(duration) = exec.duration_ms %}
-                    <span>{{ duration }}ms</span>
-                    {% endif %}
-                    {% if let Some(completed) = exec.completed_at %}
-                    <span>{{ completed.format("%H:%M:%S") }}</span>
-                    {% endif %}
-                </div>
-            </div>
-
-            {% if exec.has_inputs() %}
-            <div class="mb-2">
-                <span class="text-xs text-info">Inputs:</span>
-                <pre class="code-block mt-1 border-l-2 border-info text-xs">{{ exec.inputs_pretty() }}</pre>
-            </div>
-            {% endif %}
-
-            {% if exec.has_output() %}
-            <div class="mb-2">
-                <span class="text-xs text-success">Output:</span>
-                <pre class="code-block mt-1 border-l-2 border-success text-xs">{{ exec.output_pretty() }}</pre>
-            </div>
-            {% endif %}
-
-            {% if let Some(error) = exec.error.as_ref() %}
-            <div>
-                <span class="text-xs text-error">Error:</span>
-                <pre class="code-block mt-1 border-l-2 border-error text-xs text-error">{{ error }}</pre>
-            </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
-</details>
-{% endif %}
-
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Metadata</h2>
-        <pre class="code-block">{{ workflow.metadata_pretty() }}</pre>
-    </div>
-</section>
-
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Jobs ({{ jobs.len() }})</h2>
-
-        {% if jobs.is_empty() %}
-        <div class="py-12 text-center text-base-content/50">No jobs in this workflow</div>
-        {% else %}
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Worker</th>
-                        <th>State</th>
-                        <th>Attempt</th>
-                        <th>Dependencies</th>
-                        <th>Created</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for job in jobs %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
-                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
-                        <td>
-                            <div class="flex flex-wrap gap-1">
-                                <span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
-                                {% if let Some(rs) = job.saga_rollback_state() %}
-                                <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
-                                {% endif %}
-                                {% if job.is_compensation %}
-                                <span class="badge badge-ghost badge-sm" title="Saga compensation job">compensation</span>
-                                {% endif %}
-                            </div>
-                        </td>
-                        <td class="tabular-nums">{{ job.attempt }}/{{ job.max_attempts }}</td>
-                        <td>
-                            {% if job.dependencies.is_empty() %}
-                            <span class="text-base-content/30">—</span>
-                            {% else %}
-                            {% for dep_id in job.dependencies %}
-                            <a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ dep_id }}">#{{ dep_id }}</a>{% if !loop.last %}, {% endif %}
-                            {% endfor %}
-                            {% endif %}
-                        </td>
-                        <td class="whitespace-nowrap text-base-content/60">{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endif %}
-
-        <div class="mt-2">
-            <h3 class="mb-3 text-sm font-medium text-base-content/60">Job Graph</h3>
-            <div class="flex flex-wrap gap-2">
+    <div class="ik-graph" data-ik-graph>
+        <div class="ik-graph-viewport">
+            <div class="ik-graph-world">
                 {% for job in jobs %}
-                <a href="{{ base_path }}/jobs/{{ job.id }}" class="flex items-center gap-2 rounded-field border border-base-300 bg-base-200 px-3 py-2 text-sm hover:border-primary">
-                    <span class="badge badge-soft badge-sm min-w-8 {{ job.state_class() }}">{{ job.id }}</span>
-                    <span class="font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></span>
-                    {% if let Some(rs) = job.saga_rollback_state() %}
-                    <span class="badge badge-soft badge-xs {{ job.saga_rollback_class() }}">{{ rs }}</span>
+                <a href="{{ base_path }}/jobs/{{ job.id }}" class="ik-graph-node {{ job.state_class() }}" data-node="{{ job.id }}" data-deps="{% for dep in job.dependencies %}{{ dep }} {% endfor %}" data-state="{{ job.state }}">
+                    {% if let Some(step) = job.step.as_ref() %}
+                    <span class="ik-graph-node-title">{{ step }}</span>
+                    <span class="ik-graph-node-sub"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></span>
+                    {% else %}
+                    <span class="ik-graph-node-title"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></span>
                     {% endif %}
-                    {% if !job.dependencies.is_empty() %}
-                    <span class="text-xs text-base-content/50">
-                        &larr; {% for dep in job.dependencies %}{{ dep }}{% if !loop.last %}, {% endif %}{% endfor %}
+                    <span class="ik-graph-node-meta">
+                        <span class="ik-graph-dot"></span>
+                        <span>{{ job.state }}</span>
+                        {% if let Some(rs) = job.saga_rollback_state() %}<span class="ik-badge ik-badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>{% endif %}
+                        <span class="ik-mono">#{{ job.id }}</span>
                     </span>
-                    {% endif %}
                 </a>
                 {% endfor %}
             </div>
         </div>
     </div>
+</section>
+{% endif %}
+
+{% if workflow.has_run_inputs() || workflow.has_run_outputs() %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Input and output</h2>
+            <p class="ik-card-desc">What the run was given and what it returned</p>
+        </div>
+    </div>
+    <div class="ik-card-body grid gap-6 md:grid-cols-2">
+        {% if workflow.has_run_inputs() %}
+        <div class="min-w-0">
+            <h3 class="mb-2 flex items-center gap-2 text-xs font-medium ik-muted"><span class="ik-swatch ik-tone-info"></span>Input</h3>
+            <pre class="ik-code ik-code-toned ik-tone-info">{{ workflow.run_inputs_pretty()|highlight_json }}</pre>
+        </div>
+        {% endif %}
+
+        {% if workflow.has_run_outputs() %}
+        <div class="min-w-0">
+            <h3 class="mb-2 flex items-center gap-2 text-xs font-medium ik-muted"><span class="ik-swatch ik-tone-success"></span>Output</h3>
+            <pre class="ik-code ik-code-toned ik-tone-success">{{ workflow.run_outputs_pretty()|highlight_json }}</pre>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if workflow.has_node_executions() %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Node executions</h2>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ workflow.node_executions.len() }}</span> nodes run</p>
+        </div>
+    </div>
+    <div class="ik-card-body">
+        <ol class="ik-timeline">
+            {% for exec in workflow.node_executions %}
+            <li>
+                <span class="ik-marker {{ exec.status_class() }}">{{ loop.index }}</span>
+                <div class="ik-card">
+                    <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                        <div class="flex min-w-0 flex-wrap items-center gap-2">
+                            <code class="ik-mono text-sm font-semibold">{{ exec.node_id }}</code>
+                            <span class="ik-badge ik-badge-sm {{ exec.status_class() }}">{{ exec.status }}</span>
+                            <span class="ik-tag">{{ exec.node_type }}</span>
+                        </div>
+                        <div class="flex items-center gap-3 text-xs ik-muted tabular-nums">
+                            {% if let Some(duration) = exec.duration_ms %}
+                            <span>{{ duration }}ms</span>
+                            {% endif %}
+                            {% if let Some(completed) = exec.completed_at %}
+                            <span>{{ completed.format("%H:%M:%S") }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {% if exec.has_inputs() || exec.has_output() || exec.error.is_some() %}
+                    <div class="space-y-2 px-4 pb-4">
+                        {% if exec.has_inputs() %}
+                        <details class="ik-details">
+                            <summary>Inputs</summary>
+                            <div class="ik-details-body">
+                                <pre class="ik-code ik-code-toned ik-tone-info">{{ exec.inputs_pretty()|highlight_json }}</pre>
+                            </div>
+                        </details>
+                        {% endif %}
+
+                        {% if exec.has_output() %}
+                        <details class="ik-details">
+                            <summary>Output</summary>
+                            <div class="ik-details-body">
+                                <pre class="ik-code ik-code-toned ik-tone-success">{{ exec.output_pretty()|highlight_json }}</pre>
+                            </div>
+                        </details>
+                        {% endif %}
+
+                        {% if let Some(error) = exec.error.as_ref() %}
+                        <pre class="ik-code ik-code-toned ik-tone-danger text-ik-danger">{{ error }}</pre>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ol>
+    </div>
+</section>
+{% endif %}
+
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Jobs</h2>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ jobs.len() }}</span> in this workflow</p>
+        </div>
+    </div>
+    {% if jobs.is_empty() %}
+    {% call ui::empty("No jobs in this workflow") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Worker</th>
+                    <th>State</th>
+                    <th class="ik-num">Attempt</th>
+                    <th>Depends on</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in jobs %}
+                <tr>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                    <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                    <td>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="ik-badge ik-dot {{ job.state_class() }}">{{ job.state }}</span>
+                            {% if let Some(rs) = job.saga_rollback_state() %}
+                            <span class="ik-badge ik-badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                            {% endif %}
+                            {% if job.is_compensation %}
+                            <span class="ik-badge ik-badge-sm ik-tone-neutral" title="Saga compensation job">compensation</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td class="ik-num">{{ job.attempt }}<span class="ik-muted">/{{ job.max_attempts }}</span></td>
+                    <td>
+                        {% if job.dependencies.is_empty() %}
+                        <span class="ik-none">—</span>
+                        {% else %}
+                        <div class="flex flex-wrap gap-x-2 gap-y-1">
+                            {% for dep_id in job.dependencies %}
+                            <a class="ik-link ik-mono text-xs" href="{{ base_path }}/jobs/{{ dep_id }}">#{{ dep_id }}</a>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="whitespace-nowrap ik-muted tabular-nums">{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 </section>
 {% endblock %}

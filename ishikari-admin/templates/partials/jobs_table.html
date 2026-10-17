@@ -1,59 +1,52 @@
+{% import "partials/ui.html" as ui %}
 {% if jobs.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No jobs found</div>
+{% call ui::empty("No jobs found") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
-                <th>ID</th>
+                <th>Job</th>
                 <th>Worker</th>
                 <th>Queue</th>
                 <th>State</th>
-                <th>Attempts</th>
-                <th>Inserted At</th>
-                <th></th>
+                <th class="ik-num">Attempts</th>
+                <th>Inserted</th>
+                <th><span class="sr-only">Actions</span></th>
             </tr>
         </thead>
         <tbody>
             {% for job in jobs %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
-                <td><span class="badge badge-ghost badge-sm">{{ job.queue }}</span></td>
-                <td><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
-                    {% if let Some(rs) = job.saga_rollback_state() %}
-                    <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
-                    {% endif %}</td>
-                <td class="tabular-nums">{{ job.attempt }}/{{ job.max_attempts }}</td>
-                <td class="whitespace-nowrap text-base-content/60">{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S") }}</td>
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td class="ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                <td><span class="ik-tag">{{ job.queue }}</span></td>
+                <td>
+                    <div class="flex items-center gap-1.5">
+                        <span class="ik-badge ik-dot {{ job.state_class() }}">{{ job.state }}</span>
+                        {% if let Some(rs) = job.saga_rollback_state() %}
+                        <span class="ik-badge ik-badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td class="ik-num">{{ job.attempt }}<span class="ik-muted">/{{ job.max_attempts }}</span></td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ job.inserted_at.format("%Y-%m-%d %H:%M:%S") }}</td>
                 <td class="text-right">
-                    <a href="{{ base_path }}/jobs/{{ job.id }}" class="btn btn-ghost btn-xs">View</a>
+                    <a href="{{ base_path }}/jobs/{{ job.id }}" class="ik-btn ik-btn-ghost ik-btn-xs">View</a>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-            {% if p == page %}
-            <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-            {% else %}
-            <a class="join-item btn btn-sm" href="?page={{ p }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">{{ p }}</a>
-            {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}{% if let Some(s) = current_state %}&state={{ s }}{% endif %}">»</a>
-        {% endif %}
-    </div>
-</div>
+{% let pager_api = "" %}
+{% let pager_target = "" %}
+{% let pager_include = "" %}
+{% if let Some(s) = current_state %}
+{% let pager_extra = "&state={}"|format(s) %}
+{% include "partials/pager.html" %}
+{% else %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}
 {% endif %}

@@ -1,56 +1,43 @@
+{% import "partials/ui.html" as ui %}
 {% if definitions.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No workflow definitions found</div>
+{% call ui::empty("No workflow definitions found") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
                 <th>Name</th>
                 <th>Version</th>
                 <th>Description</th>
-                <th>Nodes</th>
+                <th class="ik-num">Nodes</th>
                 <th>Created</th>
                 <th>Updated</th>
-                <th>Actions</th>
+                <th><span class="sr-only">Actions</span></th>
             </tr>
         </thead>
         <tbody>
             {% for def in definitions %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-medium" href="{{ base_path }}/definitions/{{ def.id }}">{{ def.name }}</a></td>
-                <td><span class="badge badge-soft badge-sm badge-info">v{{ def.version }}</span></td>
-                <td class="max-w-md truncate text-base-content/70">{{ def.description.as_deref().unwrap_or("—") }}</td>
-                <td class="tabular-nums">{{ def.node_count }}</td>
-                <td class="whitespace-nowrap text-base-content/60">{{ def.created_at.format("%Y-%m-%d %H:%M") }}</td>
-                <td class="whitespace-nowrap text-base-content/60">{{ def.updated_at.format("%Y-%m-%d %H:%M") }}</td>
-                <td>
-                    <a href="{{ base_path }}/definitions/{{ def.id }}/export" class="btn btn-ghost btn-xs">Export</a>
+            <tr>
+                <td><a class="ik-link font-medium" href="{{ base_path }}/definitions/{{ def.id }}">{{ def.name }}</a></td>
+                <td><span class="ik-badge ik-badge-sm ik-tone-info">v{{ def.version }}</span></td>
+                <td class="max-w-md truncate ik-muted">{% if let Some(desc) = def.description.as_deref() %}{{ desc }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
+                <td class="ik-num">{{ def.node_count }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ def.created_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ def.updated_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td class="text-right">
+                    <a href="{{ base_path }}/definitions/{{ def.id }}/export" class="ik-btn ik-btn-ghost ik-btn-xs">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+                        Export
+                    </a>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}" hx-get="{{ base_path }}/api/definitions?page={{ page - 1 }}" hx-target="#definitions-table">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-        {% if p == page %}
-        <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-        {% else %}
-        <a class="join-item btn btn-sm" href="?page={{ p }}" hx-get="{{ base_path }}/api/definitions?page={{ p }}" hx-target="#definitions-table">{{ p }}</a>
-        {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}" hx-get="{{ base_path }}/api/definitions?page={{ page + 1 }}" hx-target="#definitions-table">»</a>
-        {% endif %}
-    </div>
-</div>
-{% endif %}
+{% let pager_api = "/api/definitions" %}
+{% let pager_target = "#definitions-table" %}
+{% let pager_include = "#definitions-filter-form" %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}

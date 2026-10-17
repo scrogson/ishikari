@@ -1,41 +1,44 @@
+{% import "partials/ui.html" as ui %}
 {% if jobs.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No jobs in this workflow</div>
+{% call ui::empty("No jobs in this workflow") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
-                <th>ID</th>
+                <th>Job</th>
                 <th>Worker</th>
                 <th>State</th>
-                <th>Attempt</th>
-                <th>Dependencies</th>
+                <th class="ik-num">Attempt</th>
+                <th>Depends on</th>
             </tr>
         </thead>
         <tbody>
             {% for job in jobs %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
                 <td>
-                    <div class="flex flex-wrap gap-1">
-                        <span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="ik-badge ik-dot {{ job.state_class() }}">{{ job.state }}</span>
                         {% if let Some(rs) = job.saga_rollback_state() %}
-                        <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                        <span class="ik-badge ik-badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
                         {% endif %}
                         {% if job.is_compensation %}
-                        <span class="badge badge-ghost badge-sm" title="Saga compensation job">compensation</span>
+                        <span class="ik-badge ik-badge-sm ik-tone-neutral" title="Saga compensation job">compensation</span>
                         {% endif %}
                     </div>
                 </td>
-                <td class="tabular-nums">{{ job.attempt }}/{{ job.max_attempts }}</td>
+                <td class="ik-num">{{ job.attempt }}<span class="ik-muted">/{{ job.max_attempts }}</span></td>
                 <td>
                     {% if job.dependencies.is_empty() %}
-                    <span class="text-base-content/30">—</span>
+                    <span class="ik-none">—</span>
                     {% else %}
-                    {% for dep_id in job.dependencies %}
-                    <a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ dep_id }}">#{{ dep_id }}</a>{% if !loop.last %}, {% endif %}
-                    {% endfor %}
+                    <div class="flex flex-wrap gap-x-2 gap-y-1">
+                        {% for dep_id in job.dependencies %}
+                        <a class="ik-link ik-mono text-xs" href="{{ base_path }}/jobs/{{ dep_id }}">#{{ dep_id }}</a>
+                        {% endfor %}
+                    </div>
                     {% endif %}
                 </td>
             </tr>

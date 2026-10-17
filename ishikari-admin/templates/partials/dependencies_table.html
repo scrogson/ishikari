@@ -1,45 +1,46 @@
+{% import "partials/ui.html" as ui %}
 {% if dependencies.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No job dependencies found.</div>
+{% call ui::empty("No job dependencies found") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
                 <th>Job</th>
                 <th>Worker</th>
                 <th>State</th>
-                <th></th>
-                <th>Depends On</th>
-                <th>Dependency Worker</th>
-                <th>Dependency State</th>
+                <th><span class="sr-only">Status</span></th>
+                <th>Depends on</th>
+                <th>Dependency worker</th>
+                <th>Dependency state</th>
                 <th>Workflow</th>
             </tr>
         </thead>
         <tbody>
             {% for dep in dependencies.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/dependencies/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ dep.job_worker }}">{{ dep.job_worker|short_name }}</span></td>
-                <td><span class="badge badge-soft badge-sm {{ dep.job_state_class() }}">{{ dep.job_state }}</span></td>
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/dependencies/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                <td class="ik-mono text-xs"><span data-tip="{{ dep.job_worker }}">{{ dep.job_worker|short_name }}</span></td>
+                <td><span class="ik-badge ik-dot {{ dep.job_state_class() }}">{{ dep.job_state }}</span></td>
                 <td>
                     {% if dep.is_blocking() %}
-                    <span class="tooltip text-warning" data-tip="Blocking">
-                        <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>
+                    <span class="inline-flex text-ik-warning" data-tip="Blocking" aria-label="Blocking">
+                        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
                     </span>
                     {% else %}
-                    <span class="tooltip text-success" data-tip="Satisfied">
-                        <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                    <span class="inline-flex text-ik-success" data-tip="Satisfied" aria-label="Satisfied">
+                        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
                     </span>
                     {% endif %}
                 </td>
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/dependencies/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ dep.depends_on_worker }}">{{ dep.depends_on_worker|short_name }}</span></td>
-                <td><span class="badge badge-soft badge-sm {{ dep.depends_on_state_class() }}">{{ dep.depends_on_state }}</span></td>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/dependencies/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
+                <td class="ik-mono text-xs"><span data-tip="{{ dep.depends_on_worker }}">{{ dep.depends_on_worker|short_name }}</span></td>
+                <td><span class="ik-badge ik-dot {{ dep.depends_on_state_class() }}">{{ dep.depends_on_state }}</span></td>
                 <td>
                     {% if let Some(wf_id) = dep.workflow_id %}
-                    <a class="link link-hover" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = dep.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                    <a class="ik-link" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = dep.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
                     {% else %}
-                    <span class="text-base-content/30">—</span>
+                    <span class="ik-none">—</span>
                     {% endif %}
                 </td>
             </tr>
@@ -47,30 +48,9 @@
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}" hx-get="{{ base_path }}/api/dependencies?page={{ page - 1 }}" hx-target="#dependencies-table">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-            {% if p == page %}
-            <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-            {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
-            <a class="join-item btn btn-sm" href="?page={{ p }}" hx-get="{{ base_path }}/api/dependencies?page={{ p }}" hx-target="#dependencies-table">{{ p }}</a>
-            {% else if p == 4 && page > 5 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% else if p == total_pages - 2 && page < total_pages - 4 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}" hx-get="{{ base_path }}/api/dependencies?page={{ page + 1 }}" hx-target="#dependencies-table">»</a>
-        {% endif %}
-    </div>
-</div>
-{% endif %}
+{% let pager_api = "/api/dependencies" %}
+{% let pager_target = "#dependencies-table" %}
+{% let pager_include = "#dependencies-filter-form" %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}

@@ -1,213 +1,245 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Analytics{% endblock %}
 
-{% macro count_row(label, value, class) %}
-<div class="flex items-center justify-between py-2">
-    <dt class="text-sm text-base-content/60">{{ label }}</dt>
-    <dd><span class="badge badge-soft badge-sm tabular-nums {{ class }}">{{ value }}</span></dd>
-</div>
+{#- A share of a proportional bar -#}
+{% macro segment(label, count, tone) %}
+{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count }}"></span>{% endif %}
+{% endmacro %}
+
+{#- A legend row: swatch, label, count -#}
+{% macro count_row(label, value, tone) %}
+<dt class="flex items-center gap-2"><span class="ik-swatch {{ tone }}"></span>{{ label }}</dt>
+<dd class="justify-end font-medium tabular-nums{% if value == 0 %} ik-muted{% endif %}">{{ value }}</dd>
 {% endmacro %}
 
 {% block content %}
-<div>
-    <h1 class="text-2xl font-bold tracking-tight">Analytics Dashboard</h1>
-    <p class="text-sm text-base-content/60">Workflow and job performance metrics</p>
-</div>
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Analytics</h1>
+        <p class="ik-subtitle">Workflow and job performance</p>
+    </div>
+</header>
 
-<!-- Summary tiles -->
-<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Workflow Success Rate</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums">{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}%</div>
-        <progress class="progress mt-2 w-full {{ analytics.workflow_success_progress() }}" value="{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}" max="100"></progress>
-        <div class="mt-1 text-xs text-base-content/50">
-            {{ analytics.workflow_stats.completed }} / {{ analytics.workflow_stats.completed + analytics.workflow_stats.failed }} completed
+<!-- Headline numbers -->
+<div class="ik-card">
+    <div class="ik-metrics border-t-0 grid-cols-2 lg:grid-cols-4">
+        <div class="ik-stat {{ analytics.workflow_success_class() }}">
+            <div class="ik-stat-label"><span class="ik-swatch"></span>Workflow success</div>
+            <div class="ik-stat-value">{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}%</div>
+            <progress class="ik-progress {{ analytics.workflow_success_class() }}" value="{{ "{:.1}"|format(analytics.workflow_stats.success_rate * 100.0) }}" max="100"></progress>
+            <div class="ik-stat-meta"><span class="tabular-nums">{{ analytics.workflow_stats.completed }} / {{ analytics.workflow_stats.completed + analytics.workflow_stats.failed }}</span> completed</div>
         </div>
-    </div>
-
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Job Success Rate</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums">{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%</div>
-        <progress class="progress mt-2 w-full {{ analytics.job_success_progress() }}" value="{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}" max="100"></progress>
-        <div class="mt-1 text-xs text-base-content/50">
-            {{ analytics.job_stats.completed }} / {{ analytics.job_stats.completed + analytics.job_stats.discarded }} completed
+        <div class="ik-stat {{ analytics.job_success_class() }}">
+            <div class="ik-stat-label"><span class="ik-swatch"></span>Job success</div>
+            <div class="ik-stat-value">{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%</div>
+            <progress class="ik-progress {{ analytics.job_success_class() }}" value="{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}" max="100"></progress>
+            <div class="ik-stat-meta"><span class="tabular-nums">{{ analytics.job_stats.completed }} / {{ analytics.job_stats.completed + analytics.job_stats.discarded }}</span> completed</div>
         </div>
-    </div>
-
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Active Work</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums text-info">{{ analytics.workflow_stats.running }}</div>
-        <div class="mt-1 text-xs text-base-content/50">workflows running</div>
-    </div>
-
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Blocked Jobs</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums {% if analytics.dependency_stats.blocked_jobs > 0 %}text-warning{% endif %}">{{ analytics.dependency_stats.blocked_jobs }}</div>
-        <div class="mt-1 text-xs text-base-content/50">waiting on dependencies</div>
+        {% call ui::tile("Active work", analytics.workflow_stats.running, "ik-tone-info", "workflows running") %}
+        {% if analytics.dependency_stats.blocked_jobs > 0 %}
+        {% call ui::tile("Blocked jobs", analytics.dependency_stats.blocked_jobs, "ik-tone-warning", "waiting on dependencies") %}
+        {% else %}
+        {% call ui::tile("Blocked jobs", analytics.dependency_stats.blocked_jobs, "ik-tone-neutral", "waiting on dependencies") %}
+        {% endif %}
     </div>
 </div>
 
-<div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-    <section class="card border border-base-300 bg-base-100 shadow-sm">
-        <div class="card-body gap-2">
-            <div class="flex items-center justify-between">
-                <h2 class="card-title text-base">Workflows</h2>
-                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.workflow_stats.total }} total</span>
+<!-- Breakdowns -->
+<div class="grid gap-6 lg:grid-cols-3">
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Workflows</h2>
+                <p class="ik-card-desc"><span class="tabular-nums">{{ analytics.workflow_stats.total }}</span> in total</p>
             </div>
-            <dl class="divide-y divide-base-300">
-                {% call count_row("Running", analytics.workflow_stats.running, "badge-info") %}
-                {% call count_row("Completed", analytics.workflow_stats.completed, "badge-success") %}
-                {% call count_row("Failed", analytics.workflow_stats.failed, "badge-error") %}
-                {% call count_row("Cancelled", analytics.workflow_stats.cancelled, "badge-neutral") %}
+        </div>
+        <div class="ik-card-body space-y-4">
+            <div class="ik-meter" role="img" aria-label="Workflows by state">
+                {% call segment("Running", analytics.workflow_stats.running, "ik-tone-info") %}
+                {% call segment("Completed", analytics.workflow_stats.completed, "ik-tone-success") %}
+                {% call segment("Failed", analytics.workflow_stats.failed, "ik-tone-danger") %}
+                {% call segment("Cancelled", analytics.workflow_stats.cancelled, "ik-tone-neutral") %}
+            </div>
+            <dl class="ik-dl">
+                {% call count_row("Running", analytics.workflow_stats.running, "ik-tone-info") %}
+                {% call count_row("Completed", analytics.workflow_stats.completed, "ik-tone-success") %}
+                {% call count_row("Failed", analytics.workflow_stats.failed, "ik-tone-danger") %}
+                {% call count_row("Cancelled", analytics.workflow_stats.cancelled, "ik-tone-neutral") %}
             </dl>
         </div>
     </section>
 
-    <section class="card border border-base-300 bg-base-100 shadow-sm">
-        <div class="card-body gap-2">
-            <div class="flex items-center justify-between">
-                <h2 class="card-title text-base">Jobs</h2>
-                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.job_stats.total }} total</span>
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Jobs</h2>
+                <p class="ik-card-desc"><span class="tabular-nums">{{ analytics.job_stats.total }}</span> in total</p>
             </div>
-            <dl class="divide-y divide-base-300">
-                {% call count_row("Available", analytics.job_stats.available, "badge-primary") %}
-                {% call count_row("Executing", analytics.job_stats.executing, "badge-info") %}
-                {% call count_row("Completed", analytics.job_stats.completed, "badge-success") %}
-                {% call count_row("Retryable", analytics.job_stats.retryable, "badge-warning") %}
-                {% call count_row("Discarded", analytics.job_stats.discarded, "badge-error") %}
+        </div>
+        <div class="ik-card-body space-y-4">
+            <div class="ik-meter" role="img" aria-label="Jobs by state">
+                {% call segment("Available", analytics.job_stats.available, "ik-tone-primary") %}
+                {% call segment("Executing", analytics.job_stats.executing, "ik-tone-info") %}
+                {% call segment("Retryable", analytics.job_stats.retryable, "ik-tone-warning") %}
+                {% call segment("Completed", analytics.job_stats.completed, "ik-tone-success") %}
+                {% call segment("Discarded", analytics.job_stats.discarded, "ik-tone-danger") %}
+            </div>
+            <dl class="ik-dl">
+                {% call count_row("Available", analytics.job_stats.available, "ik-tone-primary") %}
+                {% call count_row("Executing", analytics.job_stats.executing, "ik-tone-info") %}
+                {% call count_row("Completed", analytics.job_stats.completed, "ik-tone-success") %}
+                {% call count_row("Retryable", analytics.job_stats.retryable, "ik-tone-warning") %}
+                {% call count_row("Discarded", analytics.job_stats.discarded, "ik-tone-danger") %}
             </dl>
         </div>
     </section>
 
-    <section class="card border border-base-300 bg-base-100 shadow-sm">
-        <div class="card-body gap-2">
-            <div class="flex items-center justify-between">
-                <h2 class="card-title text-base">Dependencies</h2>
-                <span class="text-sm tabular-nums text-base-content/60">{{ analytics.dependency_stats.total_deps }} total</span>
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Dependencies</h2>
+                <p class="ik-card-desc"><span class="tabular-nums">{{ analytics.dependency_stats.total_deps }}</span> in total</p>
             </div>
-            <dl class="divide-y divide-base-300">
-                {% call count_row("Pending", analytics.dependency_stats.pending, "badge-warning") %}
-                {% call count_row("Satisfied", analytics.dependency_stats.satisfied, "badge-success") %}
-                {% call count_row("Failed", analytics.dependency_stats.failed, "badge-error") %}
+        </div>
+        <div class="ik-card-body space-y-4">
+            <div class="ik-meter" role="img" aria-label="Dependencies by state">
+                {% call segment("Pending", analytics.dependency_stats.pending, "ik-tone-warning") %}
+                {% call segment("Satisfied", analytics.dependency_stats.satisfied, "ik-tone-success") %}
+                {% call segment("Failed", analytics.dependency_stats.failed, "ik-tone-danger") %}
+            </div>
+            <dl class="ik-dl">
+                {% call count_row("Pending", analytics.dependency_stats.pending, "ik-tone-warning") %}
+                {% call count_row("Satisfied", analytics.dependency_stats.satisfied, "ik-tone-success") %}
+                {% call count_row("Failed", analytics.dependency_stats.failed, "ik-tone-danger") %}
             </dl>
         </div>
     </section>
 </div>
 
 {% if !analytics.workflow_types.is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Workflow Types</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Total</th>
-                        <th>Completed</th>
-                        <th>Failed</th>
-                        <th>Success Rate</th>
-                        <th>Avg Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for wf in analytics.workflow_types.iter() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td class="font-medium">{{ wf.name }}</td>
-                        <td class="tabular-nums">{{ wf.total }}</td>
-                        <td class="tabular-nums text-success">{{ wf.completed }}</td>
-                        <td class="tabular-nums {% if wf.failed > 0 %}text-error{% else %}text-base-content/40{% endif %}">{{ wf.failed }}</td>
-                        <td>
-                            <div class="flex items-center gap-2">
-                                <progress class="progress w-24 {% if wf.success_rate >= 0.95 %}progress-success{% elif wf.success_rate >= 0.80 %}progress-warning{% else %}progress-error{% endif %}" value="{{ "{:.1}"|format(wf.success_rate * 100.0) }}" max="100"></progress>
-                                <span class="text-xs tabular-nums">{{ "{:.1}"|format(wf.success_rate * 100.0) }}%</span>
-                            </div>
-                        </td>
-                        <td class="tabular-nums">
-                            {% match wf.avg_duration_secs %}
-                            {% when Some with (secs) %}
-                            {{ "{:.1}"|format(secs) }}s
-                            {% when None %}
-                            <span class="text-base-content/30">—</span>
-                            {% endmatch %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Workflow Types</h2>
+            <p class="ik-card-desc">Outcomes and duration by workflow name</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th class="ik-num">Total</th>
+                    <th class="ik-num">Completed</th>
+                    <th class="ik-num">Failed</th>
+                    <th>Success rate</th>
+                    <th class="ik-num">Avg duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for wf in analytics.workflow_types.iter() %}
+                <tr>
+                    <td class="font-medium">{{ wf.name }}</td>
+                    <td class="ik-num">{{ wf.total }}</td>
+                    <td class="ik-num">{{ wf.completed }}</td>
+                    <td class="ik-num {% if wf.failed > 0 %}font-medium text-ik-danger{% else %}ik-muted{% endif %}">{{ wf.failed }}</td>
+                    <td>
+                        <div class="flex items-center gap-3">
+                            <progress class="ik-progress w-24 {% if wf.success_rate >= 0.95 %}ik-tone-success{% elif wf.success_rate >= 0.80 %}ik-tone-warning{% else %}ik-tone-danger{% endif %}" value="{{ "{:.1}"|format(wf.success_rate * 100.0) }}" max="100"></progress>
+                            <span class="text-xs tabular-nums">{{ "{:.1}"|format(wf.success_rate * 100.0) }}%</span>
+                        </div>
+                    </td>
+                    <td class="ik-num whitespace-nowrap">
+                        {% match wf.avg_duration_secs %}
+                        {% when Some with (secs) %}
+                        {{ "{:.1}"|format(secs) }}s
+                        {% when None %}
+                        <span class="ik-none">—</span>
+                        {% endmatch %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}
 
 {% if !analytics.worker_stats.is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Worker Performance</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Worker</th>
-                        <th>Total</th>
-                        <th>Completed</th>
-                        <th>Discarded</th>
-                        <th>Avg Attempts</th>
-                        <th>Avg Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for w in analytics.worker_stats.iter() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ w.worker }}">{{ w.worker|short_name }}</span></td>
-                        <td class="tabular-nums">{{ w.total }}</td>
-                        <td class="tabular-nums text-success">{{ w.completed }}</td>
-                        <td class="tabular-nums {% if w.discarded > 0 %}text-error{% else %}text-base-content/40{% endif %}">{{ w.discarded }}</td>
-                        <td class="tabular-nums">{{ "{:.2}"|format(w.avg_attempts) }}</td>
-                        <td class="tabular-nums">
-                            {% match w.avg_duration_secs %}
-                            {% when Some with (secs) %}
-                            {{ "{:.1}"|format(secs) }}s
-                            {% when None %}
-                            <span class="text-base-content/30">—</span>
-                            {% endmatch %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Worker Performance</h2>
+            <p class="ik-card-desc">Outcomes, attempts and duration by worker</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th class="ik-num">Total</th>
+                    <th class="ik-num">Completed</th>
+                    <th class="ik-num">Discarded</th>
+                    <th class="ik-num">Avg attempts</th>
+                    <th class="ik-num">Avg duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in analytics.worker_stats.iter() %}
+                <tr>
+                    <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ w.worker }}">{{ w.worker|short_name }}</span></td>
+                    <td class="ik-num">{{ w.total }}</td>
+                    <td class="ik-num">{{ w.completed }}</td>
+                    <td class="ik-num {% if w.discarded > 0 %}font-medium text-ik-danger{% else %}ik-muted{% endif %}">{{ w.discarded }}</td>
+                    <td class="ik-num">{{ "{:.2}"|format(w.avg_attempts) }}</td>
+                    <td class="ik-num whitespace-nowrap">
+                        {% match w.avg_duration_secs %}
+                        {% when Some with (secs) %}
+                        {{ "{:.1}"|format(secs) }}s
+                        {% when None %}
+                        <span class="ik-none">—</span>
+                        {% endmatch %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}
 
 {% if !analytics.failure_patterns.is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base text-error">Common Failure Patterns</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Worker</th>
-                        <th>Error Type</th>
-                        <th>Count</th>
-                        <th>Last Seen</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for fp in analytics.failure_patterns.iter() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ fp.worker }}">{{ fp.worker|short_name }}</span></td>
-                        <td class="max-w-md truncate"><code class="font-mono text-xs text-error" title="{{ fp.error_type }}">{{ fp.error_type }}</code></td>
-                        <td><span class="badge badge-soft badge-sm badge-error tabular-nums">{{ fp.count }}</span></td>
-                        <td class="whitespace-nowrap text-base-content/60">{{ fp.last_seen.format("%Y-%m-%d %H:%M") }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Failure Patterns</h2>
+            <p class="ik-card-desc">Discarded jobs grouped by worker and error</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Error</th>
+                    <th class="ik-num">Count</th>
+                    <th>Last seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for fp in analytics.failure_patterns.iter() %}
+                <tr>
+                    <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ fp.worker }}">{{ fp.worker|short_name }}</span></td>
+                    <td class="max-w-md truncate"><code class="ik-mono text-xs text-ik-danger" title="{{ fp.error_type }}">{{ fp.error_type }}</code></td>
+                    <td class="ik-num"><span class="ik-badge ik-tone-danger tabular-nums">{{ fp.count }}</span></td>
+                    <td class="whitespace-nowrap ik-muted tabular-nums">{{ fp.last_seen.format("%Y-%m-%d %H:%M") }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}

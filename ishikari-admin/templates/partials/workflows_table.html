@@ -1,59 +1,46 @@
+{% import "partials/ui.html" as ui %}
 {% if workflows.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No workflows found</div>
+{% call ui::empty("No workflows found") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
-                <th>ID</th>
+                <th>Workflow</th>
                 <th>Name</th>
                 <th>State</th>
                 <th>Progress</th>
-                <th>Jobs</th>
+                <th class="ik-num">Jobs</th>
                 <th>Created</th>
             </tr>
         </thead>
         <tbody>
             {% for workflow in workflows %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/workflows/{{ workflow.id }}">#{{ workflow.id }}</a></td>
-                <td><a class="link link-hover font-medium" href="{{ base_path }}/workflows/{{ workflow.id }}">{{ workflow.name }}</a></td>
-                <td><span class="badge badge-soft badge-sm {{ workflow.state_class() }}">{{ workflow.state }}</span></td>
-                <td class="min-w-28">
-                    <progress class="progress {% if workflow.failed_jobs > 0 %}progress-error{% else %}progress-success{% endif %} w-full" value="{{ workflow.progress() }}" max="100"></progress>
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/workflows/{{ workflow.id }}">#{{ workflow.id }}</a></td>
+                <td class="font-medium"><a class="ik-link-quiet" href="{{ base_path }}/workflows/{{ workflow.id }}">{{ workflow.name }}</a></td>
+                <td><span class="ik-badge ik-dot {{ workflow.state_class() }}">{{ workflow.state }}</span></td>
+                <td>
+                    <div class="flex min-w-32 items-center gap-2.5">
+                        <progress class="ik-progress {% if workflow.failed_jobs > 0 %}ik-tone-danger{% else %}ik-tone-success{% endif %}" value="{{ workflow.progress() }}" max="100"></progress>
+                        <span class="w-9 shrink-0 text-right text-xs ik-muted tabular-nums">{{ workflow.progress() }}%</span>
+                    </div>
                 </td>
-                <td class="whitespace-nowrap tabular-nums">
-                    {{ workflow.completed_jobs + workflow.failed_jobs }}/{{ workflow.job_count }}
+                <td class="ik-num whitespace-nowrap">
                     {% if workflow.failed_jobs > 0 %}
-                    <span class="text-xs text-error">({{ workflow.failed_jobs }} failed)</span>
+                    <span class="mr-1.5 text-xs text-ik-danger">{{ workflow.failed_jobs }} failed</span>
                     {% endif %}
+                    {{ workflow.completed_jobs + workflow.failed_jobs }}<span class="ik-muted">/{{ workflow.job_count }}</span>
                 </td>
-                <td class="whitespace-nowrap text-base-content/60">{{ workflow.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ workflow.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-        {% if p == page %}
-        <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-        {% else %}
-        <a class="join-item btn btn-sm" href="?page={{ p }}">{{ p }}</a>
-        {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}">»</a>
-        {% endif %}
-    </div>
-</div>
-{% endif %}
+{% let pager_api = "/api/workflows" %}
+{% let pager_target = "#workflows-table" %}
+{% let pager_include = "#workflows-filter-form" %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}

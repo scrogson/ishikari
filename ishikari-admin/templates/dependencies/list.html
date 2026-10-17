@@ -1,53 +1,49 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Job Dependencies{% endblock %}
 
 {% block content %}
-<div>
-    <h1 class="text-2xl font-bold tracking-tight">Job Dependencies</h1>
-    <p class="text-sm text-base-content/60">View and manage job dependency relationships</p>
-</div>
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Dependencies</h1>
+        <p class="ik-subtitle">Jobs waiting on other jobs, and what they wait on</p>
+    </div>
+</header>
 
-<!-- Stats -->
 <section class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Total Dependencies</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums">{{ stats.total_dependencies }}</div>
-    </div>
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Blocked Jobs</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums text-warning">{{ stats.blocked_jobs }}</div>
-    </div>
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Ready Jobs</div>
-        <div class="mt-1 text-3xl font-bold tabular-nums text-success">{{ stats.ready_jobs }}</div>
-    </div>
+    {% call ui::tile("Total dependencies", stats.total_dependencies, "ik-tone-primary", "") %}
+    {% call ui::tile("Blocked jobs", stats.blocked_jobs, "ik-tone-warning", "") %}
+    {% call ui::tile("Ready jobs", stats.ready_jobs, "ik-tone-success", "") %}
 </section>
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <div class="flex flex-wrap items-end justify-between gap-4">
-            <h2 class="card-title text-base">Dependency Relationships</h2>
-
-            <!-- Filters -->
-            <form class="flex flex-wrap items-end gap-3" hx-get="{{ base_path }}/api/dependencies" hx-target="#dependencies-table" hx-trigger="change">
-                <fieldset class="fieldset py-0">
-                    <legend class="fieldset-legend">Filter</legend>
-                    <select name="blocked" class="select select-sm w-48">
-                        <option value="">All Dependencies</option>
-                        <option value="true" {% if show_blocked_only %}selected{% endif %}>Blocking Only</option>
-                    </select>
-                </fieldset>
-                {% if workflow_id.is_some() %}
-                <input type="hidden" name="workflow_id" value="{{ workflow_id.unwrap() }}">
-                <a href="{{ base_path }}/dependencies" class="btn btn-ghost btn-sm">Clear Workflow Filter</a>
-                {% endif %}
-            </form>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Relationships</h2>
+            <p class="ik-card-desc">Each row: a job, and a job it depends on{% if let Some(wf_id) = workflow_id %} · workflow <span class="ik-mono">#{{ wf_id }}</span>{% endif %}</p>
         </div>
 
-        <div id="dependencies-table">
-            {% include "partials/dependencies_table.html" %}
-        </div>
+        <form id="dependencies-filter-form" class="flex flex-wrap items-center gap-2" hx-get="{{ base_path }}/api/dependencies" hx-target="#dependencies-table" hx-trigger="change">
+            <label class="flex items-center gap-2">
+                <span class="ik-label">Show</span>
+                <select name="blocked" class="ik-select ik-input-sm w-48">
+                    <option value="">All Dependencies</option>
+                    <option value="true" {% if show_blocked_only %}selected{% endif %}>Blocking Only</option>
+                </select>
+            </label>
+            {% if workflow_id.is_some() %}
+            <input type="hidden" name="workflow_id" value="{{ workflow_id.unwrap() }}">
+            <a href="{{ base_path }}/dependencies" class="ik-btn ik-btn-ghost ik-btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                Clear workflow filter
+            </a>
+            {% endif %}
+        </form>
+    </div>
+
+    <div id="dependencies-table">
+        {% include "partials/dependencies_table.html" %}
     </div>
 </section>
 {% endblock %}

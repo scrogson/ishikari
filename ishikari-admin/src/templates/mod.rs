@@ -19,9 +19,28 @@ use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
 use crate::NavItem;
 
+mod highlight;
+
 /// Custom askama filters available to all admin templates.
 mod filters {
+    use askama::filters::Safe;
     use std::fmt::Display;
+
+    /// JSON as HTML with its tokens in `ik-tok-*` spans; other text only escaped.
+    pub fn highlight_json<T: Display>(
+        s: T,
+        _: &dyn askama::Values,
+    ) -> askama::Result<Safe<String>> {
+        Ok(Safe(super::highlight::json(&s.to_string())))
+    }
+
+    /// YAML as HTML with its tokens in `ik-tok-*` spans.
+    pub fn highlight_yaml<T: Display>(
+        s: T,
+        _: &dyn askama::Values,
+    ) -> askama::Result<Safe<String>> {
+        Ok(Safe(super::highlight::yaml(&s.to_string())))
+    }
 
     /// Last `::` segment of a path, e.g. `app::workers::SendEmail` -> `SendEmail`.
     pub fn short_name<T: Display>(s: T, _: &dyn askama::Values) -> askama::Result<String> {
@@ -93,6 +112,7 @@ pub struct DashboardTemplate {
 #[derive(Template, WebTemplate)]
 #[template(path = "partials/stats.html")]
 pub struct StatsPartial {
+    pub base_path: String,
     pub stats: JobStats,
 }
 

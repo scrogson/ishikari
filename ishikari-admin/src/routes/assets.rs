@@ -1,8 +1,8 @@
 //! Embedded static assets for the server-rendered admin UI.
 //!
-//! `admin.css` (the standalone pages, themes included) and `admin-embed.css` (for a host's
-//! layout: no themes) are compiled from `styles/` (Tailwind + daisyUI); rebuild them with
-//! `mise run admin:css` after changing templates.
+//! `admin.css` (the standalone pages, light and dark) and `admin-embed.css` (for a host's
+//! layout: no theme, colored by the host's variables) are compiled from `styles/` (Tailwind);
+//! rebuild them with `mise run admin:css` after changing templates.
 
 use axum::{
     extract::Path,

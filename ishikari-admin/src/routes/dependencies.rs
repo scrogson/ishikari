@@ -55,14 +55,15 @@ impl DependencyInfo {
 
 fn state_to_class(state: &str) -> &'static str {
     match state {
-        "available" => "badge-primary",
-        "pending" => "badge-neutral",
-        "scheduled" => "badge-secondary",
-        "executing" => "badge-info",
-        "completed" => "badge-success",
-        "discarded" | "cancelled" => "badge-error",
-        "retryable" => "badge-warning",
-        _ => "badge-ghost",
+        "available" => "ik-tone-primary",
+        "pending" => "ik-tone-neutral",
+        "scheduled" => "ik-tone-violet",
+        "executing" => "ik-tone-info ik-live",
+        "completed" => "ik-tone-success",
+        "discarded" => "ik-tone-danger",
+        "cancelled" => "ik-tone-neutral",
+        "retryable" => "ik-tone-warning",
+        _ => "ik-tone-neutral",
     }
 }
 

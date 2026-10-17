@@ -1,0 +1,44 @@
+/* The dashboard's design tokens, as Tailwind theme colors under `ik-` (`bg-ik-card`,
+   `text-ik-muted-fg`, `border-ik-border`...), so its utilities never clash with a host's.
+
+   `inline`: each value is written into the rule that uses it rather than read from a variable
+   set once on :root, so it resolves on the element itself, under whatever theme applies there
+   (a host's `.dark` or `data-theme` on any ancestor).
+
+   Each token takes the first of these that the page sets:
+     1. --ik-<token>            the dashboard's own, to restyle just it
+     2. --<token>               shadcn/ui's names (--primary, --background, --border...)
+     3. --color-<token>         Tailwind theme colors (--color-primary...)
+     4. daisyUI 5's             (--color-base-100, --color-base-content, --color-error...)
+     5. a default, light or dark by the page's color-scheme
+   so a host's theme colors the dashboard without any setup, and one variable restyles it. */
+
+@theme inline {
+  --color-ik-fg: var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286))))));
+
+  --color-ik-bg: var(--ik-background, var(--background, var(--color-background, var(--color-base-200, light-dark(oklch(0.984 0.002 286), oklch(0.148 0.004 286))))));
+  --color-ik-card: var(--ik-card, var(--card, var(--color-card, var(--color-base-100, light-dark(oklch(1 0 0), oklch(0.186 0.005 286))))));
+  --color-ik-card-fg: var(--ik-card-foreground, var(--card-foreground, var(--color-card-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286))))));
+
+  /* Derived from the foreground by default, so they suit any surface */
+  --color-ik-muted: var(--ik-muted, var(--muted, color-mix(in oklab, var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286)))))) 4.5%, transparent)));
+  --color-ik-muted-fg: var(--ik-muted-foreground, var(--muted-foreground, var(--color-muted-foreground, color-mix(in oklab, var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286)))))) 62%, transparent))));
+  --color-ik-accent: var(--ik-accent, var(--accent, color-mix(in oklab, var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286)))))) 7%, transparent)));
+  --color-ik-border: var(--ik-border, var(--border, var(--color-border, color-mix(in oklab, var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286)))))) 10%, transparent))));
+  --color-ik-input: var(--ik-input, var(--input, var(--color-input, color-mix(in oklab, var(--ik-foreground, var(--foreground, var(--color-foreground, var(--color-base-content, light-dark(oklch(0.21 0.006 285.9), oklch(0.968 0.002 286)))))) 15%, transparent))));
+
+  --color-ik-primary: var(--ik-primary, var(--primary, var(--color-primary, light-dark(oklch(0.52 0.2 268), oklch(0.62 0.19 268)))));
+  --color-ik-primary-fg: var(--ik-primary-foreground, var(--primary-foreground, var(--color-primary-foreground, var(--color-primary-content, oklch(0.985 0 0)))));
+  --color-ik-ring: var(--ik-ring, var(--ring, var(--color-ring, var(--ik-primary, var(--primary, var(--color-primary, light-dark(oklch(0.52 0.2 268), oklch(0.62 0.19 268))))))));
+
+  /* States */
+  --color-ik-success: var(--ik-success, var(--success, var(--color-success, light-dark(oklch(0.56 0.15 155), oklch(0.74 0.16 158)))));
+  --color-ik-warning: var(--ik-warning, var(--warning, var(--color-warning, light-dark(oklch(0.62 0.16 62), oklch(0.81 0.15 80)))));
+  --color-ik-info: var(--ik-info, var(--info, var(--color-info, light-dark(oklch(0.56 0.16 240), oklch(0.75 0.13 230)))));
+  --color-ik-danger: var(--ik-destructive, var(--destructive, var(--color-destructive, var(--color-error, light-dark(oklch(0.56 0.21 25), oklch(0.7 0.19 22))))));
+  --color-ik-violet: var(--ik-violet, light-dark(oklch(0.54 0.22 295), oklch(0.75 0.15 295)));
+
+  /* Corners: cards take the radius, controls a little less */
+  --radius-ik: var(--ik-radius, var(--radius, var(--radius-box, 0.625rem)));
+  --radius-ik-sm: max(0px, calc(var(--ik-radius, var(--radius, var(--radius-box, 0.625rem))) - 3px));
+}

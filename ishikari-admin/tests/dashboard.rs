@@ -102,7 +102,7 @@ async fn analytics_groups_failures_by_worker_and_kind() {
         .expect("the failure patterns, with discarded jobs");
     assert!(patterns.contains(">SendEmail</span>"), "{patterns}");
     assert!(
-        patterns.contains(r#"badge-error tabular-nums">2</span>"#),
+        patterns.contains(r#"ik-tone-danger tabular-nums">2</span>"#),
         "{patterns}"
     );
 
