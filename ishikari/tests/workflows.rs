@@ -8,6 +8,7 @@ use common::{eventually, TestDb};
 use ishikari::prelude::*;
 use ishikari::workflows::{Dag, Pipeline, Saga, Workflow, WorkflowState};
 use ishikari::{Engine, Postgres, Queue};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[ishikari::job]
@@ -117,6 +118,60 @@ async fn dag_steps_wait_for_their_upstreams() {
     assert!(s
         .values()
         .all(|(state, attempt, ..)| state == "completed" && *attempt == 1));
+
+    db.finish().await;
+}
+
+#[ishikari::job]
+#[derive(Clone)]
+struct Together;
+
+#[ishikari::worker]
+impl Worker for Together {
+    async fn perform(&self, ctx: Context) -> PerformResult {
+        // Finishes only when the other step does.
+        ctx.state::<tokio::sync::Barrier>()?.wait().await;
+        Complete::default().into()
+    }
+}
+
+#[tokio::test]
+async fn a_workflow_whose_last_steps_finish_together_completes() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    // The resolver sweeps once at start and not again, so it can't complete a workflow its last
+    // completion missed.
+    let _engine = Engine::builder("test")
+        .resolver_interval(Duration::from_secs(3600))
+        .with_state(Arc::new(tokio::sync::Barrier::new(2)))
+        .with_queue(
+            Queue::builder("default")
+                .concurrency(2)
+                .interval(Duration::from_millis(5)),
+        )
+        .start(Postgres::new(db.pool.clone()));
+
+    const RUNS: usize = 100;
+    let mut stuck = 0;
+    for _ in 0..RUNS {
+        let wf = Dag::new("together")
+            .add("a", Together)
+            .add("b", Together)
+            .run(&db.pool)
+            .await
+            .unwrap();
+        eventually("both steps complete", Duration::from_secs(10), || async {
+            let s = steps(&db, wf.id).await;
+            s.values().all(|(state, ..)| state == "completed")
+        })
+        .await;
+        // The last step's completion completes the workflow in the same transaction.
+        if workflow_state(&db, wf.id).await != "completed" {
+            stuck += 1;
+        }
+    }
+    assert_eq!(stuck, 0, "{stuck} of {RUNS} workflows stayed running");
 
     db.finish().await;
 }

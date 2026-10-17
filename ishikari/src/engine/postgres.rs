@@ -210,7 +210,7 @@ impl Postgres {
     /// After `id` completed: mark what depended on it satisfied, make available the dependents
     /// with nothing left to wait for, and complete the workflow when every job in it has. The
     /// dependents are locked first, so two upstreams finishing at once can't both leave the
-    /// shared dependent waiting.
+    /// shared dependent waiting; the workflow is locked before its check for the same reason.
     async fn after_completed(
         &self,
         tx: &mut sqlx::PgConnection,
@@ -254,11 +254,19 @@ impl Postgres {
             }
         }
         if let Some(workflow_id) = workflow_id {
+            let workflows = self.name("ishikari_workflows");
+            // Taken last, after the job rows. The last steps' completions wait here for each
+            // other, so the last one's check sees every other step completed.
+            sqlx::query(&format!(
+                "SELECT 1 FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
+            ))
+            .bind(workflow_id)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query(&format!(
                 "UPDATE {workflows} SET state = 'completed', completed_at = now() \
                  WHERE id = $1 AND state = 'running' \
-                   AND NOT EXISTS (SELECT 1 FROM {jobs} WHERE workflow_id = $1 AND state <> 'completed')",
-                workflows = self.name("ishikari_workflows"),
+                   AND NOT EXISTS (SELECT 1 FROM {jobs} WHERE workflow_id = $1 AND state <> 'completed')"
             ))
             .bind(workflow_id)
             .execute(&mut *tx)
