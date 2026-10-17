@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A workflow whose last steps finish at the same time completes then, not at the resolver's
+  next sweep: each completion locks the workflow's row before checking whether every step has
+  completed, so the last one sees the others.
+
 ## 0.2.1
 
 All four crates move to 0.2.1 together; only `ishikari-admin` changed.
