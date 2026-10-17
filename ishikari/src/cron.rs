@@ -112,9 +112,19 @@ impl Cron {
 
     /// The slots after `after`, up to and including `until` (at most 100).
     pub fn due(&self, after: DateTime<Utc>, until: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+        self.slots(after, until, MAX_SLOTS)
+    }
+
+    /// The first `limit` slots after `after`, up to and including `until`.
+    fn slots(
+        &self,
+        after: DateTime<Utc>,
+        until: DateTime<Utc>,
+        limit: usize,
+    ) -> Vec<DateTime<Utc>> {
         let mut slots = Vec::new();
         let mut from = after.with_timezone(&self.timezone);
-        while slots.len() < 100 {
+        while slots.len() < limit {
             let Ok(next) = self.schedule.find_next_occurrence(&from, false) else {
                 break;
             };
@@ -142,30 +152,62 @@ impl Cron {
             .unique(Unique::key(format!("ishikari:cron:{}:{slot_text}", self.name)).all_states());
         (self.insert)(storage, opts).await
     }
-}
 
-/// Insert every entry's slots that fell due after `after`, up to `until`. Returns how many
-/// jobs were inserted (slots another node had inserted don't count).
-pub(crate) async fn run_due(
-    entries: &[Cron],
-    storage: &Arc<Postgres>,
-    after: DateTime<Utc>,
-    until: DateTime<Utc>,
-) -> usize {
-    let mut inserted = 0;
-    for entry in entries {
-        for slot in entry.due(after, until) {
-            match entry.insert_slot(storage.clone(), slot).await {
+    /// Insert the slots that fell due after `after`, up to `until`, in order, stopping at the
+    /// first that fails and after [`MAX_SLOTS`]. Returns how many jobs were inserted (slots
+    /// another node had inserted don't count) and the time through which every slot is in:
+    /// `until`, or the last slot done before stopping. That is the next check's `after`.
+    async fn insert_due(
+        &self,
+        storage: &Arc<Postgres>,
+        after: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> (usize, DateTime<Utc>) {
+        let mut slots = self.slots(after, until, MAX_SLOTS + 1);
+        let more = slots.len() > MAX_SLOTS;
+        slots.truncate(MAX_SLOTS);
+        let mut inserted = 0;
+        let mut done = after;
+        for slot in slots {
+            match self.insert_slot(storage.clone(), slot).await {
                 Ok(Inserted::New(job)) => {
-                    tracing::info!(cron = %entry.name, %slot, id = job.id, "cron job inserted");
+                    tracing::info!(cron = %self.name, %slot, id = job.id, "cron job inserted");
                     inserted += 1;
                 }
                 Ok(Inserted::Duplicate(_)) => {}
                 Err(e) => {
-                    tracing::error!(cron = %entry.name, %slot, error = %e, "failed to insert cron job")
+                    tracing::error!(cron = %self.name, %slot, error = %e, "failed to insert cron job; retrying next check");
+                    return (inserted, done);
                 }
             }
+            done = slot;
         }
+        if more {
+            tracing::warn!(cron = %self.name, through = %done, "more than {MAX_SLOTS} cron slots due; inserting the rest next check");
+            return (inserted, done);
+        }
+        (inserted, until)
+    }
+}
+
+/// The most slots one check inserts for an entry; the next check goes on from the last.
+const MAX_SLOTS: usize = 100;
+
+/// Insert each entry's slots that fell due after its `done` time (but not before `floor`), up
+/// to `until`, and move `done` on through the slots that are in. A slot that fails to insert
+/// stays due, so the next check tries it again. Returns how many jobs were inserted.
+pub(crate) async fn run_due(
+    entries: &[Cron],
+    storage: &Arc<Postgres>,
+    done: &mut [DateTime<Utc>],
+    floor: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> usize {
+    let mut inserted = 0;
+    for (entry, done) in entries.iter().zip(done) {
+        let (new, through) = entry.insert_due(storage, (*done).max(floor), until).await;
+        inserted += new;
+        *done = through;
     }
     inserted
 }
