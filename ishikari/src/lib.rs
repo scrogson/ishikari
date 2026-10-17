@@ -570,7 +570,8 @@ pub trait Worker: Send + Sync {
     ///
     /// # Default
     ///
-    /// Returns a time 5 seconds in the future with exponential backoff if not overridden.
+    /// Returns a time 5 seconds in the future with exponential backoff if not overridden. A
+    /// backoff that panics gets the default instead.
     fn backoff(&self, attempt: i32) -> DateTime<Utc> {
         Backoff::Exponential(Duration::seconds(5)).next_retry(attempt)
     }
@@ -582,7 +583,8 @@ pub trait Worker: Send + Sync {
     }
 
     /// How long one attempt may run. When it runs longer, the attempt fails with a timeout
-    /// error and is retried like any other error. `None` (the default) lets it run.
+    /// error and is retried like any other error. `None` (the default) lets it run. A timeout
+    /// that panics fails the attempt, as a panicking `perform` does.
     fn timeout(&self) -> Option<std::time::Duration> {
         None
     }
