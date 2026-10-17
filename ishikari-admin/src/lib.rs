@@ -46,6 +46,7 @@ use tower_http::trace::TraceLayer;
 
 pub mod layout;
 pub mod routes;
+mod same_origin;
 pub mod templates;
 
 pub use layout::{embed_stylesheet_href, Layout, Page};
@@ -303,6 +304,7 @@ fn routes() -> Router<AppState> {
         .route("/builder", get(routes::frontend::serve_builder))
         // Embedded CSS/JS for the admin UI
         .route("/assets/{file}", get(routes::assets::serve))
+        .layer(axum::middleware::from_fn(same_origin::check))
 }
 
 /// Build the application router mounted at a specific path.
