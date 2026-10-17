@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`rust-version = "1.83"`** on every crate, checked in CI.
+- **Fewer dependencies:** `ishikari` no longer depends on `figment` or `tracing-subscriber`, and
+  asks `tokio` for `macros`, `rt`, `sync` and `time` (at least 1.41) instead of `full`. A host
+  that relied on `ishikari` to turn on other `tokio` features (`rt-multi-thread` for
+  `#[tokio::main]`, `signal`, `net`...) needs to ask for them itself.
+
 ## 0.3.0
 
 All four crates move to 0.3.0 together; only `ishikari-admin` changed: a redesigned dashboard.

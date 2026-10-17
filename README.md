@@ -25,7 +25,7 @@ transaction as your own writes, and they survive restarts, deploys and crashed n
 - **Admin dashboard** (`ishikari-admin`): an axum router you mount inside your app, behind your
   own auth.
 
-PostgreSQL 12 or later.
+PostgreSQL 12 or later, and Rust 1.83 or later.
 
 ## Install
 
