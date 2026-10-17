@@ -228,7 +228,6 @@ fn routes() -> Router<AppState> {
         .route("/jobs/{id}", get(routes::jobs::show))
         .route("/jobs/{id}/retry", post(routes::actions::retry_job))
         .route("/jobs/{id}/cancel", post(routes::actions::cancel_job))
-        .route("/jobs/{id}/discard", post(routes::jobs::discard))
         // Queues
         .route("/queues", get(routes::queues::list))
         .route("/queues/{name}", get(routes::queues::show))

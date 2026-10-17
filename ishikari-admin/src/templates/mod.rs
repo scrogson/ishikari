@@ -292,6 +292,8 @@ pub struct EnhancedJobDetailTemplate {
     pub base_path: String,
     pub nav_items: Vec<NavItem>,
     pub job: EnhancedJobDetail,
+    /// The action (`retry` or `cancel`) that just changed nothing.
+    pub unchanged: Option<String>,
 }
 
 /// Enhanced jobs table partial for htmx updates.
