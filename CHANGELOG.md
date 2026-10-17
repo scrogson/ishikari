@@ -7,6 +7,14 @@
 - A workflow whose last steps finish at the same time completes then, not at the resolver's
   next sweep: each completion locks the workflow's row before checking whether every step has
   completed, so the last one sees the others.
+- The admin's workflow Retry and Cancel each run in one transaction, locking the jobs' rows
+  before the workflow's: a retried step that completes during the retry completes the workflow
+  rather than leaving it running until the resolver's next sweep, and a cancel racing the last
+  step's completion leaves the workflow completed instead of overwriting it with cancelled.
+  Cancelling a workflow also records why in each step's errors, releases their unique keys and
+  cancels what depends on them outside it, as cancelling a job does.
+- Retrying a workflow keeps its steps' errors, the history of their earlier runs, instead of
+  clearing them, and clears their `discarded_at` and `cancelled_at`, as retrying a job does.
 
 ## 0.2.1
 
