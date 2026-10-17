@@ -97,9 +97,10 @@ impl QueueBuilder {
 
     /// Sets the polling interval for the queue.
     ///
-    /// This determines how often the queue checks for new jobs.
+    /// This determines how often the queue checks for new jobs. Panics if `interval` is zero.
+    #[track_caller]
     pub fn interval(mut self, interval: Duration) -> Self {
-        self.interval = Some(interval);
+        self.interval = Some(crate::nonzero(interval, "the queue's interval"));
         self
     }
 

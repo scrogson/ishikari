@@ -193,6 +193,13 @@ pub mod prelude {
 
 pub(crate) type State = Arc<dyn std::any::Any + Send + Sync>;
 
+/// `interval`, unless it is zero: a background task ticking at a zero interval would panic.
+#[track_caller]
+pub(crate) fn nonzero(interval: std::time::Duration, what: &str) -> std::time::Duration {
+    assert!(!interval.is_zero(), "{what} must be greater than zero");
+    interval
+}
+
 /// A backoff strategy for retrying jobs.
 ///
 /// The built-in strategies work in milliseconds, so sub-second bases count, and never wait

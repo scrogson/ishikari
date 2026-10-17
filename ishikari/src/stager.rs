@@ -54,10 +54,13 @@ impl Stager {
     /// * `storage` - The job storage
     /// * `interval` - The duration between staging attempts
     /// * `limit` - The maximum number of jobs to stage in each attempt
+    ///
+    /// Panics if `interval` is zero.
+    #[track_caller]
     pub fn new(storage: Arc<Postgres>, interval: Duration, limit: i32) -> Self {
         Self {
             storage,
-            interval,
+            interval: crate::nonzero(interval, "the stager's interval"),
             limit,
         }
     }

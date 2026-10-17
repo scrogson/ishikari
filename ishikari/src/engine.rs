@@ -43,6 +43,8 @@ impl EngineName {
 /// - Custom state to be shared across queues
 /// - The schema the jobs live in
 ///
+/// The `*_interval` setters panic on a zero interval.
+///
 /// # Example
 /// ```rust,no_run
 /// # use ishikari::{Engine, Postgres, Queue};
@@ -94,8 +96,9 @@ impl EngineBuilder {
     /// Sets the interval at which the stager checks for scheduled jobs.
     ///
     /// Defaults to 1 second if not specified.
+    #[track_caller]
     pub fn stager_interval(mut self, interval: Duration) -> Self {
-        self.stager_interval = Some(interval);
+        self.stager_interval = Some(crate::nonzero(interval, "stager_interval"));
         self
     }
 
@@ -142,8 +145,9 @@ impl EngineBuilder {
     }
 
     /// How often the node records that it is alive. Defaults to 15 seconds.
+    #[track_caller]
     pub fn heartbeat_interval(mut self, interval: Duration) -> Self {
-        self.heartbeat_interval = interval;
+        self.heartbeat_interval = crate::nonzero(interval, "heartbeat_interval");
         self
     }
 
@@ -155,8 +159,9 @@ impl EngineBuilder {
     }
 
     /// How often to look for jobs whose node stopped. Defaults to 60 seconds.
+    #[track_caller]
     pub fn rescue_interval(mut self, interval: Duration) -> Self {
-        self.rescue_interval = interval;
+        self.rescue_interval = crate::nonzero(interval, "rescue_interval");
         self
     }
 
@@ -175,8 +180,9 @@ impl EngineBuilder {
 
     /// How often to check for cron slots that are due. Defaults to 15 seconds; a slot's job is
     /// inserted within this long of its time.
+    #[track_caller]
     pub fn cron_interval(mut self, interval: Duration) -> Self {
-        self.cron_interval = interval;
+        self.cron_interval = crate::nonzero(interval, "cron_interval");
         self
     }
 
@@ -191,8 +197,9 @@ impl EngineBuilder {
     /// How often the dependency resolver sweeps workflows: it runs saga compensation and catches
     /// any step a completion didn't release. Defaults to 30 seconds; steps are normally released
     /// the moment their last upstream completes.
+    #[track_caller]
     pub fn resolver_interval(mut self, interval: Duration) -> Self {
-        self.resolver_interval = interval;
+        self.resolver_interval = crate::nonzero(interval, "resolver_interval");
         self
     }
 
@@ -211,8 +218,9 @@ impl EngineBuilder {
     }
 
     /// How often to prune (1,000 jobs at a time). Defaults to 60 seconds.
+    #[track_caller]
     pub fn prune_interval(mut self, interval: Duration) -> Self {
-        self.prune_interval = interval;
+        self.prune_interval = crate::nonzero(interval, "prune_interval");
         self
     }
 
