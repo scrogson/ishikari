@@ -1,27 +1,38 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Import Definition{% endblock %}
 
 {% block content %}
-<div>
-    <h1 class="text-2xl font-bold tracking-tight">Import Workflow Definition</h1>
-    <p class="text-sm text-base-content/60">Paste your YAML workflow definition below</p>
-</div>
+<header class="ik-page-header">
+    <div>
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/definitions">Definitions</a><span aria-hidden="true">/</span><span>Import</span></nav>
+        <h1 class="ik-title">Import workflow definition</h1>
+        <p class="ik-subtitle">Paste a YAML workflow definition below</p>
+    </div>
+</header>
 
 {% match error %}
 {% when Some with (e) %}
-<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Import failed</p>
+        <p class="break-words">{{ e }}</p>
+    </div>
+</div>
 {% when None %}
 {% endmatch %}
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <form method="post" action="{{ base_path }}/definitions/import" class="space-y-4">
-            <fieldset class="fieldset">
-                <legend class="fieldset-legend">YAML Definition</legend>
+<section class="ik-card">
+    <form method="post" action="{{ base_path }}/definitions/import">
+        <div class="ik-card-body">
+            <label class="ik-field">
+                <span class="ik-label">YAML definition</span>
                 <textarea
                     name="yaml"
-                    class="textarea min-h-[400px] w-full resize-y font-mono"
+                    class="ik-textarea ik-mono text-xs min-h-[400px]"
+                    spellcheck="false"
                     placeholder="name: my-workflow
 description: My workflow description
 
@@ -36,47 +47,54 @@ nodes:
     inputs:
       message: Hello, world!"
                 >{{ yaml }}</textarea>
-            </fieldset>
-            <div class="flex gap-2">
-                <button type="submit" class="btn btn-primary btn-sm">Import Definition</button>
-                <a href="{{ base_path }}/definitions" class="btn btn-ghost btn-sm">Cancel</a>
-            </div>
-        </form>
-    </div>
+                <span class="ik-hint">Must include <code class="ik-code-inline">name</code> and <code class="ik-code-inline">nodes</code>. See the reference below.</span>
+            </label>
+        </div>
+        <div class="ik-card-footer flex justify-end gap-2">
+            <a href="{{ base_path }}/definitions" class="ik-btn ik-btn-ghost">Cancel</a>
+            <button type="submit" class="ik-btn ik-btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+                Import definition
+            </button>
+        </div>
+    </form>
 </section>
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">YAML Format Reference</h2>
-        <div class="grid gap-6 text-sm text-base-content/70 md:grid-cols-3">
-            <div>
-                <p class="mb-2 font-semibold text-base-content">Required fields</p>
-                <ul class="list-disc space-y-1 pl-5">
-                    <li><code class="font-mono text-primary">name</code> - Unique workflow identifier</li>
-                    <li><code class="font-mono text-primary">nodes</code> - Map of node definitions</li>
-                </ul>
-            </div>
-            <div>
-                <p class="mb-2 font-semibold text-base-content">Optional fields</p>
-                <ul class="list-disc space-y-1 pl-5">
-                    <li><code class="font-mono text-primary">description</code> - Human-readable description</li>
-                    <li><code class="font-mono text-primary">version</code> - Version number (auto-incremented if omitted)</li>
-                    <li><code class="font-mono text-primary">inputs</code> - Input schema with type/description/required</li>
-                    <li><code class="font-mono text-primary">outputs</code> - Output expressions referencing node outputs</li>
-                    <li><code class="font-mono text-primary">metadata</code> - Custom key-value metadata</li>
-                </ul>
-            </div>
-            <div>
-                <p class="mb-2 font-semibold text-base-content">Node fields</p>
-                <ul class="list-disc space-y-1 pl-5">
-                    <li><code class="font-mono text-primary">type</code> - Node type (e.g., "http/get", "transform/json")</li>
-                    <li><code class="font-mono text-primary">depends_on</code> - List of node IDs this node depends on</li>
-                    <li><code class="font-mono text-primary">inputs</code> - Input values (can use mustache-style expressions)</li>
-                    <li><code class="font-mono text-primary">when</code> - Conditional execution expression</li>
-                    <li><code class="font-mono text-primary">timeout_seconds</code> - Execution timeout</li>
-                    <li><code class="font-mono text-primary">max_retries</code> - Maximum retry attempts</li>
-                </ul>
-            </div>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">YAML format reference</h2>
+            <p class="ik-card-desc">The fields a definition accepts</p>
+        </div>
+    </div>
+    <div class="ik-card-body grid gap-6 text-sm md:grid-cols-3">
+        <div>
+            <p class="mb-3 text-xs font-medium tracking-wide uppercase ik-muted">Required fields</p>
+            <dl class="space-y-2.5">
+                <div><dt><code class="ik-code-inline">name</code></dt><dd class="mt-1 ik-muted">Unique workflow identifier</dd></div>
+                <div><dt><code class="ik-code-inline">nodes</code></dt><dd class="mt-1 ik-muted">Map of node definitions</dd></div>
+            </dl>
+        </div>
+        <div>
+            <p class="mb-3 text-xs font-medium tracking-wide uppercase ik-muted">Optional fields</p>
+            <dl class="space-y-2.5">
+                <div><dt><code class="ik-code-inline">description</code></dt><dd class="mt-1 ik-muted">Human-readable description</dd></div>
+                <div><dt><code class="ik-code-inline">version</code></dt><dd class="mt-1 ik-muted">Version number (auto-incremented if omitted)</dd></div>
+                <div><dt><code class="ik-code-inline">inputs</code></dt><dd class="mt-1 ik-muted">Input schema with type/description/required</dd></div>
+                <div><dt><code class="ik-code-inline">outputs</code></dt><dd class="mt-1 ik-muted">Output expressions referencing node outputs</dd></div>
+                <div><dt><code class="ik-code-inline">metadata</code></dt><dd class="mt-1 ik-muted">Custom key-value metadata</dd></div>
+            </dl>
+        </div>
+        <div>
+            <p class="mb-3 text-xs font-medium tracking-wide uppercase ik-muted">Node fields</p>
+            <dl class="space-y-2.5">
+                <div><dt><code class="ik-code-inline">type</code></dt><dd class="mt-1 ik-muted">Node type (e.g., "http/get", "transform/json")</dd></div>
+                <div><dt><code class="ik-code-inline">depends_on</code></dt><dd class="mt-1 ik-muted">List of node IDs this node depends on</dd></div>
+                <div><dt><code class="ik-code-inline">inputs</code></dt><dd class="mt-1 ik-muted">Input values (can use mustache-style expressions)</dd></div>
+                <div><dt><code class="ik-code-inline">when</code></dt><dd class="mt-1 ik-muted">Conditional execution expression</dd></div>
+                <div><dt><code class="ik-code-inline">timeout_seconds</code></dt><dd class="mt-1 ik-muted">Execution timeout</dd></div>
+                <div><dt><code class="ik-code-inline">max_retries</code></dt><dd class="mt-1 ik-muted">Maximum retry attempts</dd></div>
+            </dl>
         </div>
     </div>
 </section>

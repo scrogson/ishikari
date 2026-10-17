@@ -112,14 +112,15 @@ impl EnhancedJobInfo {
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 
@@ -146,13 +147,13 @@ impl EnhancedJobInfo {
     /// Get dependency status badge class.
     pub fn dep_status_class(&self) -> &'static str {
         if self.failed_deps > 0 {
-            "badge-error"
+            "ik-tone-danger"
         } else if self.pending_deps > 0 {
-            "badge-warning"
+            "ik-tone-warning"
         } else if self.dependency_count > 0 {
-            "badge-success"
+            "ik-tone-success"
         } else {
-            "badge-ghost"
+            "ik-tone-neutral"
         }
     }
 
@@ -215,14 +216,15 @@ impl EnhancedJobDetail {
 
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 
@@ -366,23 +368,24 @@ pub struct JobDependency {
 impl JobDependency {
     pub fn job_state_class(&self) -> &'static str {
         match self.job_state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 
     pub fn dep_state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "satisfied" => "badge-success",
-            "pending" => "badge-warning",
-            "failed" => "badge-error",
-            _ => "badge-ghost",
+            "satisfied" => "ik-tone-success",
+            "pending" => "ik-tone-warning",
+            "failed" => "ik-tone-danger",
+            _ => "ik-tone-neutral",
         }
     }
 }

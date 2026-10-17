@@ -1,78 +1,103 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}{{ definition.name }} v{{ definition.version }}{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-4">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">{{ definition.name }}</h1>
-        <p class="text-sm text-base-content/60">Version {{ definition.version }}</p>
+<header class="ik-page-header">
+    <div class="min-w-0">
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/definitions">Definitions</a><span aria-hidden="true">/</span><span class="truncate">{{ definition.name }}</span></nav>
+        <h1 class="ik-title flex flex-wrap items-center gap-3">
+            <span class="min-w-0 break-words">{{ definition.name }}</span>
+            <span class="ik-badge ik-tone-info">v{{ definition.version }}</span>
+        </h1>
+        <p class="ik-subtitle">Version <span class="tabular-nums">{{ definition.version }}</span> · <span class="tabular-nums">{{ definition.node_count() }}</span> nodes</p>
     </div>
-    <div class="flex flex-wrap gap-2">
-        <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-primary btn-sm">Edit</a>
-        <a href="{{ base_path }}/definitions/{{ definition.id }}/run" class="btn btn-sm">Run Workflow</a>
-        <a href="{{ base_path }}/definitions/{{ definition.id }}/export" class="btn btn-ghost btn-sm">Export YAML</a>
+    <div class="flex flex-wrap items-center gap-2">
         <form method="post" action="{{ base_path }}/definitions/{{ definition.id }}/delete">
-            <button type="submit" class="btn btn-error btn-soft btn-sm" onclick="return confirm('Delete this definition? This cannot be undone.')">Delete</button>
+            <button type="submit" class="ik-btn ik-btn-danger" onclick="return confirm('Delete this definition? This cannot be undone.')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                Delete
+            </button>
         </form>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/export" class="ik-btn ik-btn-ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+            Export YAML
+        </a>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="ik-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/></svg>
+            Edit
+        </a>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/run" class="ik-btn ik-btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18l15-9z"/></svg>
+            Run workflow
+        </a>
     </div>
-</div>
+</header>
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Details</h2>
+<div class="grid items-start gap-6 lg:grid-cols-2">
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <h2 class="ik-card-title">Details</h2>
+        </div>
+        <div class="ik-card-body">
+            <dl class="ik-dl">
+                <dt>ID</dt>
+                <dd class="ik-mono">{{ definition.id }}</dd>
 
-        <dl class="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
-            <dt class="text-base-content/60">ID</dt>
-            <dd class="font-mono">{{ definition.id }}</dd>
+                <dt>Name</dt>
+                <dd>{{ definition.name }}</dd>
 
-            <dt class="text-base-content/60">Name</dt>
-            <dd>{{ definition.name }}</dd>
+                <dt>Version</dt>
+                <dd><span class="ik-badge ik-badge-sm ik-tone-info">v{{ definition.version }}</span></dd>
 
-            <dt class="text-base-content/60">Version</dt>
-            <dd><span class="badge badge-soft badge-sm badge-info">v{{ definition.version }}</span></dd>
+                {% match definition.description %}
+                {% when Some with (desc) %}
+                <dt>Description</dt>
+                <dd>{{ desc }}</dd>
+                {% when None %}
+                {% endmatch %}
 
-            {% match definition.description %}
-            {% when Some with (desc) %}
-            <dt class="text-base-content/60">Description</dt>
-            <dd>{{ desc }}</dd>
-            {% when None %}
-            {% endmatch %}
+                <dt>Nodes</dt>
+                <dd class="tabular-nums">{{ definition.node_count() }}</dd>
 
-            <dt class="text-base-content/60">Nodes</dt>
-            <dd class="tabular-nums">{{ definition.node_count() }}</dd>
+                {% match definition.created_at %}
+                {% when Some with (created) %}
+                <dt>Created</dt>
+                <dd class="ik-muted tabular-nums">{{ created.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+                {% when None %}
+                {% endmatch %}
 
-            {% match definition.created_at %}
-            {% when Some with (created) %}
-            <dt class="text-base-content/60">Created</dt>
-            <dd class="text-base-content/80">{{ created.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
-            {% when None %}
-            {% endmatch %}
+                {% match definition.updated_at %}
+                {% when Some with (updated) %}
+                <dt>Updated</dt>
+                <dd class="ik-muted tabular-nums">{{ updated.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+                {% when None %}
+                {% endmatch %}
+            </dl>
+        </div>
+    </section>
 
-            {% match definition.updated_at %}
-            {% when Some with (updated) %}
-            <dt class="text-base-content/60">Updated</dt>
-            <dd class="text-base-content/80">{{ updated.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
-            {% when None %}
-            {% endmatch %}
-        </dl>
-    </div>
-</section>
-
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Input Schema</h2>
+    <section class="ik-card">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Input schema</h2>
+                <p class="ik-card-desc">The parameters a run accepts</p>
+            </div>
+        </div>
         {% if definition.input_fields().is_empty() %}
-        <div class="rounded-box bg-base-200 p-6">
-            <p class="font-medium">No inputs defined</p>
-            <p class="mt-1 mb-4 text-sm text-base-content/60">
-                Add inputs to make your workflow configurable. Use the workflow builder to define what parameters this workflow accepts.
-            </p>
-            <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-sm">+ Add Inputs</a>
+        <div class="ik-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+            <p class="ik-empty-title">No inputs defined</p>
+            <p class="max-w-sm">Add inputs to make your workflow configurable. Use the workflow builder to define what parameters this workflow accepts.</p>
+            <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="ik-btn ik-btn-sm mt-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                Add inputs
+            </a>
         </div>
         {% else %}
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
+        <div class="ik-table-wrap">
+            <table class="ik-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -83,119 +108,132 @@
                 </thead>
                 <tbody>
                     {% for (name, field) in definition.input_fields() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><code class="font-mono">{{ name }}</code></td>
-                        <td><span class="badge badge-ghost badge-sm">{{ field.field_type }}</span></td>
-                        <td>{% if field.required %}<span class="badge badge-soft badge-sm badge-success">required</span>{% else %}<span class="text-base-content/40">optional</span>{% endif %}</td>
-                        <td class="text-base-content/70">{{ field.description.as_deref().unwrap_or("—") }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endif %}
-    </div>
-</section>
-
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Nodes ({{ definition.node_count() }})</h2>
-
-        {% if definition.nodes_list().is_empty() %}
-        <div class="py-12 text-center text-base-content/50">No nodes defined</div>
-        {% else %}
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
                     <tr>
-                        <th>Node ID</th>
-                        <th>Type</th>
-                        <th>Dependencies</th>
-                        <th>Timeout</th>
-                        <th>Retries</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for (node_id, node) in definition.nodes_list() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><code class="font-mono">{{ node_id }}</code></td>
-                        <td><span class="badge badge-soft badge-sm badge-info">{{ node.node_type }}</span></td>
-                        <td>
-                            {% if node.depends_on.is_empty() %}
-                            <span class="text-base-content/30">—</span>
-                            {% else %}
-                            {% for dep in node.depends_on %}
-                            <code class="font-mono text-xs">{{ dep }}</code>{% if !loop.last %}, {% endif %}
-                            {% endfor %}
-                            {% endif %}
-                        </td>
-                        <td class="tabular-nums">{% match node.timeout_seconds %}{% when Some with (t) %}{{ t }}s{% when None %}<span class="text-base-content/30">—</span>{% endmatch %}</td>
-                        <td class="tabular-nums">{% match node.max_retries %}{% when Some with (r) %}{{ r }}{% when None %}<span class="text-base-content/30">—</span>{% endmatch %}</td>
+                        <td class="ik-mono text-xs font-medium">{{ name }}</td>
+                        <td><span class="ik-tag">{{ field.field_type }}</span></td>
+                        <td>{% if field.required %}<span class="ik-badge ik-badge-sm ik-tone-primary">required</span>{% else %}<span class="text-xs ik-muted">optional</span>{% endif %}</td>
+                        <td class="ik-muted">{% if let Some(d) = field.description.as_deref() %}{{ d }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
         {% endif %}
+    </section>
+</div>
 
+<section class="ik-card">
+    <div class="ik-card-header">
         <div>
-            <h3 class="mb-3 text-sm font-semibold text-base-content/60">Node Graph</h3>
-            <div class="flex flex-wrap gap-2">
+            <h2 class="ik-card-title">Nodes</h2>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ definition.node_count() }}</span> nodes in this workflow</p>
+        </div>
+    </div>
+    {% if definition.nodes_list().is_empty() %}
+    {% call ui::empty("No nodes defined") %}
+    {% else %}
+    <div class="ik-graph border-b border-ik-border" data-ik-graph>
+        <div class="ik-graph-viewport">
+            <div class="ik-graph-world">
                 {% for (node_id, node) in definition.nodes_list() %}
-                <div class="inline-flex items-center gap-2 rounded-box border border-base-300 bg-base-200 px-3 py-2">
-                    <span class="badge badge-soft badge-sm badge-info">{{ node.node_type }}</span>
-                    <code class="font-mono text-sm">{{ node_id }}</code>
-                    {% if !node.depends_on.is_empty() %}
-                    <span class="text-xs text-base-content/50">
-                        &larr; {% for dep in node.depends_on %}{{ dep }}{% if !loop.last %}, {% endif %}{% endfor %}
-                    </span>
-                    {% endif %}
+                <div class="ik-graph-node ik-tone-info" data-node="{{ node_id }}" data-deps="{% for dep in node.depends_on %}{{ dep }} {% endfor %}">
+                    <span class="ik-graph-node-title">{{ node_id }}</span>
+                    <span class="ik-graph-node-meta"><span>{{ node.node_type }}</span></span>
                 </div>
                 {% endfor %}
             </div>
         </div>
     </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Node</th>
+                    <th>Type</th>
+                    <th>Depends on</th>
+                    <th class="ik-num">Timeout</th>
+                    <th class="ik-num">Retries</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for (node_id, node) in definition.nodes_list() %}
+                <tr>
+                    <td class="ik-mono text-xs font-medium">{{ node_id }}</td>
+                    <td><span class="ik-badge ik-badge-sm ik-tone-info">{{ node.node_type }}</span></td>
+                    <td>
+                        {% if node.depends_on.is_empty() %}
+                        <span class="ik-none">—</span>
+                        {% else %}
+                        <div class="flex flex-wrap gap-1">
+                            {% for dep in node.depends_on %}
+                            <span class="ik-tag">{{ dep }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="ik-num">{% match node.timeout_seconds %}{% when Some with (t) %}{{ t }}s{% when None %}<span class="ik-none">—</span>{% endmatch %}</td>
+                    <td class="ik-num">{% match node.max_retries %}{% when Some with (r) %}{{ r }}{% when None %}<span class="ik-none">—</span>{% endmatch %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 </section>
 
 {% if !definition.output_expressions().is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Outputs</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Expression</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for (name, expr) in definition.output_expressions() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><code class="font-mono">{{ name }}</code></td>
-                        <td><code class="font-mono text-xs text-base-content/70">{{ expr }}</code></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Outputs</h2>
+            <p class="ik-card-desc">Expressions over the nodes' outputs</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Expression</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for (name, expr) in definition.output_expressions() %}
+                <tr>
+                    <td class="ik-mono text-xs font-medium">{{ name }}</td>
+                    <td><code class="ik-code-inline">{{ expr }}</code></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}
 
 {% if !definition.definition.metadata.is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Metadata</h2>
-        <pre class="code-block">{{ definition.metadata_pretty() }}</pre>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <h2 class="ik-card-title">Metadata</h2>
+    </div>
+    <div class="ik-card-body">
+        <pre class="ik-code">{{ definition.metadata_pretty()|highlight_json }}</pre>
     </div>
 </section>
 {% endif %}
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">YAML Definition</h2>
-        <pre class="code-block">{{ definition.yaml }}</pre>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Definition source</h2>
+            <p class="ik-card-desc">YAML</p>
+        </div>
+        <a href="{{ base_path }}/definitions/{{ definition.id }}/export" class="ik-btn ik-btn-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+            Download
+        </a>
+    </div>
+    <div class="ik-card-body">
+        <pre class="ik-code">{{ definition.yaml|highlight_yaml }}</pre>
     </div>
 </section>
 {% endblock %}

@@ -62,11 +62,11 @@ impl WorkflowRunInfo {
     /// Get a CSS class for the status badge.
     pub fn status_class(&self) -> &'static str {
         match self.status.as_str() {
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "cancelled" => "badge-warning",
-            _ => "badge-ghost",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "cancelled" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 

@@ -1,49 +1,74 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
+
+{% macro segment(label, count, tone) %}
+{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count }}"></span>{% endif %}
+{% endmacro %}
+
+{% macro num(value) %}
+{% if value > 0 %}{{ value }}{% else %}<span class="ik-none">0</span>{% endif %}
+{% endmacro %}
+
+{% macro head(label, tone) %}
+<th class="ik-num"><span class="inline-flex items-center gap-1.5 {{ tone }}"><span class="ik-swatch"></span>{{ label }}</span></th>
+{% endmacro %}
 
 {% block title %}Queues{% endblock %}
 
 {% block content %}
-<div>
-    <h1 class="text-2xl font-bold tracking-tight">Queues</h1>
-    <p class="text-sm text-base-content/60">{{ queues.len() }} queues</p>
-</div>
-
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        {% if queues.is_empty() %}
-        <div class="py-12 text-center text-base-content/50">No queues found</div>
-        {% else %}
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Queue</th>
-                        <th class="text-right">Available</th>
-                        <th class="text-right">Executing</th>
-                        <th class="text-right">Scheduled</th>
-                        <th class="text-right">Retryable</th>
-                        <th class="text-right">Completed</th>
-                        <th class="text-right">Discarded</th>
-                        <th class="text-right">Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for queue in queues %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><a class="link link-hover link-primary font-medium" href="{{ base_path }}/queues/{{ queue.name }}">{{ queue.name }}</a></td>
-                        <td class="text-right tabular-nums text-primary">{{ queue.available }}</td>
-                        <td class="text-right tabular-nums text-info">{{ queue.executing }}</td>
-                        <td class="text-right tabular-nums text-secondary">{{ queue.scheduled }}</td>
-                        <td class="text-right tabular-nums text-warning">{{ queue.retryable }}</td>
-                        <td class="text-right tabular-nums text-success">{{ queue.completed }}</td>
-                        <td class="text-right tabular-nums text-error">{{ queue.discarded }}</td>
-                        <td class="text-right font-semibold tabular-nums">{{ queue.total }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endif %}
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Queues</h1>
+        <p class="ik-subtitle"><span class="tabular-nums">{{ queues.len() }}</span> queues</p>
     </div>
+</header>
+
+<section class="ik-card">
+    {% if queues.is_empty() %}
+    {% call ui::empty("No queues found") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Queue</th>
+                    <th>Distribution</th>
+                    {% call head("Available", "ik-tone-primary") %}
+                    {% call head("Executing", "ik-tone-info") %}
+                    {% call head("Scheduled", "ik-tone-violet") %}
+                    {% call head("Retryable", "ik-tone-warning") %}
+                    {% call head("Completed", "ik-tone-success") %}
+                    {% call head("Discarded", "ik-tone-danger") %}
+                    <th class="ik-num">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for queue in queues %}
+                <tr>
+                    <td><a class="ik-link ik-mono font-medium" href="{{ base_path }}/queues/{{ queue.name }}">{{ queue.name }}</a></td>
+                    <td class="w-40 min-w-32">
+                        <div class="ik-meter" role="img" aria-label="{{ queue.name }} jobs by state">
+                            {% call segment("Available", queue.available, "ik-tone-primary") %}
+                            {% call segment("Executing", queue.executing, "ik-tone-info") %}
+                            {% call segment("Scheduled", queue.scheduled, "ik-tone-violet") %}
+                            {% call segment("Retryable", queue.retryable, "ik-tone-warning") %}
+                            {% call segment("Completed", queue.completed, "ik-tone-success") %}
+                            {% call segment("Discarded", queue.discarded, "ik-tone-danger") %}
+                            {% call segment("Cancelled", queue.cancelled, "ik-tone-neutral opacity-50") %}
+                        </div>
+                    </td>
+                    <td class="ik-num">{% call num(queue.available) %}</td>
+                    <td class="ik-num">{% call num(queue.executing) %}</td>
+                    <td class="ik-num">{% call num(queue.scheduled) %}</td>
+                    <td class="ik-num">{% call num(queue.retryable) %}</td>
+                    <td class="ik-num">{% call num(queue.completed) %}</td>
+                    <td class="ik-num">{% if queue.discarded > 0 %}<span class="font-medium text-ik-danger">{{ queue.discarded }}</span>{% else %}<span class="ik-none">0</span>{% endif %}</td>
+                    <td class="ik-num font-semibold">{{ queue.total }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 </section>
 {% endblock %}

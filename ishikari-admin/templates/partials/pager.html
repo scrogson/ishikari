@@ -1,0 +1,29 @@
+{#- Pagination for a table partial. The includer sets `pager_api` (the htmx fragment's path
+    under base_path, empty for plain links), `pager_target`, `pager_include` (a form to send
+    along, or empty) and `pager_extra` (more query, e.g. "&state=x"). -#}
+{% if total_pages > 1 %}
+<nav class="ik-pagination" aria-label="Pagination">
+    <span class="tabular-nums">Page {{ page }} of {{ total_pages }}</span>
+    <div class="ik-pages">
+        {% if page > 1 %}
+        <a class="ik-page" href="?page={{ page - 1 }}{{ pager_extra }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?page={{ page - 1 }}" hx-target="{{ pager_target }}"{% if !pager_include.is_empty() %} hx-include="{{ pager_include }}"{% endif %}{% endif %} aria-label="Previous page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        {% endif %}
+        {% for p in 1..=total_pages %}
+            {% if p == page %}
+            <span class="ik-page" aria-current="page">{{ p }}</span>
+            {% else if p <= 2 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
+            <a class="ik-page" href="?page={{ p }}{{ pager_extra }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?page={{ p }}" hx-target="{{ pager_target }}"{% if !pager_include.is_empty() %} hx-include="{{ pager_include }}"{% endif %}{% endif %}>{{ p }}</a>
+            {% else if p == 3 || p == page + 2 %}
+            <span class="ik-page" aria-hidden="true">…</span>
+            {% endif %}
+        {% endfor %}
+        {% if page < total_pages %}
+        <a class="ik-page" href="?page={{ page + 1 }}{{ pager_extra }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?page={{ page + 1 }}" hx-target="{{ pager_target }}"{% if !pager_include.is_empty() %} hx-include="{{ pager_include }}"{% endif %}{% endif %} aria-label="Next page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+        {% endif %}
+    </div>
+</nav>
+{% endif %}

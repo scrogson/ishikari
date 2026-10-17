@@ -1,11 +1,12 @@
+{% import "partials/ui.html" as ui %}
 {% if jobs.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No jobs found matching your filters.</div>
+{% call ui::empty("No jobs match these filters") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
-                <th>ID</th>
+                <th>Job</th>
                 <th>Worker</th>
                 <th>Queue</th>
                 <th>State</th>
@@ -17,66 +18,51 @@
         </thead>
         <tbody>
             {% for job in jobs.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
-                <td><span class="badge badge-ghost badge-sm">{{ job.queue }}</span></td>
-                <td><span class="badge badge-soft badge-sm {{ job.state_class() }}">{{ job.state }}</span>
-                    {% if let Some(rs) = job.saga_rollback_state() %}
-                    <span class="badge badge-soft badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
-                    {% endif %}</td>
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ job.id }}">#{{ job.id }}</a></td>
+                <td class="ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                <td><span class="ik-tag">{{ job.queue }}</span></td>
                 <td>
-                    {% if job.has_dependencies() %}
-                    <span class="badge badge-soft badge-sm {{ job.dep_status_class() }}">{{ job.dep_status_text() }}</span>
-                    <span class="text-xs text-base-content/50">{{ job.satisfied_deps }}/{{ job.dependency_count }}</span>
-                    {% else %}
-                    <span class="text-base-content/30">—</span>
-                    {% endif %}
+                    <div class="flex items-center gap-1.5">
+                        <span class="ik-badge ik-dot {{ job.state_class() }}">{{ job.state }}</span>
+                        {% if let Some(rs) = job.saga_rollback_state() %}
+                        <span class="ik-badge ik-badge-sm {{ job.saga_rollback_class() }}" title="Saga step state">{{ rs }}</span>
+                        {% endif %}
+                    </div>
                 </td>
                 <td>
-                    {% if job.is_blocking() %}
-                    <span class="font-medium text-info">{{ job.blocking_count }}</span>
+                    {% if job.has_dependencies() %}
+                    <div class="flex items-center gap-1.5">
+                        <span class="ik-badge ik-badge-sm {{ job.dep_status_class() }}">{{ job.dep_status_text() }}</span>
+                        <span class="ik-muted text-xs tabular-nums">{{ job.satisfied_deps }}/{{ job.dependency_count }}</span>
+                    </div>
                     {% else %}
-                    <span class="text-base-content/30">—</span>
+                    <span class="ik-none">—</span>
+                    {% endif %}
+                </td>
+                <td class="tabular-nums">
+                    {% if job.is_blocking() %}
+                    <span class="font-medium text-ik-info">{{ job.blocking_count }}</span>
+                    {% else %}
+                    <span class="ik-none">—</span>
                     {% endif %}
                 </td>
                 <td>
                     {% if let Some(wf_id) = job.workflow_id %}
-                    <a class="link link-hover" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                    <a class="ik-link" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
                     {% else %}
-                    <span class="text-base-content/30">—</span>
+                    <span class="ik-none">—</span>
                     {% endif %}
                 </td>
-                <td class="whitespace-nowrap text-base-content/60">{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ job.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}" hx-get="{{ base_path }}/api/jobs?page={{ page - 1 }}" hx-target="#jobs-table" hx-include="#jobs-filter-form">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-            {% if p == page %}
-            <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-            {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
-            <a class="join-item btn btn-sm" href="?page={{ p }}" hx-get="{{ base_path }}/api/jobs?page={{ p }}" hx-target="#jobs-table" hx-include="#jobs-filter-form">{{ p }}</a>
-            {% else if p == 4 && page > 5 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% else if p == total_pages - 2 && page < total_pages - 4 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}" hx-get="{{ base_path }}/api/jobs?page={{ page + 1 }}" hx-target="#jobs-table" hx-include="#jobs-filter-form">»</a>
-        {% endif %}
-    </div>
-</div>
-{% endif %}
+{% let pager_api = "/api/jobs" %}
+{% let pager_target = "#jobs-table" %}
+{% let pager_include = "#jobs-filter-form" %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}

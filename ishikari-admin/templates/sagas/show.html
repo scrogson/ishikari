@@ -1,108 +1,124 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Saga #{{ saga.id }}{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-4">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">{{ saga.name }}</h1>
-        <p class="flex items-center gap-2 text-sm text-base-content/60">
-            Saga #{{ saga.id }}
-            <span class="badge badge-soft badge-sm {{ saga.state_class() }}">{{ saga.state }}</span>
-        </p>
+<header class="ik-page-header">
+    <div class="min-w-0">
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/sagas">Sagas</a><span aria-hidden="true">/</span><span>#{{ saga.id }}</span></nav>
+        <h1 class="ik-title flex flex-wrap items-center gap-3">{{ saga.name }} <span class="ik-badge ik-dot {{ saga.state_class() }}">{{ saga.state }}</span></h1>
     </div>
-    <div class="flex gap-2">
-        <a href="{{ base_path }}/workflows/{{ saga.id }}" class="btn btn-ghost btn-sm">View as Workflow</a>
-        <a href="{{ base_path }}/dependencies?workflow_id={{ saga.id }}" class="btn btn-ghost btn-sm">View Dependencies</a>
+    <div class="flex flex-wrap items-center gap-2">
+        <a href="{{ base_path }}/workflows/{{ saga.id }}" class="ik-btn ik-btn-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+            View as workflow
+        </a>
+        <a href="{{ base_path }}/dependencies?workflow_id={{ saga.id }}" class="ik-btn ik-btn-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>
+            View dependencies
+        </a>
     </div>
-</div>
+</header>
 
 {% if saga.is_compensating() %}
-<div role="alert" class="alert alert-warning alert-soft">
-    <svg class="size-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+<div role="alert" class="ik-alert ik-alert-warning">
+    {% call ui::warn_icon() %}
     <div>
-        <h3 class="font-semibold">Compensation in progress</h3>
-        <div class="text-sm">This saga is rolling back. Compensation jobs are running in reverse order to undo previous steps.</div>
+        <p class="ik-alert-title">Compensation in progress</p>
+        <p>This saga is rolling back. Compensation jobs are running in reverse order to undo previous steps.</p>
     </div>
 </div>
 {% endif %}
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Saga Details</h2>
-        <dl class="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
-            <dt class="text-base-content/60">ID</dt>
-            <dd class="font-mono">#{{ saga.id }}</dd>
-            <dt class="text-base-content/60">Name</dt>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Details</h2>
+        </div>
+    </div>
+    <div class="ik-card-body space-y-5">
+        {% if !steps.is_empty() %}
+        <div>
+            <div class="mb-2 flex items-baseline justify-between text-sm">
+                <span class="ik-muted">Steps by state</span>
+                <span class="font-semibold tabular-nums">{{ steps.len() }}</span>
+            </div>
+            <div class="ik-meter" role="img" aria-label="Steps by state">
+                {% for step in steps.iter() %}<span class="{{ step.state_class() }}" style="flex: 1 1 0%" title="Step {{ step.step_order + 1 }}: {{ step.state }}"></span>{% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        <dl class="ik-dl">
+            <dt>ID</dt>
+            <dd class="ik-mono">#{{ saga.id }}</dd>
+            <dt>Name</dt>
             <dd>{{ saga.name }}</dd>
-            <dt class="text-base-content/60">State</dt>
-            <dd><span class="badge badge-soft badge-sm {{ saga.state_class() }}">{{ saga.state }}</span></dd>
-            <dt class="text-base-content/60">Inserted</dt>
-            <dd>{{ saga.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+            <dt>State</dt>
+            <dd><span class="ik-badge ik-dot {{ saga.state_class() }}">{{ saga.state }}</span></dd>
+            <dt>Inserted</dt>
+            <dd class="tabular-nums">{{ saga.inserted_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
             {% if let Some(completed_at) = saga.completed_at %}
-            <dt class="text-base-content/60">Completed</dt>
-            <dd>{{ completed_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+            <dt>Completed</dt>
+            <dd class="tabular-nums">{{ completed_at.format("%Y-%m-%d %H:%M:%S UTC") }}</dd>
             {% endif %}
         </dl>
         {% if !saga.metadata.is_null() %}
         <div>
-            <h3 class="mb-2 text-sm font-medium text-base-content/60">Metadata</h3>
-            <pre class="code-block">{{ saga.metadata_pretty() }}</pre>
+            <h3 class="mb-2 text-xs font-medium ik-muted">Metadata</h3>
+            <pre class="ik-code">{{ saga.metadata_pretty()|highlight_json }}</pre>
         </div>
         {% endif %}
     </div>
 </section>
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Steps ({{ steps.len() }})</h2>
-
-        {% if steps.is_empty() %}
-        <div class="py-12 text-center text-base-content/50">No steps found for this saga.</div>
-        {% else %}
-        <ol class="relative ms-2 space-y-4 border-s-2 border-base-300 ps-6">
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Steps</h2>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ steps.len() }}</span> steps, each with the job that compensates it</p>
+        </div>
+    </div>
+    {% if steps.is_empty() %}
+    {% call ui::empty("No steps found for this saga") %}
+    {% else %}
+    <div class="ik-card-body">
+        <ol class="ik-timeline">
             {% for step in steps.iter() %}
-            <li class="relative">
-                <span class="absolute -start-[1.95rem] top-5 block size-3.5 rounded-full ring-4 ring-base-100
-                        {% if step.state == "completed" %}bg-success
-                        {% else if step.state == "failed" || step.state == "compensation_failed" %}bg-error
-                        {% else if step.state == "compensating" || step.state == "compensated" %}bg-warning
-                        {% else if step.state == "running" || step.state == "executing" %}bg-info
-                        {% else %}bg-base-content/30{% endif %}"></span>
-                <div>
-                    <div class="rounded-box border border-base-300 bg-base-200 p-4">
-                        <div class="mb-3 flex items-center gap-2">
-                            <span class="text-sm text-base-content/60">Step {{ step.step_order + 1 }}</span>
-                            <span class="badge badge-soft badge-sm {{ step.state_class() }}">{{ step.state }}</span>
-                        </div>
-                        <dl class="grid grid-cols-[6rem_1fr] items-center gap-x-4 gap-y-2 text-sm">
-                            <dt class="text-base-content/60">Forward</dt>
-                            <dd class="flex flex-wrap items-center gap-2">
-                                <a class="link link-hover font-mono text-xs" href="{{ base_path }}/jobs/{{ step.job_id }}"><span data-tip="{{ step.job_worker }}">{{ step.job_worker|short_name }}</span></a>
-                                <span class="badge badge-soft badge-sm {{ step.job_state_class() }}">{{ step.job_state }}</span>
-                                <a class="link link-hover link-primary font-mono text-xs" href="{{ base_path }}/jobs/{{ step.job_id }}">#{{ step.job_id }}</a>
-                            </dd>
-                            <dt class="text-base-content/60">Compensate</dt>
-                            <dd class="flex flex-wrap items-center gap-2">
-                                {% if let Some(comp_id) = step.compensation_job_id %}
-                                {% if let Some(worker) = step.compensation_worker.as_ref() %}
-                                <a class="link link-hover font-mono text-xs" href="{{ base_path }}/jobs/{{ comp_id }}"><span data-tip="{{ worker }}">{{ worker|short_name }}</span></a>
-                                {% endif %}
-                                {% if let Some(state) = step.compensation_state.as_ref() %}
-                                <span class="badge badge-soft badge-sm {{ step.compensation_state_class() }}">{{ state }}</span>
-                                {% endif %}
-                                <a class="link link-hover link-primary font-mono text-xs" href="{{ base_path }}/jobs/{{ comp_id }}">#{{ comp_id }}</a>
-                                {% else %}
-                                <span class="italic text-base-content/50">No compensation</span>
-                                {% endif %}
-                            </dd>
-                        </dl>
+            <li>
+                <span class="ik-marker {% if step.state == "completed" %}ik-tone-success{% else if step.state == "failed" || step.state == "compensation_failed" %}ik-tone-danger{% else if step.state == "compensating" || step.state == "compensated" %}ik-tone-warning{% else if step.state == "running" || step.state == "executing" %}ik-tone-info{% else %}ik-tone-neutral{% endif %}">{{ step.step_order + 1 }}</span>
+                <div class="ik-card">
+                    <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                        <span class="text-sm font-medium">Step {{ step.step_order + 1 }}</span>
+                        <span class="ik-badge ik-dot {{ step.state_class() }}">{{ step.state }}</span>
                     </div>
+                    <dl class="ik-dl border-t border-ik-border px-4 py-3">
+                        <dt>Forward</dt>
+                        <dd>
+                            <a class="ik-link-quiet ik-mono text-xs" href="{{ base_path }}/jobs/{{ step.job_id }}"><span data-tip="{{ step.job_worker }}">{{ step.job_worker|short_name }}</span></a>
+                            <span class="ik-badge ik-badge-sm {{ step.job_state_class() }}">{{ step.job_state }}</span>
+                            <a class="ik-link ik-mono ml-auto text-xs" href="{{ base_path }}/jobs/{{ step.job_id }}">#{{ step.job_id }}</a>
+                        </dd>
+                        <dt>Compensate</dt>
+                        <dd>
+                            {% if let Some(comp_id) = step.compensation_job_id %}
+                            {% if let Some(worker) = step.compensation_worker.as_ref() %}
+                            <a class="ik-link-quiet ik-mono text-xs" href="{{ base_path }}/jobs/{{ comp_id }}"><span data-tip="{{ worker }}">{{ worker|short_name }}</span></a>
+                            {% endif %}
+                            {% if let Some(state) = step.compensation_state.as_ref() %}
+                            <span class="ik-badge ik-badge-sm {{ step.compensation_state_class() }}">{{ state }}</span>
+                            {% endif %}
+                            <a class="ik-link ik-mono ml-auto text-xs" href="{{ base_path }}/jobs/{{ comp_id }}">#{{ comp_id }}</a>
+                            {% else %}
+                            <span class="italic ik-muted">No compensation</span>
+                            {% endif %}
+                        </dd>
+                    </dl>
                 </div>
             </li>
             {% endfor %}
         </ol>
-        {% endif %}
     </div>
+    {% endif %}
 </section>
 {% endblock %}

@@ -1,98 +1,118 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{% endblock %} - Ishikari Admin</title>
     <script>
-        // Apply saved theme before first paint to avoid a flash
-        try {
-            const t = localStorage.getItem("ishikari-theme");
-            if (t) document.documentElement.dataset.theme = t;
-        } catch (_) {}
+        // The saved theme (or the system's), before first paint to avoid a flash
+        (function () {
+            var root = document.documentElement;
+            try {
+                var t = localStorage.getItem("ishikari-theme");
+                if (t === "light" || t === "dark") root.dataset.theme = t;
+            } catch (_) {}
+            root.dataset.resolvedTheme = root.dataset.theme
+                || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        })();
     </script>
     <link rel="stylesheet" href="{{ base_path }}/assets/admin.css?v={{ crate::layout::ASSET_VERSION }}">
     <script src="{{ base_path }}/assets/htmx.min.js?v={{ crate::layout::ASSET_VERSION }}"></script>
     {% block head %}{% endblock %}
 </head>
-<body class="min-h-screen bg-base-200 text-base-content antialiased">
-    <div class="drawer lg:drawer-open">
-        <input id="nav-drawer" type="checkbox" class="drawer-toggle">
-
-        <div class="drawer-content flex min-h-screen flex-col">
-            <!-- Top bar -->
-            <header class="navbar sticky top-0 z-20 gap-2 border-b border-base-300 bg-base-100/80 px-4 backdrop-blur">
-                <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open menu">
-                    <svg class="size-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
-                </label>
-                <div class="lg:hidden">
-                    <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 font-bold">
-                    <svg class="size-5 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                    Ishikari
-                </a>
-                </div>
-                <div class="flex-1"></div>
-                <label class="swap swap-rotate btn btn-ghost btn-circle btn-sm" title="Toggle theme">
-                    <input type="checkbox" id="theme-toggle" aria-label="Toggle light theme">
-                    <!-- moon: shown in dark mode -->
-                    <svg class="swap-off size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
-                    <!-- sun: shown in light mode -->
-                    <svg class="swap-on size-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg>
-                </label>
-            </header>
-
-            <main class="ishikari-admin {% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 lg:p-8{% endblock %}">
-                {% block content %}{% endblock %}
-            </main>
+<body class="min-h-screen font-sans">
+    <aside class="ik-sidebar" aria-label="Sections">
+        <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex h-14 shrink-0 items-center gap-2.5 border-b border-ik-border px-4">
+            <span class="grid size-7 place-items-center rounded-ik-sm bg-ik-primary text-ik-primary-fg shadow-sm">
+                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+            </span>
+            <span class="text-[0.9375rem] font-semibold tracking-tight">Ishikari</span>
+            <span class="ik-tag ml-auto">admin</span>
+        </a>
+        <nav class="flex-1 overflow-y-auto p-3">
+            <ul class="space-y-0.5" id="sidebar-nav">
+                {% for item in nav_items %}
+                <li>
+                    <a href="{{ item.href }}" class="ik-nav-item">
+                        {% if let Some(icon) = item.icon %}
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
+                        </svg>
+                        {% endif %}
+                        {{ item.label }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </nav>
+        <div class="border-t border-ik-border px-5 py-3 text-xs text-ik-muted-fg">
+            ishikari v{{ crate::layout::ASSET_VERSION }}
         </div>
+    </aside>
+    <div class="ik-overlay" data-nav-close></div>
 
-        <!-- Sidebar -->
-        <div class="drawer-side z-30">
-            <label for="nav-drawer" class="drawer-overlay" aria-label="Close menu"></label>
-            <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100">
-                <a href="{% if base_path.is_empty() %}/{% else %}{{ base_path }}{% endif %}" class="flex items-center gap-2 px-6 py-5 text-lg font-bold">
-                    <svg class="size-6 text-primary" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                    Ishikari
-                </a>
-                <ul class="menu w-full gap-1 px-3" id="sidebar-nav">
-                    {% for item in nav_items %}
-                    <li>
-                        <a href="{{ item.href }}">
-                            {% if let Some(icon) = item.icon %}
-                            <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"/>
-                            </svg>
-                            {% endif %}
-                            {{ item.label }}
-                        </a>
-                    </li>
-                    {% endfor %}
-                </ul>
-            </aside>
-        </div>
+    <div class="flex min-h-screen flex-col lg:pl-60">
+        <header class="ik-topbar">
+            <button type="button" class="ik-btn ik-btn-ghost ik-btn-sm ik-btn-icon lg:hidden" data-nav-toggle aria-label="Open menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <form id="ik-jump" class="relative w-full max-w-64" role="search" data-jobs="{{ base_path }}/jobs/">
+                <svg class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-ik-muted-fg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" inputmode="numeric" name="job" class="ik-input ik-input-sm pl-8" placeholder="Go to job #…" aria-label="Go to job by ID" autocomplete="off">
+            </form>
+            <div class="flex-1"></div>
+            <button type="button" class="ik-btn ik-btn-ghost ik-btn-sm ik-btn-icon ik-theme-toggle" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+                <svg class="ik-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                <svg class="ik-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
+        </header>
+
+        <main class="ishikari-admin {% block main_class %}mx-auto w-full max-w-7xl flex-1 space-y-6 p-4 sm:p-6 lg:p-8{% endblock %}">
+            {% block content %}{% endblock %}
+        </main>
     </div>
 
     <script>
-        // Highlight the nav item matching the current page (longest prefix wins)
         (function () {
-            const path = location.pathname.replace(/\/$/, "");
-            let best = null, bestLen = -1;
+            var root = document.documentElement;
+
+            // Mark the nav item for the current page (longest prefix wins)
+            var path = location.pathname.replace(/\/$/, "");
+            var best = null, bestLen = -1;
             document.querySelectorAll("#sidebar-nav a").forEach(function (a) {
-                const href = new URL(a.href).pathname.replace(/\/$/, "");
-                const match = path === href || path.startsWith(href + "/");
+                var href = new URL(a.href).pathname.replace(/\/$/, "");
+                var match = path === href || path.startsWith(href + "/");
                 if (match && href.length > bestLen) { best = a; bestLen = href.length; }
             });
-            if (best) best.classList.add("menu-active");
-        })();
+            if (best) best.setAttribute("aria-current", "page");
 
-        // Theme toggle (dark is the default)
-        (function () {
-            const toggle = document.getElementById("theme-toggle");
-            toggle.checked = document.documentElement.dataset.theme === "light";
-            toggle.addEventListener("change", function () {
-                const theme = toggle.checked ? "light" : "dark";
-                document.documentElement.dataset.theme = theme;
+            // Theme toggle: an explicit choice, saved; otherwise the system's
+            var media = matchMedia("(prefers-color-scheme: dark)");
+            function resolve() {
+                root.dataset.resolvedTheme = root.dataset.theme || (media.matches ? "dark" : "light");
+            }
+            media.addEventListener("change", resolve);
+            document.getElementById("theme-toggle").addEventListener("click", function () {
+                var theme = root.dataset.resolvedTheme === "dark" ? "light" : "dark";
+                root.dataset.theme = theme;
+                resolve();
                 try { localStorage.setItem("ishikari-theme", theme); } catch (_) {}
+            });
+
+            // The sidebar as a drawer on narrow screens
+            document.querySelector("[data-nav-toggle]").addEventListener("click", function () {
+                root.toggleAttribute("data-nav-open");
+            });
+            document.querySelector("[data-nav-close]").addEventListener("click", function () {
+                root.removeAttribute("data-nav-open");
+            });
+
+            // Go to a job by its ID
+            var jump = document.getElementById("ik-jump");
+            jump.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var id = jump.job.value.trim().replace(/^#/, "");
+                if (/^\d+$/.test(id)) location.href = jump.dataset.jobs + id;
             });
         })();
     </script>

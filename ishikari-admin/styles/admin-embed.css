@@ -1,18 +1,14 @@
-/* For a host page that has its own daisyUI 5 theme and Tailwind preflight (or reset): the
-   dashboard's daisyUI components and Tailwind utilities, and nothing else. No themes, so every
-   color comes from the host theme's variables; no reset, no root colors or scrollbars; Tailwind's
-   theme values inlined rather than declared as variables the host may have set otherwise. */
+/* For a host page with its own layout: the dashboard's components and Tailwind utilities, and
+   nothing else. No reset of the host's page, no root styles, no color-scheme: the colors come
+   from the host's theme variables (see tokens.css), and Tailwind's theme values are inlined
+   rather than declared as variables the host may have set otherwise. */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme) theme(inline);
 @import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "./tokens.css";
 @import "./components.css";
 
 /* The pages (not the standalone layout), plus Rust sources that return class names */
 @source "../templates";
 @source not "../templates/base.html";
 @source "../src";
-
-@plugin "daisyui" {
-  themes: false;
-  exclude: reset, rootcolor, rootscrollgutter, rootscrolllock, scrollbar;
-}

@@ -20,7 +20,7 @@ use super::definitions::{
 use super::dependencies::{DependenciesQuery, DependencyInfo};
 use super::jobs::{get_enhanced_jobs, EnhancedJobsQuery};
 use super::sagas::{SagaInfo, SagasQuery};
-use super::workflows::{WorkflowInfo, WorkflowJobInfo, WorkflowsQuery};
+use super::workflows::{get_workflow_jobs, WorkflowInfo, WorkflowsQuery};
 use crate::routes::dashboard::{get_stats, JobStats, WorkflowStats};
 use crate::templates::{
     DefinitionsTablePartial, DependenciesTablePartial, EnhancedJobsTablePartial, SagasTablePartial,
@@ -40,6 +40,7 @@ pub struct StatsResponse {
 pub async fn stats_or_counts(headers: HeaderMap, state: State<AppState>) -> Response {
     if headers.contains_key("hx-request") {
         StatsPartial {
+            base_path: state.base_path.to_string(),
             stats: get_stats(&state.pool, state.schema()).await,
         }
         .into_response()
@@ -258,75 +259,6 @@ async fn get_workflows(
         .collect();
 
     (workflows, total)
-}
-
-/// Get workflow jobs (copied from workflows.rs)
-async fn get_workflow_jobs(
-    pool: &PgPool,
-    schema: Option<&str>,
-    workflow_id: i64,
-) -> Vec<WorkflowJobInfo> {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-    let deps_table = match schema {
-        Some(s) => format!("{}.ishikari_job_dependencies", s),
-        None => "ishikari_job_dependencies".to_string(),
-    };
-    let saga_steps_table = match schema {
-        Some(s) => format!("{}.ishikari_saga_steps", s),
-        None => "ishikari_saga_steps".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        SELECT
-            j.id, j.worker, j.state::text, j.attempt, j.max_attempts,
-            j.inserted_at, j.completed_at,
-            COALESCE(array_agg(d.depends_on_job_id) FILTER (WHERE d.depends_on_job_id IS NOT NULL), '{{}}') as dependencies,
-            EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation,
-            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
-        FROM {} j
-        LEFT JOIN {} d ON d.job_id = j.id
-        WHERE j.workflow_id = $1
-        GROUP BY j.id
-        ORDER BY j.id
-        "#,
-        saga_steps_table, saga_steps_table, jobs_table, deps_table
-    );
-
-    let rows: Vec<(
-        i64,
-        String,
-        String,
-        i32,
-        i32,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Vec<i64>,
-        bool,
-        Option<String>,
-    )> = sqlx::query_as(&query)
-        .bind(workflow_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-    rows.into_iter()
-        .map(|row| WorkflowJobInfo {
-            id: row.0,
-            worker: row.1,
-            state: row.2,
-            attempt: row.3,
-            max_attempts: row.4,
-            inserted_at: row.5,
-            completed_at: row.6,
-            dependencies: row.7,
-            is_compensation: row.8,
-            saga_step_state: row.9,
-        })
-        .collect()
 }
 
 /// Dependencies table partial for htmx updates.

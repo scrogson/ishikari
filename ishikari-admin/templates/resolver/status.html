@@ -1,251 +1,250 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Resolver Status{% endblock %}
 
 {% macro job_state_badge(state) %}
 {% let st = state.as_str() %}
-<span class="badge badge-soft badge-sm {% if st == "available" %}badge-primary{% else if st == "scheduled" %}badge-secondary{% else if st == "executing" %}badge-info{% else if st == "completed" %}badge-success{% else if st == "retryable" %}badge-warning{% else if st == "discarded" || st == "cancelled" %}badge-error{% else %}badge-ghost{% endif %}">{{ state }}</span>
+<span class="ik-badge ik-dot {% if st == "available" %}ik-tone-primary{% else if st == "scheduled" %}ik-tone-violet{% else if st == "executing" %}ik-tone-info ik-live{% else if st == "completed" %}ik-tone-success{% else if st == "retryable" %}ik-tone-warning{% else if st == "discarded" %}ik-tone-danger{% else %}ik-tone-neutral{% endif %}">{{ state }}</span>
 {% endmacro %}
 
 {% block content %}
-<div>
-    <h1 class="text-2xl font-bold tracking-tight">Dependency Resolver</h1>
-    <p class="text-sm text-base-content/60">Real-time status of the dependency resolution service</p>
-</div>
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Dependency Resolver</h1>
+        <p class="ik-subtitle">Status of the dependency resolution service</p>
+    </div>
+</header>
 
 <!-- Stats -->
-<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Total Dependencies</div>
-        <div class="mt-1 text-2xl font-bold tabular-nums">{{ stats.total_dependencies }}</div>
-    </div>
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Pending</div>
-        <div class="mt-1 text-2xl font-bold tabular-nums text-warning">{{ stats.pending_dependencies }}</div>
-    </div>
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Satisfied</div>
-        <div class="mt-1 text-2xl font-bold tabular-nums text-success">{{ stats.satisfied_dependencies }}</div>
-    </div>
-    <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="text-xs font-medium uppercase tracking-wide text-base-content/60">Failed</div>
-        <div class="mt-1 text-2xl font-bold tabular-nums text-error">{{ stats.failed_dependencies }}</div>
+<div class="ik-card">
+    <div class="ik-metrics border-t-0 grid-cols-2 lg:grid-cols-4">
+        {% call ui::tile("Total dependencies", stats.total_dependencies, "ik-tone-neutral", "") %}
+        {% call ui::tile("Pending", stats.pending_dependencies, "ik-tone-warning", "") %}
+        {% call ui::tile("Satisfied", stats.satisfied_dependencies, "ik-tone-success", "") %}
+        {% call ui::tile("Failed", stats.failed_dependencies, "ik-tone-danger", "") %}
     </div>
 </div>
 
 <!-- Pending Releases -->
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-    <div>
-        <h2 class="card-title text-base">Ready for Release ({{ pending_releases.len() }})</h2>
-        <p class="text-sm text-base-content/60">Jobs with all dependencies satisfied, waiting to be released by the resolver.</p>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title flex items-center gap-2">Ready for release <span class="ik-badge ik-badge-sm ik-tone-neutral">{{ pending_releases.len() }}</span></h2>
+            <p class="ik-card-desc">Jobs with all dependencies satisfied, waiting to be released by the resolver.</p>
+        </div>
     </div>
-
     {% if pending_releases.is_empty() %}
-    <div class="py-12 text-center text-base-content/50">No jobs waiting to be released.</div>
+    {% call ui::empty("No jobs waiting to be released.") %}
     {% else %}
-    <div class="overflow-x-auto">
-    <table class="table table-sm">
-        <thead>
-            <tr>
-                <th>Job</th>
-                <th>Worker</th>
-                <th>Workflow</th>
-                <th>Dependencies</th>
-                <th>Progress</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for job in pending_releases.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ job.job_id }}">#{{ job.job_id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
-                <td>
-                    {% if let Some(wf_id) = job.workflow_id %}
-                    <a class="link link-hover" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
-                    {% else %}
-                    <span class="text-base-content/30">—</span>
-                    {% endif %}
-                </td>
-                <td>{{ job.satisfied_deps }}/{{ job.total_deps }} satisfied</td>
-                <td class="min-w-28">
-                    <progress class="progress progress-success w-full" value="{{ job.progress() }}" max="100"></progress>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Worker</th>
+                    <th>Workflow</th>
+                    <th>Dependencies</th>
+                    <th>Progress</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in pending_releases.iter() %}
+                <tr>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ job.job_id }}">#{{ job.job_id }}</a></td>
+                    <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                    <td>
+                        {% if let Some(wf_id) = job.workflow_id %}
+                        <a class="ik-link" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                        {% else %}
+                        <span class="ik-none">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="whitespace-nowrap"><span class="tabular-nums">{{ job.satisfied_deps }}/{{ job.total_deps }}</span> <span class="ik-muted">satisfied</span></td>
+                    <td class="w-48">
+                        <div class="flex items-center gap-3">
+                            <progress class="ik-progress ik-tone-success min-w-16 flex-1" value="{{ job.progress() }}" max="100"></progress>
+                            <span class="w-9 text-right text-xs ik-muted tabular-nums">{{ job.progress() }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% endif %}
-    </div>
-</section>
-
-<!-- Pending Dependencies Detail -->
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-    <div>
-        <h2 class="card-title text-base">Pending Dependencies ({{ pending_dependencies.len() }})</h2>
-        <p class="text-sm text-base-content/60">Individual pending dependency records with job state information.</p>
-    </div>
-
-    {% if pending_dependencies.is_empty() %}
-    <div class="py-12 text-center text-base-content/50">No pending dependencies.</div>
-    {% else %}
-    <div class="overflow-x-auto">
-    <table class="table table-sm">
-        <thead>
-            <tr>
-                <th>Job</th>
-                <th>Job State</th>
-                <th>Depends On</th>
-                <th>Depends On State</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for dep in pending_dependencies.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
-                <td>
-                    {% if let Some(state) = dep.job_state.as_ref() %}
-                    {% call job_state_badge(state) %}
-                    {% else %}
-                    <span class="badge badge-soft badge-sm badge-error">not found</span>
-                    {% endif %}
-                </td>
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/jobs/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
-                <td>
-                    {% if let Some(state) = dep.depends_on_state.as_ref() %}
-                    {% call job_state_badge(state) %}
-                    {% else %}
-                    <span class="badge badge-soft badge-sm badge-error">not found</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    {% endif %}
-    </div>
 </section>
 
 <!-- Blocked Jobs -->
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-    <div>
-        <h2 class="card-title text-base">Blocked Jobs ({{ blocked_jobs.len() }})</h2>
-        <p class="text-sm text-base-content/60">Jobs in <code class="font-mono">scheduled</code> state waiting on pending or failed dependencies.</p>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title flex items-center gap-2">Blocked jobs <span class="ik-badge ik-badge-sm ik-tone-neutral">{{ blocked_jobs.len() }}</span></h2>
+            <p class="ik-card-desc">Jobs in <code class="ik-code-inline">scheduled</code> state waiting on pending or failed dependencies.</p>
+        </div>
     </div>
-
     {% if blocked_jobs.is_empty() %}
-    <div class="py-12 text-center text-base-content/50">No blocked jobs in scheduled state.</div>
+    {% call ui::empty("No blocked jobs in scheduled state.") %}
     {% else %}
-    <div class="overflow-x-auto">
-    <table class="table table-sm">
-        <thead>
-            <tr>
-                <th>Job</th>
-                <th>Worker</th>
-                <th>Workflow</th>
-                <th>Pending</th>
-                <th>Failed</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for job in blocked_jobs.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/dependencies/{{ job.job_id }}">#{{ job.job_id }}</a></td>
-                <td class="max-w-xs truncate font-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
-                <td>
-                    {% if let Some(wf_id) = job.workflow_id %}
-                    <a class="link link-hover" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
-                    {% else %}
-                    <span class="text-base-content/30">—</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if job.pending_deps > 0 %}
-                    <span class="font-medium text-warning">{{ job.pending_deps }}</span>
-                    {% else %}
-                    0
-                    {% endif %}
-                </td>
-                <td>
-                    {% if job.failed_deps > 0 %}
-                    <span class="font-medium text-error">{{ job.failed_deps }}</span>
-                    {% else %}
-                    0
-                    {% endif %}
-                </td>
-                <td>
-                    {% if job.is_failed() %}
-                    <span class="badge badge-soft badge-sm badge-error">will cancel</span>
-                    {% else %}
-                    <span class="badge badge-soft badge-sm badge-warning">waiting</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Worker</th>
+                    <th>Workflow</th>
+                    <th class="ik-num">Pending</th>
+                    <th class="ik-num">Failed</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in blocked_jobs.iter() %}
+                <tr>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/dependencies/{{ job.job_id }}">#{{ job.job_id }}</a></td>
+                    <td class="max-w-xs truncate ik-mono text-xs"><span data-tip="{{ job.worker }}">{{ job.worker|short_name }}</span></td>
+                    <td>
+                        {% if let Some(wf_id) = job.workflow_id %}
+                        <a class="ik-link" href="{{ base_path }}/workflows/{{ wf_id }}">{% if let Some(name) = job.workflow_name.as_ref() %}{{ name }}{% else %}#{{ wf_id }}{% endif %}</a>
+                        {% else %}
+                        <span class="ik-none">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="ik-num">
+                        {% if job.pending_deps > 0 %}
+                        <span class="font-medium text-ik-warning">{{ job.pending_deps }}</span>
+                        {% else %}
+                        <span class="ik-muted">0</span>
+                        {% endif %}
+                    </td>
+                    <td class="ik-num">
+                        {% if job.failed_deps > 0 %}
+                        <span class="font-medium text-ik-danger">{{ job.failed_deps }}</span>
+                        {% else %}
+                        <span class="ik-muted">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if job.is_failed() %}
+                        <span class="ik-badge ik-dot ik-tone-danger">will cancel</span>
+                        {% else %}
+                        <span class="ik-badge ik-dot ik-tone-warning">waiting</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% endif %}
-    </div>
 </section>
 
 <!-- Compensating Sagas -->
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-    <div>
-        <h2 class="card-title text-base">Compensating Sagas ({{ compensating_sagas.len() }})</h2>
-        <p class="text-sm text-base-content/60">Sagas currently rolling back via compensation jobs.</p>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title flex items-center gap-2">Compensating sagas <span class="ik-badge ik-badge-sm ik-tone-neutral">{{ compensating_sagas.len() }}</span></h2>
+            <p class="ik-card-desc">Sagas currently rolling back via compensation jobs.</p>
+        </div>
     </div>
-
     {% if compensating_sagas.is_empty() %}
-    <div class="py-12 text-center text-base-content/50">No sagas currently compensating.</div>
+    {% call ui::empty("No sagas currently compensating.") %}
     {% else %}
-    <div class="overflow-x-auto">
-    <table class="table table-sm">
-        <thead>
-            <tr>
-                <th>Saga</th>
-                <th>Name</th>
-                <th>Total Steps</th>
-                <th>Compensating</th>
-                <th>Compensated</th>
-                <th>Progress</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for saga in compensating_sagas.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/sagas/{{ saga.workflow_id }}">#{{ saga.workflow_id }}</a></td>
-                <td>{{ saga.workflow_name }}</td>
-                <td>{{ saga.total_steps }}</td>
-                <td><span class="font-medium text-warning">{{ saga.compensating_steps }}</span></td>
-                <td><span class="font-medium text-success">{{ saga.compensated_steps }}</span></td>
-                <td class="min-w-28">
-                    <progress class="progress progress-warning w-full" value="{{ saga.progress() }}" max="100"></progress>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Saga</th>
+                    <th>Name</th>
+                    <th class="ik-num">Total steps</th>
+                    <th class="ik-num">Compensating</th>
+                    <th class="ik-num">Compensated</th>
+                    <th>Progress</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for saga in compensating_sagas.iter() %}
+                <tr>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/sagas/{{ saga.workflow_id }}">#{{ saga.workflow_id }}</a></td>
+                    <td class="font-medium">{{ saga.workflow_name }}</td>
+                    <td class="ik-num">{{ saga.total_steps }}</td>
+                    <td class="ik-num"><span class="font-medium text-ik-warning">{{ saga.compensating_steps }}</span></td>
+                    <td class="ik-num"><span class="font-medium text-ik-success">{{ saga.compensated_steps }}</span></td>
+                    <td class="w-48">
+                        <div class="flex items-center gap-3">
+                            <progress class="ik-progress ik-tone-warning min-w-16 flex-1" value="{{ saga.progress() }}" max="100"></progress>
+                            <span class="w-9 text-right text-xs ik-muted tabular-nums">{{ saga.progress() }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% endif %}
-    </div>
 </section>
 
-<!-- About Section -->
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-3 text-sm text-base-content/70">
-        <h2 class="card-title text-base text-base-content">About the Resolver</h2>
-        <p>The <strong class="text-base-content">Dependency Resolver</strong> is a background service that manages job dependencies:</p>
+<!-- Pending Dependencies Detail -->
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title flex items-center gap-2">Pending dependencies <span class="ik-badge ik-badge-sm ik-tone-neutral">{{ pending_dependencies.len() }}</span></h2>
+            <p class="ik-card-desc">Individual pending dependency records with job state information.</p>
+        </div>
+    </div>
+    {% if pending_dependencies.is_empty() %}
+    {% call ui::empty("No pending dependencies.") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Job state</th>
+                    <th>Depends on</th>
+                    <th>Depends on state</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dep in pending_dependencies.iter() %}
+                <tr>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ dep.job_id }}">#{{ dep.job_id }}</a></td>
+                    <td>
+                        {% if let Some(state) = dep.job_state.as_ref() %}
+                        {% call job_state_badge(state) %}
+                        {% else %}
+                        <span class="ik-badge ik-tone-danger">not found</span>
+                        {% endif %}
+                    </td>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/jobs/{{ dep.depends_on_job_id }}">#{{ dep.depends_on_job_id }}</a></td>
+                    <td>
+                        {% if let Some(state) = dep.depends_on_state.as_ref() %}
+                        {% call job_state_badge(state) %}
+                        {% else %}
+                        <span class="ik-badge ik-tone-danger">not found</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+
+<!-- About -->
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">About the resolver</h2>
+        </div>
+    </div>
+    <div class="ik-card-body space-y-3 text-sm ik-muted">
+        <p>The <strong class="font-medium text-ik-fg">Dependency Resolver</strong> is a background service that manages job dependencies:</p>
         <ul class="list-disc space-y-1 pl-5">
-            <li>Monitors completed jobs and marks their dependencies as <em>satisfied</em></li>
-            <li>Releases jobs to <em>available</em> state when all dependencies are satisfied</li>
-            <li>Handles failed jobs by marking their dependencies as <em>failed</em></li>
+            <li>Monitors completed jobs and marks their dependencies as <code class="ik-code-inline">satisfied</code></li>
+            <li>Releases jobs to <code class="ik-code-inline">available</code> state when all dependencies are satisfied</li>
+            <li>Handles failed jobs by marking their dependencies as <code class="ik-code-inline">failed</code></li>
             <li>Cancels jobs with failed dependencies</li>
             <li>Manages saga compensation when forward jobs fail</li>
         </ul>

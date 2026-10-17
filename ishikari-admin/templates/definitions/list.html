@@ -1,37 +1,50 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Workflow Definitions{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-4">
+<header class="ik-page-header">
     <div>
-        <h1 class="text-2xl font-bold tracking-tight">Workflow Definitions</h1>
-        <p class="text-sm text-base-content/60">{{ total }} definitions found</p>
+        <h1 class="ik-title">Workflow definitions</h1>
+        <p class="ik-subtitle"><span class="tabular-nums">{{ total }}</span> definitions</p>
     </div>
     <div class="flex gap-2">
-        <a href="{{ base_path }}/definitions/new" class="btn btn-primary btn-sm">New Definition</a>
-        <a href="{{ base_path }}/definitions/import" class="btn btn-sm">Import YAML</a>
+        <a href="{{ base_path }}/definitions/import" class="ik-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+            Import YAML
+        </a>
+        <a href="{{ base_path }}/definitions/new" class="ik-btn ik-btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            New definition
+        </a>
     </div>
-</div>
+</header>
 
 {% match error %}
 {% when Some with (e) %}
-<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div>
+        <p class="ik-alert-title">Error</p>
+        <p>{{ e }}</p>
+    </div>
+</div>
 {% when None %}
 {% endmatch %}
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <form class="grid grid-cols-1 gap-4 md:grid-cols-3" hx-get="{{ base_path }}/api/definitions" hx-target="#definitions-table" hx-trigger="change, keyup delay:300ms from:input[name=name]">
-            <fieldset class="fieldset py-0">
-                <legend class="fieldset-legend">Name</legend>
-                <input type="text" name="name" class="input input-sm w-full" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
-            </fieldset>
-        </form>
-
-        <div id="definitions-table">
-            {% include "partials/definitions_table.html" %}
-        </div>
+<section class="ik-card">
+    <form id="definitions-filter-form" class="flex flex-wrap items-end gap-3 border-b border-ik-border p-4" hx-get="{{ base_path }}/api/definitions" hx-target="#definitions-table" hx-trigger="change, keyup delay:300ms from:input[name=name]">
+        <label class="ik-field w-full sm:w-72">
+            <span class="ik-label">Name</span>
+            <span class="relative block">
+                <svg class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-ik-muted-fg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" name="name" class="ik-input ik-input-sm pl-8" placeholder="Filter by name" value="{{ current_name.as_deref().unwrap_or("") }}">
+            </span>
+        </label>
+    </form>
+    <div id="definitions-table">
+        {% include "partials/definitions_table.html" %}
     </div>
 </section>
 {% endblock %}

@@ -4,7 +4,7 @@
 //! default ([`app`](crate::app)) the dashboard wraps it in its own standalone page (sidebar,
 //! light/dark theme). A host that mounts the dashboard inside its admin implements [`Layout`]
 //! and builds the router with [`app_with_layout`](crate::app_with_layout); each page then comes
-//! inside the host's layout, styled by the host's daisyUI theme through the
+//! inside the host's layout, colored by the host's theme variables through the
 //! [embed stylesheet](embed_stylesheet_href).
 //!
 //! htmx fragments (the tables and counts that refresh in place) are never wrapped.
@@ -128,9 +128,10 @@ impl Page {
     }
 }
 
-/// Where a host page links the embed stylesheet from: the dashboard's components and
-/// utilities without themes or a reset, so the host's daisyUI 5 theme colors them. The host
-/// page brings Tailwind's preflight (or its own reset) and the theme.
+/// Where a host page links the embed stylesheet from: the dashboard's components (`ik-*`) and
+/// utilities, with no theme, nothing on `:root` and a reset only inside the dashboard. Its colors
+/// come from the host's CSS variables: `--ik-<token>`, else shadcn/ui's `--<token>`, else
+/// Tailwind's `--color-<token>`, else daisyUI 5's, else a default that follows `color-scheme`.
 pub fn embed_stylesheet_href(base_path: &str) -> String {
     asset(base_path, "admin-embed.css")
 }
@@ -309,7 +310,7 @@ mod tests {
         ];
         page.active = Some(1);
         let html = page.nav_html();
-        assert!(html.contains(r#"href="/jobs/jobs" class="menu-active" aria-current="page""#));
+        assert!(html.contains(r#"href="/jobs/jobs" class="ik-tab" aria-current="page""#));
         assert!(html.contains("&#60;Jobs&#62;") || html.contains("&lt;Jobs&gt;"));
         assert_eq!(page.active_item().unwrap().href, "/jobs/jobs");
     }

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0
+
+All four crates move to 0.3.0 together; only `ishikari-admin` changed: a redesigned dashboard.
+No migration. A host that styles its own pages with the classes `admin-embed.css` used to carry
+(daisyUI's `btn`, `badge`, `table`...) needs to bring daisyUI itself.
+
+### Changed
+
+- **The admin's new look:** a sidebar layout, cards, tables, badges and forms of its own (`ik-*`
+  classes) in place of daisyUI. Job counts link to their jobs; the jobs' distribution by state
+  is a bar; the standalone pages follow the system's light or dark mode, with a toggle that
+  remembers the choice, and have a jump-to-job box.
+- **Theming from the host's variables:** the dashboard's colors and radius come from
+  `--ik-<token>`, else shadcn/ui's `--<token>`, else Tailwind's `--color-<token>`, else
+  daisyUI 5's, else defaults that follow `color-scheme` (see the README's Theming). A host
+  that themed the dashboard with daisyUI keeps its colors. `admin-embed.css` no longer has
+  daisyUI's component classes (`btn`, `badge`, `table`...).
+- **Graphs:** a workflow's jobs, a definition's nodes and a job's dependencies are drawn as a
+  graph, laid out left to right with an edge from each upstream to what waits on it, colored
+  by the upstream's state. Drag to pan, ctrl/⌘ + scroll or pinch to zoom, and hover a node to
+  trace what it depends on and what depends on it. A workflow's nodes are titled by step name.
+- **Syntax highlighting:** arguments, metadata, inputs and outputs (JSON) and a definition's
+  source (YAML) are highlighted when rendered, in the theme's colors, with `{{ ... }}`
+  expressions marked inside strings.
+
 ## 0.2.2
 
 All four crates move to 0.2.2 together; `ishikari` and `ishikari-admin` changed. Fixes only, no

@@ -1,0 +1,32 @@
+{#- Small pieces shared by the pages. -#}
+
+{% macro empty(message) %}
+<div class="ik-empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+    <p>{{ message }}</p>
+</div>
+{% endmacro %}
+
+{#- A count linking to the jobs in `state` -#}
+{% macro stat(label, value, tone, base_path, state) %}
+<a href="{{ base_path }}/jobs?state={{ state }}" class="ik-stat {{ tone }}">
+    <div class="ik-stat-label"><span class="ik-swatch"></span>{{ label }}</div>
+    <div class="ik-stat-value{% if value == 0 %} text-ik-muted-fg{% endif %}">{{ value }}</div>
+</a>
+{% endmacro %}
+
+{% macro tile(label, value, tone, meta) %}
+<div class="ik-stat {{ tone }}">
+    <div class="ik-stat-label"><span class="ik-swatch"></span>{{ label }}</div>
+    <div class="ik-stat-value">{{ value }}</div>
+    {% if !meta.is_empty() %}<div class="ik-stat-meta">{{ meta }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro warn_icon() %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+{% endmacro %}
+
+{% macro error_icon() %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+{% endmacro %}

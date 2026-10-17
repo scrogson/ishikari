@@ -47,13 +47,13 @@ impl SagaInfo {
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "cancelled" => "badge-warning",
-            "compensating" => "badge-warning",
-            "compensated" => "badge-neutral",
-            _ => "badge-ghost",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "cancelled" => "ik-tone-warning",
+            "compensating" => "ik-tone-warning",
+            "compensated" => "ik-tone-neutral",
+            _ => "ik-tone-neutral",
         }
     }
 }
@@ -70,9 +70,9 @@ pub fn rollback_state(step_state: Option<&str>) -> Option<&str> {
 /// Badge class for a rollback state from [`rollback_state`].
 pub fn rollback_class(step_state: Option<&str>) -> &'static str {
     match step_state {
-        Some("compensation_failed") => "badge-error",
-        Some("compensating") => "badge-warning",
-        _ => "badge-neutral",
+        Some("compensation_failed") => "ik-tone-danger",
+        Some("compensating") => "ik-tone-warning",
+        _ => "ik-tone-neutral",
     }
 }
 
@@ -104,42 +104,43 @@ impl SagaStepInfo {
     /// Get CSS class for step state.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "pending" => "badge-secondary",
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "compensating" => "badge-warning",
-            "compensated" => "badge-neutral",
-            _ => "badge-ghost",
+            "pending" => "ik-tone-violet",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "compensating" => "ik-tone-warning",
+            "compensated" => "ik-tone-neutral",
+            _ => "ik-tone-neutral",
         }
     }
 
     /// Get CSS class for job state.
     pub fn job_state_class(&self) -> &'static str {
         match self.job_state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 
     /// Get CSS class for compensation state.
     pub fn compensation_state_class(&self) -> &'static str {
         match self.compensation_state.as_deref() {
-            Some("available") => "badge-primary",
-            Some("scheduled") => "badge-secondary",
-            Some("executing") => "badge-info",
-            Some("completed") => "badge-success",
+            Some("available") => "ik-tone-primary",
+            Some("scheduled") => "ik-tone-violet",
+            Some("executing") => "ik-tone-info",
+            Some("completed") => "ik-tone-success",
             // Cancelled compensation = not needed (saga succeeded) - use neutral color
-            Some("cancelled") => "badge-neutral",
-            Some("discarded") => "badge-error",
-            Some("retryable") => "badge-warning",
-            _ => "badge-ghost",
+            Some("cancelled") => "ik-tone-neutral",
+            Some("discarded") => "ik-tone-danger",
+            Some("retryable") => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 }
@@ -164,13 +165,13 @@ impl SagaDetail {
     /// Get CSS class for state.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "cancelled" => "badge-warning",
-            "compensating" => "badge-warning",
-            "compensated" => "badge-neutral",
-            _ => "badge-ghost",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "cancelled" => "ik-tone-warning",
+            "compensating" => "ik-tone-warning",
+            "compensated" => "ik-tone-neutral",
+            _ => "ik-tone-neutral",
         }
     }
 

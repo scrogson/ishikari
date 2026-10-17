@@ -1,40 +1,43 @@
+{% import "partials/ui.html" as ui %}
 {% if sagas.is_empty() %}
-<div class="py-12 text-center text-base-content/50">No sagas found.</div>
+{% call ui::empty("No sagas found") %}
 {% else %}
-<div class="overflow-x-auto">
-    <table class="table table-sm">
+<div class="ik-table-wrap">
+    <table class="ik-table">
         <thead>
             <tr>
-                <th>ID</th>
+                <th>Saga</th>
                 <th>Name</th>
                 <th>State</th>
                 <th>Progress</th>
-                <th>Steps</th>
+                <th class="ik-num">Steps</th>
                 <th>Started</th>
                 <th>Completed</th>
             </tr>
         </thead>
         <tbody>
             {% for saga in sagas.iter() %}
-            <tr class="hover:bg-base-200/60">
-                <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/sagas/{{ saga.id }}">#{{ saga.id }}</a></td>
-                <td class="font-medium">{{ saga.name }}</td>
-                <td><span class="badge badge-soft badge-sm {{ saga.state_class() }}">{{ saga.state }}</span></td>
-                <td class="min-w-40">
-                    <progress class="progress {% if saga.failed_steps > 0 %}progress-error{% else if saga.compensating_steps > 0 %}progress-warning{% else %}progress-success{% endif %} w-full" value="{{ saga.progress() }}" max="100"></progress>
-                    <div class="text-xs text-base-content/50">
-                        {{ saga.completed_steps }}/{{ saga.step_count }} steps
-                        {% if saga.failed_steps > 0 %}<span class="text-error">({{ saga.failed_steps }} failed)</span>{% endif %}
-                        {% if saga.compensating_steps > 0 %}<span class="text-warning">({{ saga.compensating_steps }} compensating)</span>{% endif %}
+            <tr>
+                <td><a class="ik-link ik-mono" href="{{ base_path }}/sagas/{{ saga.id }}">#{{ saga.id }}</a></td>
+                <td class="font-medium"><a class="ik-link-quiet" href="{{ base_path }}/sagas/{{ saga.id }}">{{ saga.name }}</a></td>
+                <td><span class="ik-badge ik-dot {{ saga.state_class() }}">{{ saga.state }}</span></td>
+                <td>
+                    <div class="min-w-40 space-y-1.5">
+                        <progress class="ik-progress {% if saga.failed_steps > 0 %}ik-tone-danger{% else if saga.compensating_steps > 0 %}ik-tone-warning{% else %}ik-tone-success{% endif %}" value="{{ saga.progress() }}" max="100"></progress>
+                        <div class="flex flex-wrap gap-x-2 text-xs ik-muted tabular-nums">
+                            <span>{{ saga.completed_steps }}/{{ saga.step_count }} steps</span>
+                            {% if saga.failed_steps > 0 %}<span class="text-ik-danger">{{ saga.failed_steps }} failed</span>{% endif %}
+                            {% if saga.compensating_steps > 0 %}<span class="text-ik-warning">{{ saga.compensating_steps }} compensating</span>{% endif %}
+                        </div>
                     </div>
                 </td>
-                <td class="tabular-nums">{{ saga.step_count }}</td>
-                <td class="whitespace-nowrap text-base-content/60">{{ saga.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
-                <td class="whitespace-nowrap text-base-content/60">
+                <td class="ik-num">{{ saga.step_count }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">{{ saga.inserted_at.format("%Y-%m-%d %H:%M") }}</td>
+                <td class="whitespace-nowrap ik-muted tabular-nums">
                     {% if let Some(completed) = saga.completed_at %}
                     {{ completed.format("%Y-%m-%d %H:%M") }}
                     {% else %}
-                    <span class="text-base-content/30">—</span>
+                    <span class="ik-none">—</span>
                     {% endif %}
                 </td>
             </tr>
@@ -42,30 +45,9 @@
         </tbody>
     </table>
 </div>
-
-{% if total_pages > 1 %}
-<div class="mt-4 flex justify-center">
-    <div class="join">
-        {% if page > 1 %}
-        <a class="join-item btn btn-sm" href="?page={{ page - 1 }}" hx-get="{{ base_path }}/api/sagas?page={{ page - 1 }}" hx-target="#sagas-table" hx-include="#sagas-filter-form">«</a>
-        {% endif %}
-
-        {% for p in 1..=total_pages %}
-            {% if p == page %}
-            <span class="join-item btn btn-sm btn-active btn-primary">{{ p }}</span>
-            {% else if p <= 3 || p > total_pages - 2 || (p >= page - 1 && p <= page + 1) %}
-            <a class="join-item btn btn-sm" href="?page={{ p }}" hx-get="{{ base_path }}/api/sagas?page={{ p }}" hx-target="#sagas-table" hx-include="#sagas-filter-form">{{ p }}</a>
-            {% else if p == 4 && page > 5 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% else if p == total_pages - 2 && page < total_pages - 4 %}
-            <span class="join-item btn btn-sm btn-disabled">…</span>
-            {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a class="join-item btn btn-sm" href="?page={{ page + 1 }}" hx-get="{{ base_path }}/api/sagas?page={{ page + 1 }}" hx-target="#sagas-table" hx-include="#sagas-filter-form">»</a>
-        {% endif %}
-    </div>
-</div>
-{% endif %}
+{% let pager_api = "/api/sagas" %}
+{% let pager_target = "#sagas-table" %}
+{% let pager_include = "#sagas-filter-form" %}
+{% let pager_extra = "" %}
+{% include "partials/pager.html" %}
 {% endif %}

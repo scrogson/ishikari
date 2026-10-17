@@ -31,7 +31,7 @@ PostgreSQL 12 or later.
 
 ```toml
 [dependencies]
-ishikari = "0.2"
+ishikari = "0.3"
 async-trait = "0.1"   # used by the macros
 typetag = "0.2"       # used by the macros
 ```
@@ -173,7 +173,7 @@ let app = Router::new()
 ```
 
 Each page is a standalone page with its own sidebar and light/dark theme. To show the pages inside
-your app's admin instead (your header, navigation and daisyUI 5 theme), implement `Layout` and
+your app's admin instead (your header, navigation and theme), implement `Layout` and
 build the router with `app_with_layout`:
 
 ```rust
@@ -200,9 +200,38 @@ let admin = ishikari_admin::app_with_layout(
 );
 ```
 
-The embed stylesheet has the dashboard's daisyUI components and Tailwind utilities but no themes
-and no reset, so your theme colors it; your page brings Tailwind's preflight (or its own reset).
-htmx fragments (the tables and counts that refresh in place) never go through the layout.
+The embed stylesheet has the dashboard's components (classes prefixed `ik-`) and the Tailwind
+utilities its pages use: no theme, nothing on `:root`, and a reset only inside the dashboard, so
+it doesn't touch the rest of your page. htmx fragments (the tables and counts that refresh in
+place) never go through the layout.
+
+### Theming
+
+The dashboard takes its colors from your CSS variables, so it matches your app without setup.
+Each token takes the first of these that your page sets:
+
+1. `--ik-<token>`: just the dashboard's;
+2. `--<token>`: shadcn/ui's names (`--primary`, `--card`, `--border`, `--radius`...);
+3. `--color-<token>`: your Tailwind theme's colors (`--color-primary`...);
+4. daisyUI 5's (`--color-base-100`, `--color-base-content`, `--color-error`, `--radius-box`...);
+5. a neutral default, light or dark by the page's `color-scheme`.
+
+The tokens: `background`, `foreground`, `card`, `card-foreground`, `muted`, `muted-foreground`,
+`accent`, `border`, `input`, `primary`, `primary-foreground`, `ring`, `success`, `warning`,
+`info`, `destructive`, `violet` and `radius`. Values are whole colors (`oklch(...)`, `#hex`),
+not shadcn's older bare HSL numbers; set `--ik-*` where yours are those. They're read where
+they're used, so a theme set on any ancestor (`.dark`, `data-theme`) applies. To restyle only the
+dashboard:
+
+```css
+.ishikari-admin {
+  --ik-primary: oklch(0.6 0.17 150);
+  --ik-radius: 0.375rem;
+}
+```
+
+The standalone pages work the same way, following the system's light or dark mode unless the
+theme toggle picks one.
 
 ## Development
 

@@ -72,18 +72,18 @@ async fn a_host_layout_wraps_each_page() {
     let main = html.split(r#"<main id="host-main">"#).nth(1).unwrap();
     assert!(main.contains(r#"src="/jobs/assets/admin.js?v="#));
     assert!(
-        main.contains("Recent Failures"),
+        main.contains("Recent failures"),
         "the page's content, in the host's main"
     );
     assert!(main.contains(r#"class="ishikari-admin"#));
     assert!(!html.contains("sidebar-nav"), "not the standalone sidebar");
-    assert!(!html.contains(r#"data-theme="dark""#), "nor its theme");
+    assert!(!html.contains("ishikari-theme"), "nor its theme switch");
     assert!(!html.contains("/assets/admin.css"), "nor its stylesheet");
 
     let html = body(get(&app, "/jobs/jobs?state=pending", &[]).await).await;
     assert!(html.contains("<title>Jobs · Host</title>"));
     assert!(html.contains(r#"data-active="Jobs""#));
-    assert!(html.contains(r#"href="/jobs/jobs" class="menu-active" aria-current="page""#));
+    assert!(html.contains(r#"href="/jobs/jobs" class="ik-tab" aria-current="page""#));
     assert!(!html.contains("sidebar-nav"));
 
     db.drop().await;
@@ -109,7 +109,7 @@ async fn a_form_shown_again_comes_inside_the_layout_too() {
     assert!(html.contains("<title>Import Definition · Host</title>"));
     let main = html.split(r#"<main id="host-main">"#).nth(1).unwrap();
     assert!(
-        main.contains(r#"role="alert" class="alert alert-error"#),
+        main.contains(r#"role="alert" class="ik-alert ik-alert-error"#),
         "{html}"
     );
 
@@ -151,20 +151,30 @@ async fn the_embed_stylesheet_leaves_the_theme_to_the_host() {
         .unwrap()
         .starts_with("text/css"));
     let css = body(res).await;
-    assert!(css.contains(".btn") && css.contains(".badge") && css.contains(".table"));
-    assert!(css.contains(".ishikari-admin .code-block"));
+    assert!(css.contains(".ik-btn") && css.contains(".ik-badge") && css.contains(".ik-table"));
+    assert!(
+        css.contains("var(--ik-primary,var(--primary,var(--color-primary,"),
+        "colors from the host's variables"
+    );
+    assert!(
+        css.contains(":where(.ishikari-admin"),
+        "a reset only inside the dashboard"
+    );
     for theme in [
+        ":root",
         "[data-theme",
-        "--color-base-100:",
         "--color-primary:",
+        "--color-base-100:",
+        "--color-ik-",
+        "--font-sans:",
         "color-scheme",
     ] {
         assert!(!css.contains(theme), "declares {theme}");
     }
 
-    // The standalone stylesheet has the themes the embed one leaves out.
+    // The standalone stylesheet has the light and dark themes the embed one leaves out.
     let css = body(get(&app, "/jobs/assets/admin.css", &[]).await).await;
-    assert!(css.contains("[data-theme=dark]") && css.contains("--color-base-100:"));
+    assert!(css.contains("color-scheme") && css.contains("[data-theme=dark]"));
 
     let res = get(&app, "/jobs/assets/admin.js", &[]).await;
     assert_eq!(res.status(), StatusCode::OK);
@@ -187,7 +197,11 @@ async fn without_a_layout_pages_are_standalone() {
         html.contains("<title>Jobs - Ishikari Admin</title>"),
         "{html}"
     );
-    assert!(html.contains(r#"<html lang="en" data-theme="dark">"#));
+    assert!(
+        html.contains(r#"<html lang="en">"#),
+        "the system's theme, or the one chosen"
+    );
+    assert!(html.contains(r#"id="theme-toggle""#));
     assert!(html.contains(r#"id="sidebar-nav""#));
     assert!(html.contains(r#"href="/jobs/assets/admin.css?v="#));
     assert!(html.contains(r#"src="/jobs/assets/htmx.min.js?v="#));

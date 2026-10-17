@@ -38,14 +38,15 @@ impl QueueJobInfo {
     /// Get CSS class for state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 }

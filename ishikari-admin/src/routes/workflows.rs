@@ -47,13 +47,13 @@ impl WorkflowInfo {
     /// Get a CSS class for the state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "cancelled" => "badge-warning",
-            "compensating" => "badge-warning",
-            "compensated" => "badge-neutral",
-            _ => "badge-ghost",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "cancelled" => "ik-tone-warning",
+            "compensating" => "ik-tone-warning",
+            "compensated" => "ik-tone-neutral",
+            _ => "ik-tone-neutral",
         }
     }
 }
@@ -97,13 +97,13 @@ impl WorkflowDetail {
     /// Get a CSS class for the state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "running" => "badge-info",
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "cancelled" => "badge-warning",
-            "compensating" => "badge-warning",
-            "compensated" => "badge-neutral",
-            _ => "badge-ghost",
+            "running" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "cancelled" => "ik-tone-warning",
+            "compensating" => "ik-tone-warning",
+            "compensated" => "ik-tone-neutral",
+            _ => "ik-tone-neutral",
         }
     }
 
@@ -173,11 +173,11 @@ impl NodeExecution {
     /// Get status badge class.
     pub fn status_class(&self) -> &'static str {
         match self.status.as_str() {
-            "completed" => "badge-success",
-            "failed" => "badge-error",
-            "running" => "badge-info",
-            "skipped" => "badge-warning",
-            _ => "badge-ghost",
+            "completed" => "ik-tone-success",
+            "failed" => "ik-tone-danger",
+            "running" => "ik-tone-info ik-live",
+            "skipped" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 }
@@ -197,22 +197,25 @@ pub struct WorkflowJobInfo {
     pub is_compensation: bool,
     /// Saga step state, if this is a saga forward job.
     pub saga_step_state: Option<String>,
+    /// The step's name in its workflow.
+    pub step: Option<String>,
 }
 
 impl WorkflowJobInfo {
     /// Get a CSS class for the state badge.
     pub fn state_class(&self) -> &'static str {
         match self.state.as_str() {
-            "available" => "badge-primary",
-            "pending" => "badge-neutral",
-            "scheduled" => "badge-secondary",
-            "executing" => "badge-info",
-            "completed" => "badge-success",
+            "available" => "ik-tone-primary",
+            "pending" => "ik-tone-neutral",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
             // Cancelled compensation jobs = not needed (saga succeeded) - neutral
-            "cancelled" if self.is_compensation => "badge-neutral",
-            "discarded" | "cancelled" => "badge-error",
-            "retryable" => "badge-warning",
-            _ => "badge-ghost",
+            "cancelled" if self.is_compensation => "ik-tone-neutral",
+            "discarded" => "ik-tone-danger",
+            "cancelled" => "ik-tone-neutral",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
         }
     }
 
@@ -486,7 +489,7 @@ async fn get_workflow(pool: &PgPool, schema: Option<&str>, id: i64) -> Option<Wo
 }
 
 /// Get jobs for a workflow with their dependencies.
-async fn get_workflow_jobs(
+pub(crate) async fn get_workflow_jobs(
     pool: &PgPool,
     schema: Option<&str>,
     workflow_id: i64,
@@ -511,7 +514,8 @@ async fn get_workflow_jobs(
             j.inserted_at, j.completed_at,
             COALESCE(array_agg(d.depends_on_job_id) FILTER (WHERE d.depends_on_job_id IS NOT NULL), '{{}}') as dependencies,
             EXISTS(SELECT 1 FROM {} s WHERE s.compensation_job_id = j.id) as is_compensation,
-            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
+            (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state,
+            j.meta->>'ishikari_step' as step
         FROM {} j
         LEFT JOIN {} d ON d.job_id = j.id
         WHERE j.workflow_id = $1
@@ -532,6 +536,7 @@ async fn get_workflow_jobs(
         Vec<i64>,
         bool,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(&query)
         .bind(workflow_id)
         .fetch_all(pool)
@@ -550,6 +555,7 @@ async fn get_workflow_jobs(
             dependencies: row.7,
             is_compensation: row.8,
             saga_step_state: row.9,
+            step: row.10,
         })
         .collect()
 }

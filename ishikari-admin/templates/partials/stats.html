@@ -1,17 +1,38 @@
-{% macro stat(label, value, color) %}
-<div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-    <div class="truncate text-xs font-medium text-base-content/60">{{ label }}</div>
-    <div class="mt-1 text-2xl font-bold tabular-nums {{ color }}">{{ value }}</div>
-</div>
+{% import "partials/ui.html" as ui %}
+{% macro segment(label, count, tone) %}
+{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count }}"></span>{% endif %}
 {% endmacro %}
-<div class="grid grid-cols-3 gap-3 sm:gap-4 xl:grid-cols-9">
-    {% call stat("Available", stats.available, "text-primary") %}
-    {% call stat("Executing", stats.executing, "text-info") %}
-    {% call stat("Scheduled", stats.scheduled, "text-secondary") %}
-    {% call stat("Pending", stats.pending(), "text-base-content/70") %}
-    {% call stat("Retryable", stats.retryable, "text-warning") %}
-    {% call stat("Completed", stats.completed, "text-success") %}
-    {% call stat("Discarded", stats.discarded, "text-error") %}
-    {% call stat("Cancelled", stats.cancelled, "text-base-content/50") %}
-    {% call stat("Total", stats.total, "") %}
+<div class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Jobs</h2>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ stats.total }}</span> in total</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="ik-badge ik-dot ik-live ik-tone-success" title="Refreshes every 5 seconds">Live</span>
+            <a href="{{ base_path }}/jobs" class="ik-btn ik-btn-sm">View all</a>
+        </div>
+    </div>
+    <div class="px-5 pb-5">
+        <div class="ik-meter" role="img" aria-label="Jobs by state">
+            {% call segment("Available", stats.available, "ik-tone-primary") %}
+            {% call segment("Executing", stats.executing, "ik-tone-info") %}
+            {% call segment("Scheduled", stats.scheduled, "ik-tone-violet") %}
+            {% call segment("Pending", stats.pending(), "ik-tone-neutral") %}
+            {% call segment("Retryable", stats.retryable, "ik-tone-warning") %}
+            {% call segment("Completed", stats.completed, "ik-tone-success") %}
+            {% call segment("Discarded", stats.discarded, "ik-tone-danger") %}
+            {% call segment("Cancelled", stats.cancelled, "ik-tone-neutral opacity-50") %}
+        </div>
+    </div>
+    <div class="ik-metrics grid-cols-2 sm:grid-cols-4 xl:grid-cols-8">
+        {% call ui::stat("Available", stats.available, "ik-tone-primary", base_path, "available") %}
+        {% call ui::stat("Executing", stats.executing, "ik-tone-info", base_path, "executing") %}
+        {% call ui::stat("Scheduled", stats.scheduled, "ik-tone-violet", base_path, "scheduled") %}
+        {% call ui::stat("Pending", stats.pending(), "ik-tone-neutral", base_path, "pending") %}
+        {% call ui::stat("Retryable", stats.retryable, "ik-tone-warning", base_path, "retryable") %}
+        {% call ui::stat("Completed", stats.completed, "ik-tone-success", base_path, "completed") %}
+        {% call ui::stat("Discarded", stats.discarded, "ik-tone-danger", base_path, "discarded") %}
+        {% call ui::stat("Cancelled", stats.cancelled, "ik-tone-neutral", base_path, "cancelled") %}
+    </div>
 </div>

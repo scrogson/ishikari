@@ -1,64 +1,84 @@
 {% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
 
 {% block title %}Run {{ definition.name }}{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-4">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">Run {{ definition.name }}</h1>
-        <p class="text-sm text-base-content/60">Version {{ definition.version }}</p>
+<header class="ik-page-header">
+    <div class="min-w-0">
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/definitions">Definitions</a><span aria-hidden="true">/</span><a class="truncate" href="{{ base_path }}/definitions/{{ definition.id }}">{{ definition.name }}</a><span aria-hidden="true">/</span><span>Run</span></nav>
+        <h1 class="ik-title flex flex-wrap items-center gap-3">
+            <span class="min-w-0 break-words">Run {{ definition.name }}</span>
+            <span class="ik-badge ik-tone-info">v{{ definition.version }}</span>
+        </h1>
+        <p class="ik-subtitle">Version <span class="tabular-nums">{{ definition.version }}</span></p>
     </div>
-    <a href="{{ base_path }}/definitions/{{ definition.id }}" class="btn btn-ghost btn-sm">&larr; Back to Definition</a>
-</div>
+    <a href="{{ base_path }}/definitions/{{ definition.id }}" class="ik-btn ik-btn-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+        Back to definition
+    </a>
+</header>
 
 {% match error %}
 {% when Some with (e) %}
-<div role="alert" class="alert alert-error alert-soft">{{ e }}</div>
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Run failed</p>
+        <p class="break-words">{{ e }}</p>
+    </div>
+</div>
 {% when None %}
 {% endmatch %}
 
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <div class="flex items-center justify-between">
-            <h2 class="card-title text-base">Workflow Inputs</h2>
-            {% if !definition.input_fields().is_empty() %}
-            <div class="flex items-center gap-2">
-                <span class="text-sm text-base-content/60">Mode</span>
-                <div class="join">
-                    <button type="button" id="mode-form" class="join-item btn btn-sm btn-primary btn-active" onclick="setMode('form')">Form</button>
-                    <button type="button" id="mode-json" class="join-item btn btn-sm" onclick="setMode('json')">JSON</button>
-                </div>
-            </div>
-            {% endif %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Workflow inputs</h2>
+            <p class="ik-card-desc">The values this run starts with</p>
         </div>
+        {% if !definition.input_fields().is_empty() %}
+        <div class="ik-segmented" role="group" aria-label="Input mode">
+            <button type="button" id="mode-form" aria-pressed="true" onclick="setMode('form')">Form</button>
+            <button type="button" id="mode-json" aria-pressed="false" onclick="setMode('json')">JSON</button>
+        </div>
+        {% endif %}
+    </div>
 
-        <form method="post" action="{{ base_path }}/definitions/{{ definition.id }}/run" id="run-form" onsubmit="return prepareSubmit()" class="space-y-4">
+    <form method="post" action="{{ base_path }}/definitions/{{ definition.id }}/run" id="run-form" onsubmit="return prepareSubmit()">
+        <div class="ik-card-body">
             {% if definition.input_fields().is_empty() %}
-            <div class="rounded-box bg-base-200 p-6">
-                <p class="font-medium">This workflow has no input parameters defined.</p>
-                <p class="mt-1 mb-4 text-sm text-base-content/60">
-                    You can run the workflow as-is, or add inputs to make it configurable.
-                </p>
-                <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="btn btn-sm">+ Add Inputs in Workflow Builder</a>
+            <div class="ik-alert">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                <div class="min-w-0 space-y-3">
+                    <div>
+                        <p class="ik-alert-title">No input parameters</p>
+                        <p class="ik-muted">This workflow has no input parameters defined. You can run the workflow as-is, or add inputs to make it configurable.</p>
+                    </div>
+                    <a href="{{ base_path }}/definitions/{{ definition.id }}/edit" class="ik-btn ik-btn-sm">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                        Add inputs in workflow builder
+                    </a>
+                </div>
             </div>
             <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
             {% else %}
 
             <!-- Form Mode -->
             <div id="form-mode">
-                <div class="grid gap-x-6 gap-y-2 md:grid-cols-2">
+                <div class="grid gap-x-6 gap-y-5 md:grid-cols-2">
                     {% for (name, field) in definition.input_fields() %}
-                    <fieldset class="fieldset">
-                        <label class="fieldset-legend" for="field-{{ name }}">
-                            <span class="font-mono">{{ name }}</span>
-                            {% if field.required %}<span class="text-error">*</span>{% endif %}
-                            <span class="badge badge-ghost badge-xs">{{ field.field_type }}</span>
+                    <div class="ik-field">
+                        <label class="ik-label" for="field-{{ name }}">
+                            <span class="ik-mono text-ik-fg">{{ name }}</span>
+                            {% if field.required %}<span class="text-ik-danger" title="Required">*</span>{% endif %}
+                            <span class="ik-badge ik-badge-sm ik-tone-neutral">{{ field.field_type }}</span>
                         </label>
                         {% if field.field_type == "boolean" %}
                         <select
                             id="field-{{ name }}"
                             name="field-{{ name }}"
-                            class="select select-sm w-full"
+                            class="ik-select"
                             data-field-name="{{ name }}"
                             data-field-type="{{ field.field_type }}"
                         >
@@ -71,7 +91,7 @@
                             type="number"
                             id="field-{{ name }}"
                             name="field-{{ name }}"
-                            class="input input-sm w-full"
+                            class="ik-input tabular-nums"
                             data-field-name="{{ name }}"
                             data-field-type="{{ field.field_type }}"
                             {% if field.field_type == "number" %}step="any"{% endif %}
@@ -81,7 +101,8 @@
                         <textarea
                             id="field-{{ name }}"
                             name="field-{{ name }}"
-                            class="textarea min-h-20 w-full font-mono"
+                            class="ik-textarea ik-mono text-xs"
+                            spellcheck="false"
                             data-field-name="{{ name }}"
                             data-field-type="{{ field.field_type }}"
                             placeholder="Enter JSON {{ field.field_type }}"
@@ -91,7 +112,7 @@
                             type="text"
                             id="field-{{ name }}"
                             name="field-{{ name }}"
-                            class="input input-sm w-full"
+                            class="ik-input"
                             data-field-name="{{ name }}"
                             data-field-type="{{ field.field_type }}"
                             placeholder="Enter {{ field.field_type }}"
@@ -99,100 +120,112 @@
                         {% endif %}
                         {% match field.description %}
                         {% when Some with (desc) %}
-                        <p class="label whitespace-normal">{{ desc }}</p>
+                        <span class="ik-hint">{{ desc }}</span>
                         {% when None %}
                         {% endmatch %}
-                    </fieldset>
+                    </div>
                     {% endfor %}
                 </div>
             </div>
 
             <!-- JSON Mode -->
             <div id="json-mode" class="hidden">
-                <fieldset class="fieldset">
-                    <legend class="fieldset-legend">Input JSON</legend>
+                <div class="ik-field">
+                    <label class="ik-label" for="json-input">Input JSON</label>
                     <textarea
                         id="json-input"
-                        class="textarea min-h-[200px] w-full resize-y font-mono"
+                        class="ik-textarea ik-mono text-xs min-h-[200px]"
+                        spellcheck="false"
                         placeholder="{}"
                     >{}</textarea>
-                    <p class="label">Enter inputs as a JSON object.</p>
-                </fieldset>
+                    <span class="ik-hint">Enter inputs as a JSON object.</span>
+                </div>
             </div>
 
             <input type="hidden" name="inputs_json" id="inputs_json" value="{}">
             {% endif %}
+        </div>
 
-            <button type="submit" class="btn btn-primary btn-sm">Run Workflow</button>
-        </form>
-    </div>
+        <div class="ik-card-footer flex justify-end">
+            <button type="submit" class="ik-btn ik-btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18l15-9z"/></svg>
+                Run workflow
+            </button>
+        </div>
+    </form>
 </section>
 
 {% if !definition.input_fields().is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Input Schema Reference</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Type</th>
-                        <th>Required</th>
-                        <th>Description</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for (name, field) in definition.input_fields() %}
-                    <tr class="hover:bg-base-200/60">
-                        <td><code class="font-mono">{{ name }}</code></td>
-                        <td><span class="badge badge-ghost badge-sm">{{ field.field_type }}</span></td>
-                        <td>{% if field.required %}<span class="badge badge-soft badge-sm badge-success">required</span>{% else %}<span class="text-base-content/40">optional</span>{% endif %}</td>
-                        <td class="text-base-content/70">{{ field.description.as_deref().unwrap_or("—") }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Input schema</h2>
+            <p class="ik-card-desc">For reference</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for (name, field) in definition.input_fields() %}
+                <tr>
+                    <td class="ik-mono text-xs font-medium">{{ name }}</td>
+                    <td><span class="ik-tag">{{ field.field_type }}</span></td>
+                    <td>{% if field.required %}<span class="ik-badge ik-badge-sm ik-tone-primary">required</span>{% else %}<span class="text-xs ik-muted">optional</span>{% endif %}</td>
+                    <td class="ik-muted">{% if let Some(d) = field.description.as_deref() %}{{ d }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}
 
 {% if !runs.is_empty() %}
-<section class="card border border-base-300 bg-base-100 shadow-sm">
-    <div class="card-body gap-4">
-        <h2 class="card-title text-base">Recent Runs</h2>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Run ID</th>
-                        <th>Workflow</th>
-                        <th>Status</th>
-                        <th>Started</th>
-                        <th>Completed</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for run in runs %}
-                    <tr class="hover:bg-base-200/60">
-                        <td class="font-mono">{{ run.id }}</td>
-                        <td><a class="link link-hover link-primary font-mono" href="{{ base_path }}/workflows/{{ run.workflow_id }}">#{{ run.workflow_id }}</a></td>
-                        <td><span class="badge badge-soft badge-sm {{ run.status_class() }}">{{ run.status }}</span></td>
-                        <td class="whitespace-nowrap text-base-content/60">{{ run.created_at.format("%Y-%m-%d %H:%M") }}</td>
-                        <td class="whitespace-nowrap text-base-content/60">
-                            {% match run.completed_at %}
-                            {% when Some with (completed) %}
-                            {{ completed.format("%Y-%m-%d %H:%M") }}
-                            {% when None %}
-                            <span class="text-base-content/30">—</span>
-                            {% endmatch %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Recent runs</h2>
+            <p class="ik-card-desc">The latest runs of this definition</p>
         </div>
+    </div>
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Run</th>
+                    <th>Workflow</th>
+                    <th>Status</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in runs %}
+                <tr>
+                    <td class="ik-mono ik-muted">{{ run.id }}</td>
+                    <td><a class="ik-link ik-mono" href="{{ base_path }}/workflows/{{ run.workflow_id }}">#{{ run.workflow_id }}</a></td>
+                    <td><span class="ik-badge ik-dot {{ run.status_class() }}">{{ run.status }}</span></td>
+                    <td class="whitespace-nowrap ik-muted tabular-nums">{{ run.created_at.format("%Y-%m-%d %H:%M") }}</td>
+                    <td class="whitespace-nowrap ik-muted tabular-nums">
+                        {% match run.completed_at %}
+                        {% when Some with (completed) %}
+                        {{ completed.format("%Y-%m-%d %H:%M") }}
+                        {% when None %}
+                        <span class="ik-none">—</span>
+                        {% endmatch %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 {% endif %}
@@ -209,10 +242,8 @@ function setMode(mode) {
 
     formMode.classList.toggle('hidden', mode !== 'form');
     jsonMode.classList.toggle('hidden', mode === 'form');
-    formBtn.classList.toggle('btn-active', mode === 'form');
-    formBtn.classList.toggle('btn-primary', mode === 'form');
-    jsonBtn.classList.toggle('btn-active', mode !== 'form');
-    jsonBtn.classList.toggle('btn-primary', mode !== 'form');
+    formBtn.setAttribute('aria-pressed', String(mode === 'form'));
+    jsonBtn.setAttribute('aria-pressed', String(mode !== 'form'));
 
     if (mode === 'form') {
         // Sync JSON to form fields

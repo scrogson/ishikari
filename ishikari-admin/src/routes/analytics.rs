@@ -87,11 +87,11 @@ pub struct Analytics {
 impl Analytics {
     fn state_class(&self, rate: f64) -> &'static str {
         if rate >= 0.95 {
-            "badge-success"
+            "ik-tone-success"
         } else if rate >= 0.80 {
-            "badge-warning"
+            "ik-tone-warning"
         } else {
-            "badge-error"
+            "ik-tone-danger"
         }
     }
 
@@ -101,24 +101,6 @@ impl Analytics {
 
     pub fn job_success_class(&self) -> &'static str {
         self.state_class(self.job_stats.success_rate)
-    }
-
-    fn progress_class(&self, rate: f64) -> &'static str {
-        if rate >= 0.95 {
-            "progress-success"
-        } else if rate >= 0.80 {
-            "progress-warning"
-        } else {
-            "progress-error"
-        }
-    }
-
-    pub fn workflow_success_progress(&self) -> &'static str {
-        self.progress_class(self.workflow_stats.success_rate)
-    }
-
-    pub fn job_success_progress(&self) -> &'static str {
-        self.progress_class(self.job_stats.success_rate)
     }
 }
 
