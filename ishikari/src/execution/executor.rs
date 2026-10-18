@@ -432,6 +432,40 @@ impl WorkflowExecutor {
     }
 }
 
+/// Whether a node's `when` lets it run: anything but `false`, `null`, `0`, and the strings
+/// `""`, `"false"` and `"0"`.
+pub fn is_truthy(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::Null | Value::Bool(false) => false,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !(s.is_empty() || s == "false" || s == "0"),
+        _ => true,
+    }
+}
+
+/// Why a node whose condition is `condition` is skipped, if it is: the condition is falsy, or
+/// doesn't resolve. A blank condition is none.
+pub(crate) fn skip_reason(interpolator: &Interpolator<'_>, condition: &str) -> Option<String> {
+    if condition.trim().is_empty() {
+        return None;
+    }
+    match interpolator.interpolate(&serde_json::Value::String(condition.to_string())) {
+        Ok(serde_json::Value::Bool(false)) => {
+            Some(format!("Condition '{}' evaluated to false", condition))
+        }
+        Ok(value) if !is_truthy(&value) => Some(format!(
+            "Condition '{}' evaluated to falsy value",
+            condition
+        )),
+        Ok(_) => None,
+        Err(e) => Some(format!(
+            "Failed to evaluate condition '{}': {}",
+            condition, e
+        )),
+    }
+}
+
 /// Execute a single node.
 async fn execute_node(
     execution_id: Uuid,
@@ -447,26 +481,8 @@ async fn execute_node(
     // Check condition first
     if let Some(condition) = &node.condition {
         let interpolator = Interpolator::new(workflow_inputs, node_outputs);
-        match interpolator.interpolate(&serde_json::Value::String(condition.clone())) {
-            Ok(serde_json::Value::Bool(false)) => {
-                return Err(NodeError::ConditionError(format!(
-                    "Condition '{}' evaluated to false",
-                    condition
-                )));
-            }
-            Ok(serde_json::Value::String(s)) if s.is_empty() || s == "false" || s == "0" => {
-                return Err(NodeError::ConditionError(format!(
-                    "Condition '{}' evaluated to falsy value",
-                    condition
-                )));
-            }
-            Err(e) => {
-                return Err(NodeError::ConditionError(format!(
-                    "Failed to evaluate condition '{}': {}",
-                    condition, e
-                )));
-            }
-            _ => {} // Truthy value, continue execution
+        if let Some(reason) = skip_reason(&interpolator, condition) {
+            return Err(NodeError::ConditionError(reason));
         }
     }
 
@@ -567,6 +583,46 @@ mod tests {
                 m
             },
         }
+    }
+
+    #[test]
+    fn falsy_values_skip_a_node() {
+        for falsy in [
+            json!(false),
+            json!(null),
+            json!(0),
+            json!(0.0),
+            json!(""),
+            json!("false"),
+            json!("0"),
+        ] {
+            assert!(!is_truthy(&falsy), "{falsy}");
+        }
+        for truthy in [
+            json!(true),
+            json!(1),
+            json!("no"),
+            json!("true"),
+            json!([]),
+            json!({}),
+        ] {
+            assert!(is_truthy(&truthy), "{truthy}");
+        }
+    }
+
+    #[test]
+    fn a_condition_that_does_not_resolve_skips_a_node() {
+        let mut inputs = HashMap::new();
+        inputs.insert("on".to_string(), NodeData::json(true));
+        inputs.insert("off".to_string(), NodeData::Json(serde_json::Value::Null));
+        let outputs = HashMap::new();
+        let interpolator = Interpolator::new(&inputs, &outputs);
+        assert_eq!(skip_reason(&interpolator, "{{inputs.on}}"), None);
+        assert_eq!(skip_reason(&interpolator, " "), None);
+        assert!(skip_reason(&interpolator, "{{inputs.off}}").is_some());
+        assert!(skip_reason(&interpolator, "{{nodes.gone.ok}}")
+            .unwrap()
+            .starts_with("Failed to evaluate condition"));
     }
 
     #[tokio::test]

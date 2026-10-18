@@ -47,8 +47,10 @@ impl NodeJob {
 }
 
 /// Runs [`NodeJob`]s: the host's node types, from resolving a node's inputs to recording its
-/// output ([`Interpolator`](super::Interpolator) and [`ExecutionStorage`](super::ExecutionStorage)
-/// help). What it returns is the job's outcome, as a worker's `perform` would.
+/// output. [`NodeTypes`](super::NodeTypes) does all that around a handler per type; implement
+/// it yourself to do it your own way ([`Interpolator`](super::Interpolator) and
+/// [`ExecutionStorage`](super::ExecutionStorage) help). What it returns is the job's outcome, as
+/// a worker's `perform` would.
 #[async_trait::async_trait]
 pub trait NodeRunner: Send + Sync + 'static {
     async fn run(&self, job: &NodeJob, ctx: Context) -> PerformResult;

@@ -403,6 +403,121 @@ impl ExecutionStorage {
             .map(|(node_id, output)| (node_id, NodeData::Json(output)))
             .collect())
     }
+
+    // ===== Runs of Definitions =====
+
+    /// A run, with the definition it runs.
+    pub(crate) async fn run_definition(
+        &self,
+        workflow_run_id: i64,
+    ) -> Result<Option<RunDefinition>, sqlx::Error> {
+        let query = format!(
+            r#"
+            SELECT r.execution_id, r.inputs, d.input_schema, d.nodes, d.output_schema
+            FROM {} r
+            JOIN {} d ON d.id = r.definition_id
+            WHERE r.id = $1
+            "#,
+            self.table_name("ishikari_workflow_runs"),
+            self.table_name("ishikari_workflow_definitions")
+        );
+
+        sqlx::query_as(&query)
+            .bind(workflow_run_id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Record how a node's execution ended, whether or not the run has a row for the node yet:
+    /// a run the admin started has none until its nodes run.
+    pub(crate) async fn record_node_execution(
+        &self,
+        record: &NodeRecord<'_>,
+    ) -> Result<(), sqlx::Error> {
+        let query = format!(
+            r#"
+            INSERT INTO {} (
+                workflow_run_id, node_id, node_type, status, inputs, output, error, skip_reason,
+                retry_count, duration_ms, started_at, completed_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::bigint,
+                NOW() - make_interval(secs => $10::bigint::float8 / 1000), NOW()
+            )
+            ON CONFLICT (workflow_run_id, node_id) DO UPDATE SET
+                node_type = EXCLUDED.node_type,
+                status = EXCLUDED.status,
+                inputs = EXCLUDED.inputs,
+                output = EXCLUDED.output,
+                error = EXCLUDED.error,
+                skip_reason = EXCLUDED.skip_reason,
+                retry_count = EXCLUDED.retry_count,
+                duration_ms = EXCLUDED.duration_ms,
+                started_at = EXCLUDED.started_at,
+                completed_at = EXCLUDED.completed_at
+            "#,
+            self.table_name("ishikari_node_executions")
+        );
+
+        sqlx::query(&query)
+            .bind(record.workflow_run_id)
+            .bind(record.node_id)
+            .bind(record.node_type)
+            .bind(record.status.to_string())
+            .bind(record.inputs)
+            .bind(record.output)
+            .bind(record.error)
+            .bind(record.skip_reason)
+            .bind(record.retry_count)
+            .bind(record.duration_ms)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// How many of `node_ids` the run has completed or skipped.
+    pub(crate) async fn count_finished_nodes(
+        &self,
+        workflow_run_id: i64,
+        node_ids: &[String],
+    ) -> Result<i64, sqlx::Error> {
+        let query = format!(
+            "SELECT count(*) FROM {} WHERE workflow_run_id = $1 AND node_id = ANY($2) \
+             AND status IN ('completed', 'skipped')",
+            self.table_name("ishikari_node_executions")
+        );
+
+        sqlx::query_scalar(&query)
+            .bind(workflow_run_id)
+            .bind(node_ids)
+            .fetch_one(&self.pool)
+            .await
+    }
+}
+
+/// A run, with the parts of its definition its nodes need.
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct RunDefinition {
+    pub execution_id: Option<Uuid>,
+    pub inputs: Value,
+    pub input_schema: Value,
+    pub nodes: Value,
+    pub output_schema: Value,
+}
+
+/// How a node's execution ended.
+pub(crate) struct NodeRecord<'a> {
+    pub workflow_run_id: i64,
+    pub node_id: &'a str,
+    pub node_type: &'a str,
+    pub status: NodeStatus,
+    pub inputs: Option<&'a Value>,
+    pub output: Option<&'a Value>,
+    pub error: Option<&'a str>,
+    pub skip_reason: Option<&'a str>,
+    pub retry_count: i32,
+    pub duration_ms: Option<i64>,
 }
 
 /// Database row for workflow runs.
