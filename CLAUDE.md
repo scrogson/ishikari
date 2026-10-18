@@ -55,6 +55,7 @@ A workspace of four crates:
   - rescue;
   - give-back;
   - releasing workflow dependents on completion, and cascading failures;
+  - saga rollback (`postgres/saga.rs`), in the transaction that ends a saga's job;
   - `retry_job` and `cancel_job`;
   - pruning;
   - releasing unique keys.
@@ -69,10 +70,10 @@ A workspace of four crates:
   hosts' migrations.
 - **`workflows/`**:
   - `Pipeline`, `Dag`, `Saga`, sharing `step.rs` to insert steps (`pending` when they have
-    upstreams);
+    upstreams; saga compensations parked `pending` until their rollback releases them);
   - `Workflow::progress`.
-- **`dependencies/`**: dependency rows and the `DependencyResolver`, a sweep that also runs saga
-  compensation.
+- **`dependencies/`**: dependency rows and the `DependencyResolver`, a safety-net sweep for
+  workflows and sagas a job left behind (one rescued and discarded).
 - **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs).
 
 ### Job lifecycle
@@ -102,6 +103,7 @@ it creates.
 - v04: definitions, runs, node executions
 - v05: nodes, unique keys, error records, the `pending` state
 - v06: notify when jobs become available (insert or update), the staging index, saga step indexes
+- v07: saga rollbacks in progress moved off dependency chains (data only)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

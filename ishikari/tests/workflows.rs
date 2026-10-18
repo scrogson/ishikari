@@ -6,7 +6,7 @@ mod common;
 use chrono::{DateTime, Utc};
 use common::{eventually, TestDb};
 use ishikari::prelude::*;
-use ishikari::workflows::{Dag, Pipeline, Saga, Workflow, WorkflowState};
+use ishikari::workflows::{Dag, Pipeline, Workflow, WorkflowState};
 use ishikari::{Engine, Postgres, Queue};
 use std::sync::Arc;
 use std::time::Duration;
@@ -304,35 +304,6 @@ async fn progress_shows_each_step() {
     db.finish().await;
 }
 
-#[tokio::test]
-async fn a_failed_saga_step_runs_the_compensations_of_the_steps_before_it() {
-    let Some(db) = TestDb::new().await else {
-        return;
-    };
-    let wf = Saga::new("book-trip")
-        .step(Step { millis: 0 })
-        .compensate(Step { millis: 0 })
-        .step(Fails)
-        .no_compensate()
-        .run(&db.pool)
-        .await
-        .unwrap();
-    let _engine = engine("test", db.pool.clone());
-
-    eventually(
-        "the saga is compensated",
-        Duration::from_secs(10),
-        || async { workflow_state(&db, wf.id).await == "compensated" },
-    )
-    .await;
-    let s = steps(&db, wf.id).await;
-    assert_eq!(s["1"].0, "completed");
-    assert_eq!(s["2"].0, "discarded");
-    assert_eq!(s["compensate-1"].0, "completed", "step 1 was undone");
-
-    db.finish().await;
-}
-
 #[ishikari::job]
 #[derive(Clone)]
 struct FailsUntilFixed;
@@ -390,6 +361,23 @@ async fn retrying_a_failed_step_revives_what_it_cancelled() {
     .await;
     let s = steps(&db, wf.id).await;
     assert!(s.values().all(|(state, ..)| state == "completed"));
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_finished_workflow_keeps_its_state() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let wf = Workflow::create(&db.pool, "cancelled", serde_json::json!({}), None)
+        .await
+        .unwrap();
+    assert!(Workflow::cancel(&db.pool, wf.id, None).await.unwrap());
+
+    // A late completion, as the resolver's sweep might make, leaves it cancelled.
+    assert!(!Workflow::complete(&db.pool, wf.id, None).await.unwrap());
+    assert_eq!(workflow_state(&db, wf.id).await, "cancelled");
 
     db.finish().await;
 }

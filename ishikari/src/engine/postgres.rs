@@ -12,6 +12,8 @@ use crate::Job;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
+mod saga;
+
 /// Postgres-backed job storage, optionally in a schema other than the connection's default.
 #[derive(Clone, Debug)]
 pub struct Postgres {
@@ -227,9 +229,10 @@ impl Postgres {
     }
 
     /// After `id` completed: mark what depended on it satisfied, make available the dependents
-    /// with nothing left to wait for, and complete the workflow when every job in it has. The
-    /// dependents are locked first, so two upstreams finishing at once can't both leave the
-    /// shared dependent waiting; the workflow is locked before its check for the same reason.
+    /// with nothing left to wait for, and complete the workflow when every job in it has (a
+    /// saga moves on instead: see `saga.rs`). The dependents are locked first, so two upstreams
+    /// finishing at once can't both leave the shared dependent waiting; the workflow is locked
+    /// before its check for the same reason.
     async fn after_completed(
         &self,
         tx: &mut sqlx::PgConnection,
@@ -290,13 +293,14 @@ impl Postgres {
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
+            self.advance_saga(tx, workflow_id).await?;
         }
         Ok(())
     }
 
     /// After `id` was discarded or cancelled: everything that depends on it, directly or not,
     /// can never run, so its dependencies are marked failed and those jobs cancelled. A workflow
-    /// that isn't a saga is marked failed (a saga's compensation is the resolver's).
+    /// that isn't a saga is marked failed; a saga rolls back, or its rollback moves on.
     async fn after_failed(
         &self,
         tx: &mut sqlx::PgConnection,
@@ -350,6 +354,7 @@ impl Postgres {
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
+            self.advance_saga(tx, workflow_id).await?;
         }
         Ok(())
     }
@@ -359,11 +364,17 @@ impl Postgres {
     /// attempt refunded; if its run is still going, its result is dropped), and a scheduled one
     /// runs now. A workflow step whose upstreams haven't all completed waits for them again,
     /// the steps its failure cancelled wait again too, and its workflow is running again.
-    /// Returns false when the job is pending, available, completed or missing.
+    ///
+    /// A saga's step runs again only while the saga is running, and a compensation only once
+    /// its rollback has reached it: retrying one that failed resumes the rollback. Returns false
+    /// when the job is pending (as a parked compensation is), available, completed or missing,
+    /// or is a saga's job that can't run again.
     pub async fn retry_job(&self, id: i64) -> Result<bool, sqlx::Error> {
-        let (jobs, deps) = (
+        let (jobs, deps, steps, workflows) = (
             self.name("ishikari_jobs"),
             self.name("ishikari_job_dependencies"),
+            self.name("ishikari_saga_steps"),
+            self.name("ishikari_workflows"),
         );
         let mut tx = self.pool.begin().await?;
         let found: Option<Option<i64>> = sqlx::query_scalar(&format!(
@@ -379,6 +390,11 @@ impl Postgres {
                 discarded_at = NULL,
                 cancelled_at = NULL
             WHERE j.id = $1 AND j.state IN ('discarded', 'cancelled', 'retryable', 'executing', 'scheduled')
+              AND NOT EXISTS (SELECT 1 FROM {steps} s JOIN {workflows} w ON w.id = s.workflow_id
+                              WHERE s.job_id = j.id AND w.state <> 'running')
+              AND NOT EXISTS (SELECT 1 FROM {steps} s
+                              WHERE s.compensation_job_id = j.id
+                                AND s.state NOT IN ('compensating', 'compensation_failed'))
             RETURNING j.workflow_id
             "#,
             state = self.name("ishikari_job_state"),
@@ -424,20 +440,45 @@ impl Postgres {
         if let Some(workflow_id) = workflow_id {
             sqlx::query(&format!(
                 "UPDATE {workflows} SET state = 'running', completed_at = NULL \
-                 WHERE id = $1 AND state IN ('failed', 'cancelled')",
-                workflows = self.name("ishikari_workflows"),
+                 WHERE id = $1 AND state IN ('failed', 'cancelled') \
+                   AND NOT EXISTS (SELECT 1 FROM {steps} WHERE workflow_id = $1)"
             ))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
+            // A failed compensation: its saga's rollback resumes.
+            sqlx::query(&format!(
+                "SELECT 1 FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
+            ))
+            .bind(workflow_id)
+            .execute(&mut *tx)
+            .await?;
+            let resumed = sqlx::query(&format!(
+                "UPDATE {steps} SET state = 'compensating' \
+                 WHERE compensation_job_id = $1 AND state = 'compensation_failed'"
+            ))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            if resumed.rows_affected() > 0 {
+                sqlx::query(&format!(
+                    "UPDATE {workflows} SET state = 'compensating', completed_at = NULL \
+                     WHERE id = $1 AND state = 'failed'"
+                ))
+                .bind(workflow_id)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         tx.commit().await?;
         Ok(true)
     }
 
     /// Cancel a job that hasn't finished (waiting, available, scheduled, retryable or
-    /// executing; an executing run's result is dropped), and everything that depends on it.
-    /// Returns false when the job had already finished or is missing.
+    /// executing; an executing run's result is dropped), and everything that depends on it. A
+    /// saga's step cancelled rolls the saga back; to cancel a saga without dropping a running
+    /// step's result, see [`Postgres::cancel_saga`]. Returns false when the job had already
+    /// finished or is missing.
     pub async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let mut tx = self.pool.begin().await?;

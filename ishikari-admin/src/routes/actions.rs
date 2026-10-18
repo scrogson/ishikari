@@ -231,8 +231,11 @@ enum Outcome {
 
 /// Cancel the workflow's unfinished jobs, then the workflow, in one transaction. The workflow's
 /// row is locked after the jobs' (the order the engine takes them in) and its state checked
-/// then, so a last step completing meanwhile leaves it completed.
+/// then, so a last step completing meanwhile leaves it completed. A saga rolls back instead.
 async fn cancel(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    if is_saga(pool, schema, id).await? {
+        return cancel_saga(pool, schema, id).await;
+    }
     let mut tx = pool.begin().await?;
     cancel_workflow_jobs(&mut tx, schema, id).await?;
     let outcome = match lock_workflow(&mut tx, schema, id).await? {
@@ -254,8 +257,12 @@ async fn cancel(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome,
 
 /// Reset the workflow's discarded and cancelled jobs, then set a failed workflow running, in
 /// one transaction: the reset jobs can't run before the workflow is running again, so the last
-/// of them to complete completes it. Locks as `cancel` does.
+/// of them to complete completes it. Locks as `cancel` does. A saga's steps don't run again:
+/// see `retry_saga`.
 async fn retry(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    if is_saga(pool, schema, id).await? {
+        return retry_saga(pool, schema, id).await;
+    }
     let mut tx = pool.begin().await?;
     retry_workflow_jobs(&mut tx, schema, id).await?;
     let outcome = match lock_workflow(&mut tx, schema, id).await? {
@@ -271,6 +278,74 @@ async fn retry(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, 
         tx.commit().await?;
     }
     Ok(outcome)
+}
+
+async fn is_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM {} WHERE workflow_id = $1)",
+        qualified(schema, "ishikari_saga_steps")
+    ))
+    .bind(id)
+    .fetch_one(pool)
+    .await
+}
+
+async fn workflow_state(
+    pool: &PgPool,
+    schema: Option<&str>,
+    id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT state FROM {} WHERE id = $1",
+        qualified(schema, "ishikari_workflows")
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Cancel a running saga as the library does: its steps that haven't started are cancelled, a
+/// running one finishes, and its completed steps are undone.
+async fn cancel_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    if storage(pool, schema)
+        .cancel_saga(id, Some("workflow cancelled from the admin"))
+        .await?
+    {
+        return Ok(Outcome::Done);
+    }
+    Ok(match workflow_state(pool, schema, id).await? {
+        None => Outcome::NotFound,
+        Some(state) => Outcome::Refused(state),
+    })
+}
+
+/// Retry a saga whose rollback failed: its failed compensations run again, last step first, and
+/// the rollback resumes. Its steps don't run again, so a saga in any other state is refused.
+async fn retry_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, sqlx::Error> {
+    match workflow_state(pool, schema, id).await? {
+        None => return Ok(Outcome::NotFound),
+        Some(state) if state != "failed" => return Ok(Outcome::Refused(state)),
+        Some(_) => {}
+    }
+    let compensations: Vec<i64> = sqlx::query_scalar(&format!(
+        "SELECT compensation_job_id FROM {} \
+         WHERE workflow_id = $1 AND state = 'compensation_failed' \
+         ORDER BY step_order DESC",
+        qualified(schema, "ishikari_saga_steps")
+    ))
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    let storage = storage(pool, schema);
+    let mut retried = false;
+    for compensation in compensations {
+        retried |= storage.retry_job(compensation).await?;
+    }
+    Ok(if retried {
+        Outcome::Done
+    } else {
+        Outcome::Refused("failed".into())
+    })
 }
 
 /// The workflow's state, with its row locked until the transaction ends. `NO KEY`, so inserts
