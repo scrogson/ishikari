@@ -1092,3 +1092,199 @@ async fn check_runs_table_exists(pool: &PgPool, schema: Option<&str>) -> bool {
 
     result.unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WorkflowDefinition;
+    use serde_json::{json, Value};
+
+    /// The definition as JSON, its maps sorted, to compare.
+    fn value(def: &WorkflowDefinition) -> Value {
+        serde_json::to_value(def).unwrap()
+    }
+
+    /// YAML's corners, in a definition's values: plain scalars that read as other types, block
+    /// scalars, flow collections, anchors and aliases, and a merge key (kept as a plain key).
+    const QUIRKS: &str = r#"
+name: quirks
+description: >-
+  folded
+  text
+nodes:
+  first:
+    type: echo
+    inputs:
+      yes_word: yes
+      off_word: off
+      tilde: ~
+      null_word: null
+      empty:
+      bool: true
+      int: 42
+      leading_zero: 012
+      octal: 0o17
+      hex: 0x1f
+      exp: 1e3
+      float: 1.50
+      quoted_int: "42"
+      single: 'it''s'
+      template: "{{inputs.name}}"
+      literal: |
+        one
+        two
+      flow_seq: [a, 1, true]
+      flow_map: {k: v}
+      anchored: &shared
+        x: 1
+      aliased: *shared
+      merged:
+        <<: {y: 2}
+  second:
+    type: uppercase
+    depends_on: [first]
+    when: "{{first.outputs.ok}}"
+"#;
+
+    #[test]
+    fn yaml_is_read_as_before() {
+        let def = WorkflowDefinition::from_yaml(QUIRKS).unwrap();
+        assert_eq!(
+            value(&def),
+            json!({
+                "name": "quirks",
+                "description": "folded text",
+                "version": 1,
+                "inputs": {},
+                "nodes": {
+                    "first": {
+                        "type": "echo",
+                        "depends_on": [],
+                        "inputs": {
+                            "yes_word": "yes",
+                            "off_word": "off",
+                            "tilde": null,
+                            "null_word": null,
+                            "empty": null,
+                            "bool": true,
+                            "int": 42,
+                            "leading_zero": "012",
+                            "octal": 15,
+                            "hex": 31,
+                            "exp": 1000.0,
+                            "float": 1.5,
+                            "quoted_int": "42",
+                            "single": "it's",
+                            "template": "{{inputs.name}}",
+                            "literal": "one\ntwo\n",
+                            "flow_seq": ["a", 1, true],
+                            "flow_map": {"k": "v"},
+                            "anchored": {"x": 1},
+                            "aliased": {"x": 1},
+                            "merged": {"<<": {"y": 2}},
+                        },
+                        "when": null,
+                        "timeout_seconds": null,
+                        "max_retries": null,
+                    },
+                    "second": {
+                        "type": "uppercase",
+                        "depends_on": ["first"],
+                        "inputs": {},
+                        "when": "{{first.outputs.ok}}",
+                        "timeout_seconds": null,
+                        "max_retries": null,
+                    },
+                },
+                "outputs": {},
+                "metadata": {},
+            })
+        );
+    }
+
+    /// One entry per map, so the output's order is fixed.
+    const WRITTEN: &str = r#"name: greet
+description: |-
+  Says hello,
+  then shouts.
+version: 3
+inputs:
+  name:
+    type: string
+    description: null
+    default:
+      first: world
+      list:
+      - 1
+      - two
+    required: true
+nodes:
+  hello:
+    type: http/get
+    depends_on: []
+    inputs:
+      url: '{{inputs.name}}'
+    when: '{{inputs.name}}'
+    timeout_seconds: 5
+    max_retries: 0
+outputs:
+  greeting: '{{hello.outputs.body}}'
+metadata:
+  tags:
+  - yes
+  - '42'
+  - ''
+  - null
+  - 1.5
+"#;
+
+    #[test]
+    fn yaml_is_written_as_before() {
+        let def = WorkflowDefinition::from_yaml(WRITTEN).unwrap();
+        assert_eq!(def.to_yaml().unwrap(), WRITTEN);
+    }
+
+    #[test]
+    fn yaml_round_trips() {
+        for src in [QUIRKS, WRITTEN] {
+            let def = WorkflowDefinition::from_yaml(src).unwrap();
+            let again = WorkflowDefinition::from_yaml(&def.to_yaml().unwrap()).unwrap();
+            assert_eq!(value(&again), value(&def));
+        }
+    }
+
+    #[test]
+    fn yaml_errors_read_as_before() {
+        let errors: Vec<String> = [
+            "name: [unclosed",
+            "name: 'unclosed",
+            "name: x\n- y",
+            "name: x",
+            "name: x\nversion: abc\nnodes: {}",
+            "name: x\nnodes:\n  a:\n    type: t\n    max_retries: -1",
+            "- a\n- b",
+            "",
+            "name: x\nnodes: {}",
+        ]
+        .into_iter()
+        .map(|src| WorkflowDefinition::from_yaml(src).unwrap_err())
+        .collect();
+        assert_eq!(
+            errors,
+            [
+                "YAML parse error: name: invalid type: sequence, expected a string at line 1 column 7",
+                "YAML parse error: found unexpected end of stream at line 1 column 16, \
+                 while scanning a quoted scalar at line 1 column 7",
+                "YAML parse error: did not find expected key at line 2 column 1, \
+                 while parsing a block mapping",
+                "YAML parse error: missing field `nodes`",
+                "YAML parse error: version: invalid type: string \"abc\", expected i32 \
+                 at line 2 column 10",
+                "YAML parse error: nodes.a.max_retries: invalid type: integer `-1`, expected u32 \
+                 at line 5 column 18",
+                "YAML parse error: invalid type: sequence, expected struct WorkflowDefinition",
+                "YAML parse error: missing field `name`",
+                "Workflow must have at least one node",
+            ]
+        );
+    }
+}
