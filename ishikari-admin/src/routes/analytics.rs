@@ -9,6 +9,10 @@ use sqlx::PgPool;
 use crate::templates::AnalyticsTemplate;
 use crate::AppState;
 
+/// How many of the latest jobs the worker and failure breakdowns read: enough to be
+/// representative, few enough to stay cheap on a table of millions. (The page says 10,000.)
+pub const RECENT_JOBS: i64 = 10_000;
+
 /// Overall workflow statistics.
 #[derive(Debug, Default, Serialize)]
 pub struct WorkflowStats {
@@ -141,9 +145,7 @@ async fn fetch_analytics(pool: &PgPool, schema: Option<&str>) -> Analytics {
     }
 
     // Job stats
-    if let Ok(stats) = fetch_job_stats(pool, &jobs_table).await {
-        analytics.job_stats = stats;
-    }
+    analytics.job_stats = fetch_job_stats(pool, schema).await;
 
     // Worker stats
     if let Ok(workers) = fetch_worker_stats(pool, &jobs_table).await {
@@ -240,39 +242,29 @@ async fn fetch_workflow_type_stats(
         .collect())
 }
 
-async fn fetch_job_stats(pool: &PgPool, table: &str) -> Result<JobStats, sqlx::Error> {
-    let query = format!(
-        r#"
-        SELECT
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE state = 'available') as available,
-            COUNT(*) FILTER (WHERE state = 'executing') as executing,
-            COUNT(*) FILTER (WHERE state = 'completed') as completed,
-            COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
-            COUNT(*) FILTER (WHERE state = 'retryable') as retryable
-        FROM {}
-        "#,
-        table
-    );
+/// The jobs by state, counted as the dashboard counts them (estimated past
+/// [`EXACT_COUNT_LIMIT`](super::dashboard::EXACT_COUNT_LIMIT)).
+async fn fetch_job_stats(pool: &PgPool, schema: Option<&str>) -> JobStats {
+    let mut stats = JobStats::default();
+    for (state, count) in super::dashboard::count_by_state(pool, schema, None).await {
+        match state.as_str() {
+            "available" => stats.available = count,
+            "executing" => stats.executing = count,
+            "completed" => stats.completed = count,
+            "discarded" => stats.discarded = count,
+            "retryable" => stats.retryable = count,
+            _ => {}
+        }
+        stats.total += count;
+    }
 
-    let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(&query).fetch_one(pool).await?;
-
-    let finished = row.3 + row.4; // completed + discarded
-    let success_rate = if finished > 0 {
-        row.3 as f64 / finished as f64
+    let finished = stats.completed + stats.discarded;
+    stats.success_rate = if finished > 0 {
+        stats.completed as f64 / finished as f64
     } else {
         0.0
     };
-
-    Ok(JobStats {
-        total: row.0,
-        available: row.1,
-        executing: row.2,
-        completed: row.3,
-        discarded: row.4,
-        retryable: row.5,
-        success_rate,
-    })
+    stats
 }
 
 async fn fetch_worker_stats(pool: &PgPool, table: &str) -> Result<Vec<WorkerStats>, sqlx::Error> {
@@ -285,12 +277,15 @@ async fn fetch_worker_stats(pool: &PgPool, table: &str) -> Result<Vec<WorkerStat
             COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
             AVG(attempt) as avg_attempts,
             AVG(EXTRACT(EPOCH FROM (completed_at - inserted_at))) FILTER (WHERE completed_at IS NOT NULL) as avg_duration
-        FROM {}
+        FROM (
+            SELECT worker, state, attempt, inserted_at, completed_at
+            FROM {} ORDER BY id DESC LIMIT {}
+        ) recent
         GROUP BY worker
         ORDER BY total DESC
         LIMIT 20
         "#,
-        table
+        table, RECENT_JOBS
     );
 
     let rows: Vec<(String, i64, i64, i64, Option<f64>, Option<f64>)> =
@@ -323,14 +318,16 @@ async fn fetch_failure_patterns(
             COALESCE(errors[cardinality(errors)]->>'kind', 'unknown') as error_type,
             COUNT(*) as count,
             MAX(inserted_at) as last_seen
-        FROM {}
-        WHERE state = 'discarded'
-          AND cardinality(errors) > 0
+        FROM (
+            SELECT worker, errors, inserted_at
+            FROM {} WHERE state = 'discarded' ORDER BY id DESC LIMIT {}
+        ) recent
+        WHERE cardinality(errors) > 0
         GROUP BY worker, error_type
         ORDER BY count DESC
         LIMIT 15
         "#,
-        table
+        table, RECENT_JOBS
     );
 
     let rows: Vec<(String, String, i64, chrono::DateTime<chrono::Utc>)> =

@@ -9,6 +9,7 @@ use axum::{
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::routes::dashboard::{count_rows, jobs_table, state_type};
 use crate::routes::sagas::SagaStepInfo;
 use crate::templates::{EnhancedJobDetailTemplate, EnhancedJobsListTemplate};
 use crate::AppState;
@@ -42,8 +43,161 @@ pub struct EnhancedJobsQuery {
     pub in_workflow: Option<bool>,
     /// Filter by workflow ID.
     pub workflow_id: Option<i64>,
-    pub page: Option<i64>,
+    /// The page of jobs older than this id.
+    pub before: Option<i64>,
+    /// The page of jobs newer than this id.
+    pub after: Option<i64>,
     pub per_page: Option<i64>,
+}
+
+impl EnhancedJobsQuery {
+    /// The filters as a URL query, for links to the list's other pages.
+    fn filters(&self) -> String {
+        query_string(&[
+            ("state", self.state.clone()),
+            ("queue", self.queue.clone()),
+            ("worker", self.worker.clone()),
+            ("has_deps", self.has_deps.map(|b| b.to_string())),
+            ("is_blocking", self.is_blocking.map(|b| b.to_string())),
+            ("in_workflow", self.in_workflow.map(|b| b.to_string())),
+            ("workflow_id", self.workflow_id.map(|id| id.to_string())),
+            ("per_page", self.per_page.map(|n| n.to_string())),
+        ])
+    }
+
+    /// Jobs per page: 50 unless asked, at most 100.
+    pub(crate) fn limit(&self) -> i64 {
+        self.per_page.unwrap_or(50).clamp(1, 100)
+    }
+}
+
+/// `pairs` with a value as a URL query (without the `?`), the values percent-encoded.
+pub(crate) fn query_string(pairs: &[(&str, Option<String>)]) -> String {
+    let encode = |s: &str| -> String {
+        s.bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    };
+    pairs
+        .iter()
+        .filter_map(|(k, v)| v.as_deref().map(|v| format!("{k}={}", encode(v))))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Which page of a list of jobs, newest first: the jobs older (`before`) or newer (`after`)
+/// than an id, or the newest.
+///
+/// Keyset pages: a page reads from an id down the primary key, so one deep in a list of
+/// millions costs what the first does (an offset reads and drops every job before it).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Keyset {
+    before: Option<i64>,
+    after: Option<i64>,
+}
+
+impl Keyset {
+    /// The page `before` or `after` an id (`before` when both), or the newest.
+    pub(crate) fn new(before: Option<i64>, after: Option<i64>) -> Self {
+        Keyset {
+            before,
+            after: after.filter(|_| before.is_none()),
+        }
+    }
+
+    /// The condition on `{job}.id` for this page, if any, and the order to read it in.
+    pub(crate) fn sql(&self, job: &str) -> (Option<String>, &'static str) {
+        match (self.before, self.after) {
+            (Some(id), _) => (Some(format!("{job}.id < {id}")), "DESC"),
+            (None, Some(id)) => (Some(format!("{job}.id > {id}")), "ASC"),
+            (None, None) => (None, "DESC"),
+        }
+    }
+
+    /// True when the `rows` read after an id (of `limit + 1` asked) are all the newer jobs
+    /// there are: then the newest page, a full one, is the one to show.
+    pub(crate) fn reached_newest(&self, rows: usize, limit: i64) -> bool {
+        self.after.is_some() && rows as i64 <= limit
+    }
+
+    /// This page of `rows` (`limit + 1` asked for, read in [`sql`](Self::sql)'s order) newest
+    /// first, and the links to the pages around it, keeping `filters`.
+    pub(crate) fn page<T>(
+        &self,
+        mut rows: Vec<T>,
+        limit: i64,
+        id: impl Fn(&T) -> i64,
+        filters: String,
+    ) -> (Vec<T>, Pager) {
+        let more = rows.len() as i64 > limit;
+        rows.truncate(limit.max(0) as usize);
+        if self.after.is_some() {
+            rows.reverse();
+        }
+        let newest = rows.first().map(&id);
+        let oldest = rows.last().map(&id);
+        // Paging away from a page, there's that page to come back to.
+        let (newer, older) = match (self.before, self.after) {
+            (Some(_), _) => (newest, oldest.filter(|_| more)),
+            (None, Some(_)) => (newest.filter(|_| more), oldest),
+            (None, None) => (None, oldest.filter(|_| more)),
+        };
+        let pager = Pager {
+            newer,
+            older,
+            paged: self.before.is_some() || self.after.is_some(),
+            filters,
+        };
+        (rows, pager)
+    }
+}
+
+/// The links between the pages of a list of jobs, newest first (see [`Keyset`]).
+#[derive(Debug, Default)]
+pub struct Pager {
+    /// The newest job's id on this page, when there are newer jobs.
+    pub newer: Option<i64>,
+    /// The oldest job's id on this page, when there are older jobs.
+    pub older: Option<i64>,
+    /// This page isn't the newest one.
+    pub paged: bool,
+    /// The list's filters as a URL query, kept by the links.
+    pub filters: String,
+}
+
+impl Pager {
+    /// There's another page to link to.
+    pub fn is_shown(&self) -> bool {
+        self.paged || self.newer.is_some() || self.older.is_some()
+    }
+
+    /// The URL query of the newest page.
+    pub fn newest_query(&self) -> String {
+        self.filters.clone()
+    }
+
+    /// The URL query of the page of newer jobs.
+    pub fn newer_query(&self) -> Option<String> {
+        self.newer.map(|id| self.query(format!("after={id}")))
+    }
+
+    /// The URL query of the page of older jobs.
+    pub fn older_query(&self) -> Option<String> {
+        self.older.map(|id| self.query(format!("before={id}")))
+    }
+
+    fn query(&self, cursor: String) -> String {
+        if self.filters.is_empty() {
+            cursor
+        } else {
+            format!("{cursor}&{}", self.filters)
+        }
+    }
 }
 
 /// Deserialize empty strings as None for Option<String>.
@@ -395,17 +549,24 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<EnhancedJobsQuery>,
 ) -> EnhancedJobsListTemplate {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(50).min(100);
-    let offset = (page - 1) * per_page;
+    let (jobs, pager) = get_enhanced_jobs(&state.pool, state.schema(), &query).await;
+    let total = if pager.is_shown() {
+        count_enhanced_jobs(&state.pool, state.schema(), &query).await
+    } else {
+        jobs.len() as i64
+    };
 
-    let (jobs, total) =
-        get_enhanced_jobs(&state.pool, state.schema(), &query, per_page, offset).await;
-
-    let total_pages = (total as f64 / per_page as f64).ceil() as i64;
-
-    let queues = fetch_distinct_job_values(&state.pool, state.schema(), "queue").await;
-    let workers = fetch_distinct_job_values(&state.pool, state.schema(), "worker").await;
+    let mut queues = super::queues::queue_names(&state.pool, state.schema()).await;
+    let mut workers = worker_names(&state.pool, state.schema()).await;
+    // The filter's options always have the one it's set to.
+    for (names, current) in [(&mut queues, &query.queue), (&mut workers, &query.worker)] {
+        if let Some(current) = current {
+            if !names.contains(current) {
+                names.push(current.clone());
+                names.sort();
+            }
+        }
+    }
 
     EnhancedJobsListTemplate {
         base_path: state.base_path.to_string(),
@@ -420,33 +581,38 @@ pub async fn list(
         is_blocking_filter: query.is_blocking,
         in_workflow_filter: query.in_workflow,
         workflow_id_filter: query.workflow_id,
-        page,
+        pager,
         total,
-        total_pages,
     }
 }
 
-/// Distinct values of a jobs column, for filter dropdowns.
-///
-/// `column` must be a trusted column name (it is interpolated into the SQL).
-async fn fetch_distinct_job_values(
-    pool: &PgPool,
-    schema: Option<&str>,
-    column: &str,
-) -> Vec<String> {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
+/// Worker names for the worker filter, without reading the whole table: the workers the
+/// planner's statistics know of (the common ones, from the last `ANALYZE`) and those of the
+/// latest jobs.
+async fn worker_names(pool: &PgPool, schema: Option<&str>) -> Vec<String> {
     let query = format!(
-        "SELECT DISTINCT {col} FROM {table} ORDER BY {col}",
-        col = column,
-        table = jobs_table
+        r#"
+        WITH stats AS (
+            SELECT most_common_vals::text::text[] AS common, histogram_bounds::text::text[] AS bounds
+            FROM pg_stats
+            WHERE schemaname = COALESCE($1, current_schema())
+              AND tablename = 'ishikari_jobs' AND attname = 'worker'
+        )
+        SELECT unnest(common) FROM stats
+        UNION SELECT unnest(bounds) FROM stats
+        UNION SELECT worker FROM (SELECT worker FROM {jobs} ORDER BY id DESC LIMIT 1000) latest
+        ORDER BY 1
+        "#,
+        jobs = jobs_table(schema)
     );
     sqlx::query_scalar(&query)
+        .bind(schema)
         .fetch_all(pool)
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "listing workers");
+            Vec::new()
+        })
 }
 
 /// Query parameters for a job's page.
@@ -478,25 +644,11 @@ pub async fn show(
     }
 }
 
-/// Get enhanced jobs with filtering.
-pub(crate) async fn get_enhanced_jobs(
-    pool: &PgPool,
-    schema: Option<&str>,
-    query: &EnhancedJobsQuery,
-    limit: i64,
-    offset: i64,
-) -> (Vec<EnhancedJobInfo>, i64) {
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
+/// The conditions on jobs `j` for `query`'s filters, and the values for their `$n`.
+fn job_filters(schema: Option<&str>, query: &EnhancedJobsQuery) -> (Vec<String>, Vec<String>) {
     let deps_table = match schema {
         Some(s) => format!("{}.ishikari_job_dependencies", s),
         None => "ishikari_job_dependencies".to_string(),
-    };
-    let workflows_table = match schema {
-        Some(s) => format!("{}.ishikari_workflows", s),
-        None => "ishikari_workflows".to_string(),
     };
     let saga_steps_table = match schema {
         Some(s) => format!("{}.ishikari_saga_steps", s),
@@ -509,11 +661,19 @@ pub(crate) async fn get_enhanced_jobs(
     match query.state.as_deref() {
         // Not a job state: completed jobs whose saga step was rolled back
         Some("compensated") => {
-            conditions.push(super::sagas::compensated_condition(&saga_steps_table, "j"));
+            conditions.push(format!(
+                "j.state = 'completed' AND j.id IN (SELECT s.job_id FROM {} s WHERE s.state IN {})",
+                saga_steps_table,
+                super::sagas::ROLLBACK_STATES_SQL
+            ));
         }
         Some(s) => {
             params.push(s.to_string());
-            conditions.push(format!("j.state::text = ${}", params.len()));
+            conditions.push(format!(
+                "j.state = ${}::{}",
+                params.len(),
+                state_type(schema)
+            ));
         }
         None => {}
     }
@@ -542,51 +702,119 @@ pub(crate) async fn get_enhanced_jobs(
     }
     if let Some(wf_id) = query.workflow_id {
         params.push(wf_id.to_string());
-        conditions.push(format!("j.workflow_id = ${}", params.len()));
+        conditions.push(format!("j.workflow_id = ${}::bigint", params.len()));
     }
 
+    (conditions, params)
+}
+
+/// How many jobs match `query`'s filters: exact up to
+/// [`EXACT_COUNT_LIMIT`](super::dashboard::EXACT_COUNT_LIMIT), estimated past it.
+pub(crate) async fn count_enhanced_jobs(
+    pool: &PgPool,
+    schema: Option<&str>,
+    query: &EnhancedJobsQuery,
+) -> i64 {
+    let (conditions, params) = job_filters(schema, query);
+    let mut from = format!("FROM {} j", jobs_table(schema));
+    if !conditions.is_empty() {
+        from = format!("{from} WHERE {}", conditions.join(" AND "));
+    }
+    let binds: Vec<&str> = params.iter().map(String::as_str).collect();
+    count_rows(pool, &from, &binds).await
+}
+
+/// A page of the jobs matching `query`'s filters, newest first, and the links to the others.
+pub(crate) async fn get_enhanced_jobs(
+    pool: &PgPool,
+    schema: Option<&str>,
+    query: &EnhancedJobsQuery,
+) -> (Vec<EnhancedJobInfo>, Pager) {
+    let limit = query.limit();
+    let mut keyset = Keyset::new(query.before, query.after);
+    loop {
+        let rows = read_enhanced_jobs(pool, schema, query, keyset, limit).await;
+        if keyset.reached_newest(rows.len(), limit) {
+            keyset = Keyset::default();
+            continue;
+        }
+        return keyset.page(rows, limit, |j| j.id, query.filters());
+    }
+}
+
+/// `limit + 1` jobs of `keyset`'s page, in its order.
+async fn read_enhanced_jobs(
+    pool: &PgPool,
+    schema: Option<&str>,
+    query: &EnhancedJobsQuery,
+    keyset: Keyset,
+    limit: i64,
+) -> Vec<EnhancedJobInfo> {
+    let deps_table = match schema {
+        Some(s) => format!("{}.ishikari_job_dependencies", s),
+        None => "ishikari_job_dependencies".to_string(),
+    };
+    let workflows_table = match schema {
+        Some(s) => format!("{}.ishikari_workflows", s),
+        None => "ishikari_workflows".to_string(),
+    };
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
+
+    let (mut conditions, params) = job_filters(schema, query);
+    let (cursor, order) = keyset.sql("j");
+    conditions.extend(cursor);
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
 
-    let count_query = format!("SELECT COUNT(*) FROM {} j {}", jobs_table, where_clause);
-
+    // The page's jobs first, then what the list shows of each: dependency counts and saga
+    // step state for those jobs only.
     let list_query = format!(
         r#"
         SELECT
             j.id, j.worker, j.queue, j.state::text, j.attempt, j.max_attempts,
             j.workflow_id, w.name as workflow_name, j.inserted_at,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id), 0) as dependency_count,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.depends_on_job_id = j.id), 0) as blocking_count,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'satisfied'), 0) as satisfied_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'pending'), 0) as pending_deps,
-            COALESCE((SELECT COUNT(*) FROM {deps} d WHERE d.job_id = j.id AND d.state = 'failed'), 0) as failed_deps,
-            (SELECT s.state FROM {steps} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
-        FROM {jobs} j
+            deps.total, blocking.total, deps.satisfied, deps.pending, deps.failed,
+            saga.state as saga_step_state
+        FROM (
+            SELECT j.id, j.worker, j.queue, j.state, j.attempt, j.max_attempts,
+                j.workflow_id, j.inserted_at
+            FROM {jobs} j
+            {where_clause}
+            ORDER BY j.id {order}
+            LIMIT {limit}
+        ) j
         LEFT JOIN {workflows} w ON w.id = j.workflow_id
-        {where_clause}
-        ORDER BY j.id DESC
-        LIMIT {limit} OFFSET {offset}
+        CROSS JOIN LATERAL (
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE d.state = 'satisfied') AS satisfied,
+                COUNT(*) FILTER (WHERE d.state = 'pending') AS pending,
+                COUNT(*) FILTER (WHERE d.state = 'failed') AS failed
+            FROM {deps} d WHERE d.job_id = j.id
+        ) deps
+        CROSS JOIN LATERAL (
+            SELECT COUNT(*) AS total FROM {deps} d WHERE d.depends_on_job_id = j.id
+        ) blocking
+        LEFT JOIN LATERAL (
+            SELECT s.state FROM {steps} s
+            WHERE s.workflow_id = j.workflow_id AND s.job_id = j.id
+            LIMIT 1
+        ) saga ON true
+        ORDER BY j.id {order}
         "#,
         deps = deps_table,
-        jobs = jobs_table,
+        jobs = jobs_table(schema),
         workflows = workflows_table,
         steps = saga_steps_table,
-        where_clause = where_clause,
-        limit = limit,
-        offset = offset
+        limit = limit + 1,
     );
 
-    // Execute count query
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
-    for p in &params {
-        count_q = count_q.bind(p);
-    }
-    let total: i64 = count_q.fetch_one(pool).await.unwrap_or(0);
-
-    // Execute list query
     let mut list_q = sqlx::query_as::<
         _,
         (
@@ -611,10 +839,12 @@ pub(crate) async fn get_enhanced_jobs(
         list_q = list_q.bind(p);
     }
 
-    let rows = list_q.fetch_all(pool).await.unwrap_or_default();
+    let rows = list_q.fetch_all(pool).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "listing jobs");
+        Vec::new()
+    });
 
-    let jobs = rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| EnhancedJobInfo {
             id: row.0,
             worker: row.1,
@@ -632,9 +862,7 @@ pub(crate) async fn get_enhanced_jobs(
             failed_deps: row.13,
             saga_step_state: row.14,
         })
-        .collect();
-
-    (jobs, total)
+        .collect()
 }
 
 /// Get enhanced job detail.

@@ -11,7 +11,7 @@
 {% macro stat(label, value, tone, base_path, state) %}
 <a href="{{ base_path }}/jobs?state={{ state }}" class="ik-stat {{ tone }}">
     <div class="ik-stat-label"><span class="ik-swatch"></span>{{ label }}</div>
-    <div class="ik-stat-value{% if value == 0 %} text-ik-muted-fg{% endif %}">{{ value }}</div>
+    <div class="ik-stat-value{% if value == 0 %} text-ik-muted-fg{% endif %}">{{ value|count }}</div>
 </a>
 {% endmacro %}
 

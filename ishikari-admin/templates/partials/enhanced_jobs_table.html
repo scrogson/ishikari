@@ -60,9 +60,7 @@
         </tbody>
     </table>
 </div>
+{% endif %}
 {% let pager_api = "/api/jobs" %}
 {% let pager_target = "#jobs-table" %}
-{% let pager_include = "#jobs-filter-form" %}
-{% let pager_extra = "" %}
-{% include "partials/pager.html" %}
-{% endif %}
+{% include "partials/keyset_pager.html" %}

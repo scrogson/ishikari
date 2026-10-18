@@ -14,6 +14,12 @@
 <dd class="justify-end font-medium tabular-nums{% if value == 0 %} ik-muted{% endif %}">{{ value }}</dd>
 {% endmacro %}
 
+{#- count_row for a count of jobs, which may be an estimate -#}
+{% macro jobs_row(label, value, tone) %}
+<dt class="flex items-center gap-2"><span class="ik-swatch {{ tone }}"></span>{{ label }}</dt>
+<dd class="justify-end font-medium tabular-nums{% if value == 0 %} ik-muted{% endif %}">{{ value|count }}</dd>
+{% endmacro %}
+
 {% block content %}
 <header class="ik-page-header">
     <div>
@@ -35,7 +41,7 @@
             <div class="ik-stat-label"><span class="ik-swatch"></span>Job success</div>
             <div class="ik-stat-value">{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}%</div>
             <progress class="ik-progress {{ analytics.job_success_class() }}" value="{{ "{:.1}"|format(analytics.job_stats.success_rate * 100.0) }}" max="100"></progress>
-            <div class="ik-stat-meta"><span class="tabular-nums">{{ analytics.job_stats.completed }} / {{ analytics.job_stats.completed + analytics.job_stats.discarded }}</span> completed</div>
+            <div class="ik-stat-meta"><span class="tabular-nums">{{ analytics.job_stats.completed|count }} / {{ (analytics.job_stats.completed + analytics.job_stats.discarded)|count }}</span> completed</div>
         </div>
         {% call ui::tile("Active work", analytics.workflow_stats.running, "ik-tone-info", "workflows running") %}
         {% if analytics.dependency_stats.blocked_jobs > 0 %}
@@ -75,7 +81,7 @@
         <div class="ik-card-header">
             <div>
                 <h2 class="ik-card-title">Jobs</h2>
-                <p class="ik-card-desc"><span class="tabular-nums">{{ analytics.job_stats.total }}</span> in total</p>
+                <p class="ik-card-desc"><span class="tabular-nums">{{ analytics.job_stats.total|count }}</span> in total</p>
             </div>
         </div>
         <div class="ik-card-body space-y-4">
@@ -87,11 +93,11 @@
                 {% call segment("Discarded", analytics.job_stats.discarded, "ik-tone-danger") %}
             </div>
             <dl class="ik-dl">
-                {% call count_row("Available", analytics.job_stats.available, "ik-tone-primary") %}
-                {% call count_row("Executing", analytics.job_stats.executing, "ik-tone-info") %}
-                {% call count_row("Completed", analytics.job_stats.completed, "ik-tone-success") %}
-                {% call count_row("Retryable", analytics.job_stats.retryable, "ik-tone-warning") %}
-                {% call count_row("Discarded", analytics.job_stats.discarded, "ik-tone-danger") %}
+                {% call jobs_row("Available", analytics.job_stats.available, "ik-tone-primary") %}
+                {% call jobs_row("Executing", analytics.job_stats.executing, "ik-tone-info") %}
+                {% call jobs_row("Completed", analytics.job_stats.completed, "ik-tone-success") %}
+                {% call jobs_row("Retryable", analytics.job_stats.retryable, "ik-tone-warning") %}
+                {% call jobs_row("Discarded", analytics.job_stats.discarded, "ik-tone-danger") %}
             </dl>
         </div>
     </section>
@@ -172,7 +178,7 @@
     <div class="ik-card-header">
         <div>
             <h2 class="ik-card-title">Worker Performance</h2>
-            <p class="ik-card-desc">Outcomes, attempts and duration by worker</p>
+            <p class="ik-card-desc">Outcomes, attempts and duration by worker, over the last 10,000 jobs</p>
         </div>
     </div>
     <div class="ik-table-wrap">
@@ -216,7 +222,7 @@
     <div class="ik-card-header">
         <div>
             <h2 class="ik-card-title">Failure Patterns</h2>
-            <p class="ik-card-desc">Discarded jobs grouped by worker and error</p>
+            <p class="ik-card-desc">The last 10,000 discarded jobs, grouped by worker and error</p>
         </div>
     </div>
     <div class="ik-table-wrap">

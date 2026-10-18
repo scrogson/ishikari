@@ -10,7 +10,7 @@ use crate::routes::analytics::Analytics;
 use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
 use crate::routes::definitions::{DefinitionDetail, DefinitionInfo, WorkflowRunInfo};
 use crate::routes::dependencies::{DependencyInfo, DependencyStats, JobWithDependencies};
-use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo};
+use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo, Pager};
 use crate::routes::queues::{QueueInfo, QueueJobInfo};
 use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
@@ -40,6 +40,12 @@ mod filters {
         _: &dyn askama::Values,
     ) -> askama::Result<Safe<String>> {
         Ok(Safe(super::highlight::yaml(&s.to_string())))
+    }
+
+    /// A count of jobs: exact up to `EXACT_COUNT_LIMIT`, else rounded and marked as the
+    /// estimate it is, e.g. `≈1.2M`.
+    pub fn count(n: &i64, _: &dyn askama::Values) -> askama::Result<String> {
+        Ok(crate::routes::dashboard::approx_count(*n))
     }
 
     /// Last `::` segment of a path, e.g. `app::workers::SendEmail` -> `SendEmail`.
@@ -135,9 +141,10 @@ pub struct QueueDetailTemplate {
     pub stats: QueueInfo,
     pub jobs: Vec<QueueJobInfo>,
     pub current_state: Option<String>,
-    pub page: i64,
+    pub pager: Pager,
+    /// The jobs listed, an estimate past
+    /// [`EXACT_COUNT_LIMIT`](crate::routes::dashboard::EXACT_COUNT_LIMIT).
     pub total: i64,
-    pub total_pages: i64,
 }
 
 /// Workflows list page template.
@@ -280,9 +287,10 @@ pub struct EnhancedJobsListTemplate {
     pub is_blocking_filter: Option<bool>,
     pub in_workflow_filter: Option<bool>,
     pub workflow_id_filter: Option<i64>,
-    pub page: i64,
+    pub pager: Pager,
+    /// The jobs listed, an estimate past
+    /// [`EXACT_COUNT_LIMIT`](crate::routes::dashboard::EXACT_COUNT_LIMIT).
     pub total: i64,
-    pub total_pages: i64,
 }
 
 /// Enhanced job detail page template.
@@ -302,8 +310,7 @@ pub struct EnhancedJobDetailTemplate {
 pub struct EnhancedJobsTablePartial {
     pub base_path: String,
     pub jobs: Vec<EnhancedJobInfo>,
-    pub page: i64,
-    pub total_pages: i64,
+    pub pager: Pager,
 }
 
 /// Analytics dashboard template.
