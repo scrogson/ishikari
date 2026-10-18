@@ -15,7 +15,8 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use ishikari::{Dependencies, Workflow};
+use ishikari::execution::NodeJob;
+use ishikari::workflows::Dag;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -891,7 +892,8 @@ pub async fn run(
     )))
 }
 
-/// Create a workflow run with all node jobs.
+/// Create a workflow run: its row and a Dag of its nodes, each an [`NodeJob`] step named by its
+/// node, in one transaction.
 async fn create_workflow_run(
     pool: &PgPool,
     schema: Option<&str>,
@@ -900,115 +902,74 @@ async fn create_workflow_run(
     definition_version: i32,
     inputs: &Value,
 ) -> Result<i64, String> {
-    // 1. Create the workflow
-    let workflow = Workflow::create(
-        pool,
-        &def.name,
-        serde_json::json!({
-            "definition_id": definition_id,
-            "definition_version": definition_version,
-        }),
-        schema,
-    )
-    .await
-    .map_err(|e| format!("Failed to create workflow: {}", e))?;
-
-    // 2. Create the workflow run record
     let runs_table = match schema {
         Some(s) => format!("{}.ishikari_workflow_runs", s),
         None => "ishikari_workflow_runs".to_string(),
     };
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
 
-    let _run_id: i64 = sqlx::query_scalar(&format!(
+    // The nodes carry the run's id and the run its workflow's, so take the id first.
+    let run_id: i64 = sqlx::query_scalar(&format!(
+        "SELECT nextval(pg_get_serial_sequence('{}', 'id'))",
+        runs_table
+    ))
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to create workflow run: {}", e))?;
+
+    let mut dag = Dag::new(&def.name).metadata(serde_json::json!({
+        "definition_id": definition_id,
+        "definition_version": definition_version,
+    }));
+    if let Some(s) = schema {
+        dag = dag.schema(s);
+    }
+    let order = def
+        .topological_order()
+        .map_err(|e| format!("Failed to order the nodes: {}", e))?;
+    for node_id in order {
+        let node = &def.nodes[&node_id];
+        let job = NodeJob {
+            workflow_run_id: run_id,
+            node_id: node_id.clone(),
+            node_type: node.node_type.clone(),
+            raw_inputs: node.inputs.clone(),
+            condition: node.condition.clone(),
+            max_attempts: node.max_retries.map_or(3, |retries| {
+                retries.saturating_add(1).min(i32::MAX as u32) as i32
+            }),
+            timeout_seconds: node.timeout_seconds,
+        };
+        dag = dag.add_after(node_id, job, node.depends_on.clone());
+    }
+    let workflow = dag
+        .run(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to create workflow: {}", e))?;
+
+    sqlx::query(&format!(
         r#"
-        INSERT INTO {} (definition_id, definition_name, definition_version, workflow_id, inputs, status)
-        VALUES ($1, $2, $3, $4, $5, 'running')
-        RETURNING id
+        INSERT INTO {} (id, definition_id, definition_name, definition_version, workflow_id, inputs, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'running')
         "#,
         runs_table
     ))
+    .bind(run_id)
     .bind(definition_id)
     .bind(&def.name)
     .bind(definition_version)
     .bind(workflow.id)
     .bind(inputs)
-    .fetch_one(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| format!("Failed to create workflow run: {}", e))?;
 
-    // 3. Get execution levels (nodes grouped by dependency depth)
-    let levels = def
-        .execution_levels()
-        .map_err(|e| format!("Failed to compute execution levels: {}", e))?;
-
-    // 4. Insert jobs for each node
-    let mut job_ids: HashMap<String, i64> = HashMap::new();
-    let jobs_table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-    let enum_type = match schema {
-        Some(s) => format!("{}.ishikari_job_state", s),
-        None => "ishikari_job_state".to_string(),
-    };
-
-    for level in &levels {
-        for node_id in level {
-            let node_def = &def.nodes[node_id];
-            let has_dependencies = !node_def.depends_on.is_empty();
-
-            // Create the node job args - use "ishikari_worker" tag for typetag compatibility
-            let node_job_args = serde_json::json!({
-                "ishikari_worker": "ishikari_workflows::NodeJob",
-                "workflow_run_id": _run_id,
-                "node_id": node_id,
-                "node_type": node_def.node_type,
-                "raw_inputs": node_def.inputs,
-                "condition": node_def.condition,
-            });
-
-            let state = if has_dependencies {
-                "scheduled"
-            } else {
-                "available"
-            };
-
-            let max_attempts = node_def.max_retries.unwrap_or(3) as i32;
-
-            let job_id: i64 = sqlx::query_scalar(&format!(
-                r#"
-                INSERT INTO {} (queue, worker, args, max_attempts, workflow_id, state)
-                VALUES ($1, $2, $3, $4, $5, $6::{})
-                RETURNING id
-                "#,
-                jobs_table, enum_type
-            ))
-            .bind("workflows")
-            .bind("ishikari_workflows::NodeJob")
-            .bind(&node_job_args)
-            .bind(max_attempts)
-            .bind(workflow.id)
-            .bind(state)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("Failed to create node job: {}", e))?;
-
-            job_ids.insert(node_id.clone(), job_id);
-        }
-    }
-
-    // 5. Create dependencies
-    for (node_id, node_def) in &def.nodes {
-        let job_id = job_ids[node_id];
-
-        for dep_node_id in &node_def.depends_on {
-            let dep_job_id = job_ids[dep_node_id];
-            Dependencies::add(pool, job_id, dep_job_id, schema)
-                .await
-                .map_err(|e| format!("Failed to add dependency: {}", e))?;
-        }
-    }
-
+    tx.commit()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
     Ok(workflow.id)
 }
 
