@@ -244,7 +244,14 @@ pub struct ExecutableWorkflow {
 }
 
 /// Schema field definition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// ```
+/// use ishikari::execution::SchemaField;
+///
+/// let channel = SchemaField::string().required().describe("Channel to post in");
+/// let retries = SchemaField::integer().default(3);
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaField {
     /// Field type (string, number, boolean, object, array)
     #[serde(rename = "type")]
@@ -256,6 +263,66 @@ pub struct SchemaField {
     /// Whether field is required
     #[serde(default)]
     pub required: bool,
+}
+
+impl SchemaField {
+    /// An optional field of `field_type`, with no description or default.
+    pub fn new(field_type: impl Into<String>) -> Self {
+        Self {
+            field_type: field_type.into(),
+            description: None,
+            default: None,
+            required: false,
+        }
+    }
+
+    /// A string field.
+    pub fn string() -> Self {
+        Self::new("string")
+    }
+
+    /// A number field.
+    pub fn number() -> Self {
+        Self::new("number")
+    }
+
+    /// An integer field.
+    pub fn integer() -> Self {
+        Self::new("integer")
+    }
+
+    /// A boolean field.
+    pub fn boolean() -> Self {
+        Self::new("boolean")
+    }
+
+    /// An object field.
+    pub fn object() -> Self {
+        Self::new("object")
+    }
+
+    /// An array field.
+    pub fn array() -> Self {
+        Self::new("array")
+    }
+
+    /// The field is required.
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    /// Describe the field.
+    pub fn describe(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// The field's value when none is given.
+    pub fn default(mut self, value: impl Into<Value>) -> Self {
+        self.default = Some(value.into());
+        self
+    }
 }
 
 #[cfg(test)]
