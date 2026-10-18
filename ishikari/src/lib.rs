@@ -19,7 +19,6 @@
 //!
 //! ```rust
 //! use ishikari::{Worker, Context, Status, Complete};
-//! use async_trait::async_trait;
 //!
 //! #[ishikari::job]
 //! struct ProcessDataJob {
@@ -85,7 +84,6 @@
 //!
 //! ```rust
 //! use ishikari::{Worker, Context, Status, Cancel, Snooze};
-//! use async_trait::async_trait;
 //! use anyhow::Error;
 //!
 //! #[ishikari::job]
@@ -153,6 +151,15 @@ use rand::Rng;
 #[doc(hidden)]
 pub use serde;
 use serde::Serialize;
+
+/// What `#[ishikari::job]` and `#[ishikari::worker]` expand to, so a host needs no direct
+/// dependency on these crates. Not public API.
+#[doc(hidden)]
+pub mod __private {
+    pub use async_trait;
+    pub use serde;
+    pub use typetag;
+}
 
 mod cron;
 mod engine;

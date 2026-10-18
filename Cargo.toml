@@ -3,7 +3,8 @@ members = [
   "ishikari",
   "ishikari-macros",
   "ishikari-cli",
-  "ishikari-admin"
+  "ishikari-admin",
+  "tests/only-ishikari"
 ]
 resolver = "2"
 

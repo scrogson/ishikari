@@ -23,6 +23,10 @@ test migrates a schema of its own (`ishikari_t_*`) and drops it at the end. They
 `ISHIKARI_SKIP_DB_TESTS=1` skips them. Helpers are in `ishikari/tests/common/mod.rs`
 (`TestDb`, `eventually`). Fix a bug by writing the failing test first.
 
+`tests/only-ishikari` is a workspace member (`publish = false`) whose only dependency is
+`ishikari`: the macros must compile there, so their expansion names `::ishikari::__private`,
+never `serde`, `typetag` or `async_trait`.
+
 ## Project Architecture
 
 A workspace of four crates:

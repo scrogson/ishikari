@@ -1,50 +1,46 @@
 # Ishikari Macros
 
-This crate provides procedural macros for the Ishikari job processing framework.
+The `#[job]` and `#[worker]` attribute macros for [Ishikari](https://crates.io/crates/ishikari).
+Use them through `ishikari` (`#[ishikari::job]`, `#[ishikari::worker]`); don't depend on this
+crate directly. Their expansion names only `ishikari`, so your crate needs no `serde`,
+`typetag` or `async-trait` of its own.
 
-## Macros
+## `#[job]`
 
-### `#[job]`
-
-The `#[job]` attribute macro is used to derive job-related functionality for a struct. It automatically:
-
-- Implements necessary traits for job serialization/deserialization
-- Adds job-specific functionality
+Derives what a job type needs: `Debug`, `Serialize` and `Deserialize`, alongside any other
+derives on the type. Don't derive `Serialize` or `Deserialize` yourself. It takes no
+arguments.
 
 ```rust
-use ishikari::prelude::*;
-
-#[derive(Debug)]
 #[ishikari::job]
-struct MyJob {
-    // Your job data here
+#[derive(Clone)]
+struct SendWelcome {
+    user_id: i64,
 }
 ```
 
-### `#[worker]`
+## `#[worker]`
 
-The `#[worker]` attribute macro is used to implement the `Worker` trait for a type. It provides:
+Implements `Worker` for a job type, keeping every method written in the impl. Its options set
+the common methods without writing them out:
 
-- Default implementations for queue configuration
-- Retry and backoff strategy configuration
-- Integration with the job processing system
+- `queue = "name"`: the queue jobs of this type go to.
+- `max_attempts = N`: how many times a job is tried before it is discarded.
+- `timeout = "30s"`: how long one attempt may run, in `ms`, `s`, `m` or `h`.
+
+Setting an option both here and as a method is an error.
 
 ```rust
 use ishikari::prelude::*;
 
-#[ishikari::worker(queue = "high_priority", max_attempts = 3)]
-impl Worker for MyJob {
+#[ishikari::worker(queue = "email", max_attempts = 5, timeout = "30s")]
+impl Worker for SendWelcome {
     async fn perform(&self, ctx: Context) -> PerformResult {
-        // Your job processing logic here
         Complete::default().into()
     }
 }
 ```
 
-## Usage
-
-This crate is automatically included as a dependency when you add `ishikari` to your project. You don't need to add it separately.
-
 ## License
 
-MIT License
+MIT

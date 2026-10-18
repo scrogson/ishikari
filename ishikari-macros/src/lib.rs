@@ -96,10 +96,16 @@ pub fn worker(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     input.items.extend(generated);
 
+    // typetag's expansion names `typetag::` relative to the call site, so bring ishikari's into
+    // scope there: a host then needs neither typetag nor async_trait as a dependency.
     quote! {
-        #[async_trait::async_trait]
-        #[typetag::serde]
-        #input
+        const _: () = {
+            use ::ishikari::__private::typetag;
+
+            #[::ishikari::__private::async_trait::async_trait]
+            #[typetag::serde]
+            #input
+        };
     }
     .into()
 }
@@ -121,9 +127,18 @@ fn parse_duration_millis(s: &str) -> Option<u64> {
 }
 
 /// Derive what a job type needs: `Debug`, `Serialize` and `Deserialize` (through ishikari's
-/// re-exported serde), alongside any other derives on the type.
+/// re-exported serde), alongside any other derives on the type. It takes no arguments: options
+/// such as `queue` go on `#[ishikari::worker]`.
 #[proc_macro_attribute]
-pub fn job(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn job(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new_spanned(
+            proc_macro2::TokenStream::from(attr),
+            "#[ishikari::job] takes no arguments; set options such as `queue` on #[ishikari::worker]",
+        )
+        .to_compile_error()
+        .into();
+    }
     let mut input = parse_macro_input!(item as DeriveInput);
 
     // Find and remove any existing derive attributes, collecting user derives
@@ -159,8 +174,13 @@ pub fn job(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     quote! {
-        #[derive(Debug, #(#user_derives,)* ::serde::Serialize, ::serde::Deserialize)]
-        #[serde(crate = "::ishikari::serde")]
+        #[derive(
+            Debug,
+            #(#user_derives,)*
+            ::ishikari::__private::serde::Serialize,
+            ::ishikari::__private::serde::Deserialize,
+        )]
+        #[serde(crate = "::ishikari::__private::serde")]
         #input
     }
     .into()
