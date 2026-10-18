@@ -72,6 +72,8 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   - give-back;
   - releasing workflow dependents on completion, and cascading failures;
   - saga rollback (`postgres/saga.rs`), in the transaction that ends a saga's job;
+  - failing a definition run (`postgres/runs.rs`) when its node's job is discarded or cancelled,
+    and running it again on a retry;
   - `retry_job` and `cancel_job`;
   - pruning;
   - releasing unique keys.
@@ -89,7 +91,7 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
     upstreams; saga compensations parked `pending` until their rollback releases them);
   - `Workflow::progress`.
 - **`dependencies/`**: dependency rows and the `DependencyResolver`, a safety-net sweep for
-  workflows and sagas a job left behind (one rescued and discarded).
+  workflows, sagas and definition runs a job left behind (one rescued and discarded).
 - **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs): `NodeTypes`
   runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
   the version uploaded last before the run was created). `ModuleJob` runs a module as a plain

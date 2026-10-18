@@ -257,10 +257,14 @@ any type is saved.
 For each node, `NodeTypes` resolves its inputs (`{{inputs.name}}`, `{{nodes.id.field}}`) against
 the run's inputs, where a declared input left out takes its `default`, and the outputs of the
 nodes before it. A node whose `when` is falsy (false, null, 0, `""`, `"false"`, `"0"`) or doesn't
-resolve is skipped, and the nodes after it run. It records each node's inputs, output and
-duration, completes the run with the definition's outputs once every node has completed or been
-skipped, and fails it when a node fails its last attempt. A node of a type neither registered
-nor uploaded fails its run without retrying.
+resolve is skipped, and the nodes after it run; a skipped node's outputs are null. It records
+each node's inputs, output and duration, completes the run with the definition's outputs once
+every node has completed or been skipped, and fails it when a node fails its last attempt. A
+node of a type neither registered nor uploaded fails its run without retrying.
+
+A node's job that ends any other way, timed out, panicking, cancelled, or rescued from a stopped
+node and discarded, records its node failed with the job's error and fails its run too, whatever
+the runner. Retrying the job runs the run again.
 
 To run nodes some other way, implement `NodeRunner` and give it to `NodeJobs` instead.
 

@@ -104,7 +104,8 @@ impl NodeSpec {
 ///
 /// A node of a type not registered is looked up in the host's [`modules`](Self::modules), at
 /// the version uploaded last before its run was created. One of neither fails, and fails its
-/// run, without retrying. A [`ModuleJob`] runs by the modules too.
+/// run, without retrying. A [`ModuleJob`] runs by the modules too. A node whose job ends where
+/// its handler can't see it (see [`NodeJob`]) also fails its run.
 ///
 /// ```rust,no_run
 /// use ishikari::execution::{
