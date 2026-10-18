@@ -19,9 +19,6 @@
   asks `tokio` for `macros`, `rt`, `sync` and `time` (at least 1.41) instead of `full`. A host
   that relied on `ishikari` to turn on other `tokio` features (`rt-multi-thread` for
   `#[tokio::main]`, `signal`, `net`...) needs to ask for them itself.
-- **`serde_norway` in place of `serde_yaml`:** the admin reads and writes definitions' YAML with
-  the maintained fork of the deprecated `serde_yaml`, whose `unsafe-libyaml` is unmaintained
-  (RUSTSEC-2024-0449). Definitions parse, export and fail to parse as before.
 
 ### Fixed
 
