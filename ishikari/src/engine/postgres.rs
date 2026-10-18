@@ -42,6 +42,25 @@ impl Postgres {
         &self.pool
     }
 
+    /// The channel the jobs table notifies when jobs become available: `{schema}.ishikari_insert`,
+    /// for the schema set, else the one `ishikari_jobs` is found in on the search path.
+    pub(crate) async fn channel(&self) -> Result<String, sqlx::Error> {
+        let schema = match &self.schema {
+            Some(schema) => schema.clone(),
+            None => sqlx::query_scalar(
+                "SELECT n.nspname::text FROM pg_class c \
+                 JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE c.oid = to_regclass('ishikari_jobs')",
+            )
+            .fetch_optional(&*self.pool)
+            .await?
+            .ok_or_else(|| {
+                sqlx::Error::Configuration("no ishikari_jobs table on the search path".into())
+            })?,
+        };
+        Ok(format!("{schema}.ishikari_insert"))
+    }
+
     /// A table or type name, qualified with the schema when one is set.
     pub(crate) fn name(&self, name: &str) -> String {
         qualified(self.schema.as_deref(), name)

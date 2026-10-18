@@ -7,12 +7,17 @@ use crate::queue::{QueueBuilder, QueueStop};
 use crate::{Cron, InsertOpts, Inserted, Job, Stager, State, Worker};
 use futures::future::BoxFuture;
 use serde::Serialize;
+use sqlx::postgres::PgListener;
 use std::{
+    collections::HashMap,
     fmt::Debug,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{watch, Notify},
+    task::JoinHandle,
+};
 use tracing::{error, info, warn};
 
 /// A unique identifier for an engine instance.
@@ -90,6 +95,7 @@ pub struct EngineBuilder {
     resolver_interval: Duration,
     prune_after: Option<Duration>,
     prune_interval: Duration,
+    listen: bool,
 }
 
 impl EngineBuilder {
@@ -225,6 +231,17 @@ impl EngineBuilder {
         self
     }
 
+    /// Whether to listen for jobs becoming available, so a queue claims them at once rather than
+    /// at its next poll. Defaults to true. The engine holds one of the pool's connections for
+    /// it.
+    ///
+    /// Turn it off where `LISTEN` doesn't work, such as through PgBouncer in transaction mode;
+    /// queues then find jobs by polling alone (see [`QueueBuilder::interval`]).
+    pub fn listen(mut self, listen: bool) -> Self {
+        self.listen = listen;
+        self
+    }
+
     /// Starts the engine with the provided storage backend.
     ///
     /// This will:
@@ -291,17 +308,28 @@ impl EngineBuilder {
         let stager_limit = self.stager_limit.unwrap_or(100);
         tasks.push(Stager::new(storage.clone(), stager_interval, stager_limit).start());
 
+        let wakes: HashMap<String, Arc<Notify>> = self
+            .queues
+            .iter()
+            .map(|q| (q.name.as_str().to_string(), Arc::default()))
+            .collect();
+        if self.listen && !wakes.is_empty() {
+            tasks.push(listener(storage.clone(), wakes.clone()));
+        }
+
         let (stop, stop_rx) = watch::channel(None);
         let queues = self
             .queues
             .into_iter()
             .map(|queue| {
+                let wake = wakes[queue.name.as_str()].clone();
                 queue
                     .build_on(
                         storage.clone(),
                         state.clone(),
                         node.clone(),
                         stop_rx.clone(),
+                        wake,
                     )
                     .spawn()
             })
@@ -372,6 +400,7 @@ impl Engine {
             resolver_interval: Duration::from_secs(30),
             prune_after: Some(Duration::from_secs(7 * 24 * 3600)),
             prune_interval: Duration::from_secs(60),
+            listen: true,
         }
     }
 
@@ -494,6 +523,73 @@ fn heartbeat(
             }
         }
     })
+}
+
+/// Wake a queue when jobs become available in it. The jobs table notifies its channel with the
+/// job's queue whenever a job is inserted available or becomes available (staged, released by
+/// its upstreams, retried, given back). Notifications sent while the connection was down are
+/// lost, so every queue is woken on (re)connecting; polling covers the rest.
+fn listener(storage: Arc<Postgres>, wakes: HashMap<String, Arc<Notify>>) -> JoinHandle<()> {
+    let wake_all = move |wakes: &HashMap<String, Arc<Notify>>| {
+        wakes.values().for_each(|wake| wake.notify_one());
+    };
+    tokio::spawn(async move {
+        let mut delay = Duration::from_millis(100);
+        loop {
+            let mut listener = match subscribe(&storage).await {
+                Ok(listener) => listener,
+                Err(e) => {
+                    warn!(error = %e, retry_in = ?delay, "failed to listen for available jobs; polling meanwhile");
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_secs(30));
+                    continue;
+                }
+            };
+            delay = Duration::from_millis(100);
+            wake_all(&wakes);
+            loop {
+                match listener.try_recv().await {
+                    Ok(Some(notice)) => match queue_of(notice.payload()) {
+                        Some(queue) => {
+                            if let Some(wake) = wakes.get(&queue) {
+                                wake.notify_one();
+                            }
+                        }
+                        None => warn!(payload = notice.payload(), "unreadable job notification"),
+                    },
+                    // The connection dropped; the next call reconnects and listens again.
+                    Ok(None) => {
+                        warn!("lost the connection listening for available jobs; reconnecting");
+                        wake_all(&wakes);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed listening for available jobs; reconnecting");
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// A connection listening on the storage's channel.
+async fn subscribe(storage: &Postgres) -> Result<PgListener, sqlx::Error> {
+    let channel = storage.channel().await?;
+    let mut listener = PgListener::connect_with(storage.pool()).await?;
+    listener.listen(&channel).await?;
+    info!(channel, "listening for available jobs");
+    Ok(listener)
+}
+
+/// The queue a job notification names: `{"queue": "..."}`.
+fn queue_of(payload: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Notice {
+        queue: String,
+    }
+    serde_json::from_str::<Notice>(payload)
+        .ok()
+        .map(|n| n.queue)
 }
 
 /// Give back jobs whose node stopped heartbeating.
