@@ -44,8 +44,8 @@ A workspace of four crates:
 ### Core components (`ishikari/src`)
 
 - **`engine.rs`**:
-  - `Engine`/`EngineBuilder` start the queues, stager, heartbeat, rescuer, resolver, pruner and
-    cron task;
+  - `Engine`/`EngineBuilder` start the queues, stager, heartbeat, rescuer, resolver, pruner,
+    cron task and the listener (`LISTEN` on `{schema}.ishikari_insert`, waking queues);
   - `Engine::shutdown(grace)` stops them all.
 - **`engine/postgres.rs`**: `Postgres`, the storage (it carries the schema). Every job statement
   is here:
@@ -58,7 +58,8 @@ A workspace of four crates:
   - `retry_job` and `cancel_job`;
   - pruning;
   - releasing unique keys.
-- **`queue.rs`**: a polling loop per queue. It tracks running jobs in a `JoinSet` (which bounds
+- **`queue.rs`**: a loop per queue, claiming on each poll, when the engine's listener wakes it, and
+  as slots free up while jobs wait. It tracks running jobs in a `JoinSet` (which bounds
   concurrency) and drains on stop.
 - **`insert.rs`**: `insert`, `insert_with`, `insert_all`, `InsertOpts`, `Unique`, `Inserted`.
 - **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key.
@@ -100,6 +101,7 @@ it creates.
 - v03: dependencies, saga steps
 - v04: definitions, runs, node executions
 - v05: nodes, unique keys, error records, the `pending` state
+- v06: notify when jobs become available (insert or update), the staging index, saga step indexes
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

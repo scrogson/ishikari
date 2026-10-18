@@ -45,8 +45,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use tokio::sync::watch;
-use tokio::task::JoinSet;
+use tokio::sync::{watch, Notify};
+use tokio::task::{JoinError, JoinSet};
+use tokio::time::MissedTickBehavior;
 use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -95,9 +96,12 @@ impl QueueBuilder {
         self
     }
 
-    /// Sets the polling interval for the queue.
+    /// Sets the polling interval for the queue. Defaults to 1 second.
     ///
-    /// This determines how often the queue checks for new jobs. Panics if `interval` is zero.
+    /// Polling is the fallback: a queue in an [`Engine`](crate::Engine) is also woken when jobs
+    /// become available in it (see [`EngineBuilder::listen`](crate::EngineBuilder::listen)), and
+    /// a slot whose job finishes is refilled at once while there are jobs waiting. Panics if
+    /// `interval` is zero.
     #[track_caller]
     pub fn interval(mut self, interval: Duration) -> Self {
         self.interval = Some(crate::nonzero(interval, "the queue's interval"));
@@ -117,16 +121,18 @@ impl QueueBuilder {
     pub fn build(self, storage: Arc<Postgres>, state: State) -> Queue {
         let node = format!("{}-{}", self.name.as_str(), std::process::id());
         let (_, stop) = watch::channel(None);
-        self.build_on(storage, state, node.into(), stop)
+        self.build_on(storage, state, node.into(), stop, Arc::default())
     }
 
-    /// Build the queue to run on `node` (the engine's node name), stopping when `stop` is set.
+    /// Build the queue to run on `node` (the engine's node name), stopping when `stop` is set
+    /// and claiming jobs whenever `wake` is notified.
     pub(crate) fn build_on(
         self,
         storage: Arc<Postgres>,
         state: State,
         node: Arc<str>,
         stop: watch::Receiver<Option<Instant>>,
+        wake: Arc<Notify>,
     ) -> Queue {
         let concurrency = self.concurrency.unwrap_or(10);
         Queue {
@@ -137,6 +143,7 @@ impl QueueBuilder {
             state,
             storage,
             stop,
+            wake,
         }
     }
 }
@@ -164,6 +171,8 @@ pub struct Queue {
     pub storage: Arc<Postgres>,
     /// Set to a deadline to stop the queue.
     stop: watch::Receiver<Option<Instant>>,
+    /// Notified when jobs became available in the queue.
+    wake: Arc<Notify>,
 }
 
 impl Queue {
@@ -192,17 +201,32 @@ impl Queue {
         tokio::spawn(self.run())
     }
 
-    /// Poll until told to stop, then drain.
+    /// Claim jobs on every poll, whenever woken, and as slots free up while jobs are waiting,
+    /// until told to stop; then drain.
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     async fn run(mut self) -> QueueStop {
         let mut interval = tokio::time::interval(self.interval);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut running = Running::default();
+        // Whether jobs may be waiting: the last claim filled every free slot, or there was no
+        // slot to claim into. A slot that frees up is then refilled at once.
+        let mut waiting = false;
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     debug!("polling jobs");
+                    waiting = self.execute_jobs(&mut running).await;
+                }
+                _ = self.wake.notified() => {
+                    debug!("woken: jobs became available");
+                    waiting = self.execute_jobs(&mut running).await;
+                }
+                Some(done) = running.set.join_next_with_id(), if !running.set.is_empty() => {
+                    running.forget(done);
                     running.reap();
-                    self.execute_jobs(&mut running).await;
+                    if waiting {
+                        waiting = self.execute_jobs(&mut running).await;
+                    }
                 }
                 deadline = stop_requested(&mut self.stop) => {
                     return self.drain(running, deadline).await;
@@ -211,12 +235,13 @@ impl Queue {
         }
     }
 
-    /// Claim as many jobs as there are free slots and start them. Jobs still running from
-    /// earlier ticks count against the limit.
-    async fn execute_jobs(&self, running: &mut Running) {
+    /// Claim as many jobs as there are free slots and start them. Jobs still running count
+    /// against the limit. Returns whether more jobs may be waiting: every free slot was filled,
+    /// or none was free.
+    async fn execute_jobs(&self, running: &mut Running) -> bool {
         let free = self.concurrency as usize - running.set.len().min(self.concurrency as usize);
         if free == 0 {
-            return;
+            return true;
         }
         let jobs = match self
             .storage
@@ -226,12 +251,13 @@ impl Queue {
             Ok(jobs) => jobs,
             Err(e) => {
                 error!(error = ?e, "failed to fetch jobs");
-                return;
+                return false;
             }
         };
         if jobs.is_empty() {
-            return;
+            return false;
         }
+        let filled = jobs.len() == free;
         info!(count = jobs.len(), "executing jobs");
         for job in jobs {
             let claimed = (job.id, job.attempt);
@@ -242,6 +268,7 @@ impl Queue {
             ));
             running.jobs.insert(handle.id(), claimed);
         }
+        filled
     }
 
     /// Stop claiming, let running jobs finish until `deadline`, then abort the rest and give
@@ -254,11 +281,7 @@ impl Queue {
         while !running.set.is_empty() {
             tokio::select! {
                 Some(done) = running.set.join_next_with_id() => {
-                    let id = match done {
-                        Ok((id, ())) => id,
-                        Err(e) => e.id(),
-                    };
-                    running.jobs.remove(&id);
+                    running.forget(done);
                     finished += 1;
                 }
                 _ = &mut grace => break,
@@ -300,14 +323,19 @@ struct Running {
 }
 
 impl Running {
-    /// Forget tasks that have finished.
+    /// Forget a task that finished.
+    fn forget(&mut self, done: Result<(tokio::task::Id, ()), JoinError>) {
+        let id = match done {
+            Ok((id, ())) => id,
+            Err(e) => e.id(),
+        };
+        self.jobs.remove(&id);
+    }
+
+    /// Forget every task that has finished.
     fn reap(&mut self) {
         while let Some(done) = self.set.try_join_next_with_id() {
-            let id = match done {
-                Ok((id, ())) => id,
-                Err(e) => e.id(),
-            };
-            self.jobs.remove(&id);
+            self.forget(done);
         }
     }
 }

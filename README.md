@@ -133,7 +133,14 @@ The builder also sets:
 - `stager_interval`;
 - `cron_interval`, `cron_catch_up`;
 - `resolver_interval`;
-- `prune_after` (7 days by default) and `no_pruning`.
+- `prune_after` (7 days by default) and `no_pruning`;
+- `listen`.
+
+A queue starts a job as soon as there's room for it. The engine listens (`LISTEN`, on one of the
+pool's connections) for jobs becoming available and wakes their queue, and a slot whose job
+finishes is refilled at once while jobs are waiting. Each queue's `interval` (1 s) is a fallback
+poll. Behind PgBouncer in transaction mode, where `LISTEN` doesn't work, set `.listen(false)`:
+queues then rely on polling.
 
 `engine.retry_job(id)` and `engine.cancel_job(id, reason)` act on single jobs, workflow steps
 included.
