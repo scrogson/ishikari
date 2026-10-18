@@ -11,12 +11,17 @@ env:
 
 jobs:
   test:
-    name: Test
+    name: Test (Postgres ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Postgres the README supports, and the newest.
+        postgres: [12, 18]
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: ishikari_test
@@ -34,24 +39,25 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
 
+      # Runs the doc tests too.
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace --locked
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
 
-      - name: Run doc tests
-        run: cargo test --doc
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
+  # Branch protection requires a check named `Test`, which the matrix's jobs are not. This one
+  # passes only when every Postgres version's run did; `always()` so it fails, not skips, when
+  # one didn't (a skipped check counts as passed).
+  test-gate:
+    name: Test
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every Postgres version passed
+        run: test "${{ needs.test.result }}" = success
 
   check:
     name: Check
@@ -64,23 +70,37 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Check compilation
-        run: cargo check
+      - name: Clippy ishikari-admin without default features
+        run: cargo clippy -p ishikari-admin --all-targets --no-default-features --locked -- -D warnings
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The libraries and binaries; the dev-dependencies (trybuild, handlebars) need a newer Rust.
+      - name: Check
+        run: cargo check --workspace --all-features --locked
 
   security:
     name: Security audit
@@ -88,11 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
 
+      # Scans Cargo.lock; ignores are in .cargo/audit.toml.
       - name: Run security audit
-        run: cargo audit --file audit.toml
+        run: cargo audit

@@ -12,6 +12,14 @@
   `NodeRunner`, in an engine whose state is a `NodeJobs` (see the README's Running
   definitions).
 
+### Changed
+
+- **`rust-version = "1.83"`** on every crate, checked in CI.
+- **Fewer dependencies:** `ishikari` no longer depends on `figment` or `tracing-subscriber`, and
+  asks `tokio` for `macros`, `rt`, `sync` and `time` (at least 1.41) instead of `full`. A host
+  that relied on `ishikari` to turn on other `tokio` features (`rt-multi-thread` for
+  `#[tokio::main]`, `signal`, `net`...) needs to ask for them itself.
+
 ### Fixed
 
 - Running a definition from the admin inserted jobs for `ishikari_workflows::NodeJob`, a worker
