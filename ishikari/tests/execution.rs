@@ -235,6 +235,16 @@ fn table(schema: Option<&str>, table: &str) -> String {
     }
 }
 
+/// Never finishes.
+struct Hangs;
+
+#[async_trait::async_trait]
+impl NodeHandler for Hangs {
+    async fn execute(&self, _ctx: &NodeContext, _pool: &PgPool) -> Result<NodeData, NodeError> {
+        std::future::pending().await
+    }
+}
+
 /// Start a run of `definition` (its `inputs`, `nodes` and `outputs`) as the admin's Run does:
 /// the run's row, and a Dag with a `NodeJob` step per node of one attempt each, inserted in
 /// `order` (each node after its upstreams). Returns the run's id.
@@ -279,7 +289,10 @@ async fn start_run(
                 .unwrap(),
             condition: node.get("when").and_then(Value::as_str).map(Into::into),
             max_attempts: 1,
-            timeout_seconds: None,
+            timeout_seconds: node
+                .get("timeout_seconds")
+                .and_then(Value::as_u64)
+                .map(|s| s as u32),
         };
         let upstreams: Vec<String> =
             serde_json::from_value(node.get("depends_on").cloned().unwrap_or(json!([]))).unwrap();
@@ -598,7 +611,8 @@ async fn an_unregistered_node_type_fails_the_run() {
     db.finish().await;
 }
 
-/// A node that fails its last attempt is discarded, and fails its run.
+/// A node that fails its last attempt is discarded, and fails its run. The job's end keeps the
+/// execution its runner recorded.
 #[tokio::test]
 async fn a_node_failing_its_last_attempt_fails_the_run() {
     let Some(db) = TestDb::new().await else {
@@ -607,7 +621,7 @@ async fn a_node_failing_its_last_attempt_fails_the_run() {
     let run = start_run(
         &db.pool,
         None,
-        json!({ "nodes": { "bad": { "type": "fails" } } }),
+        json!({ "nodes": { "bad": { "type": "fails", "inputs": { "n": 1 } } } }),
         &["bad"],
         json!({}),
     )
@@ -619,9 +633,6 @@ async fn a_node_failing_its_last_attempt_fails_the_run() {
     let (status, _, error) = finished(&db.pool, None, run).await;
     assert_eq!(status, "failed");
     assert!(error.unwrap().contains("boom"));
-    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "bad").await;
-    assert_eq!(status, "failed");
-    assert!(error.unwrap().contains("boom"));
     common::eventually("the job is discarded", Duration::from_secs(10), || async {
         sqlx::query_scalar::<_, String>("SELECT state::text FROM ishikari_jobs")
             .fetch_one(&db.pool)
@@ -630,6 +641,12 @@ async fn a_node_failing_its_last_attempt_fails_the_run() {
             == "discarded"
     })
     .await;
+    let (status, inputs, _, error, _, _) = recorded(&db.pool, None, run, "bad").await;
+    assert_eq!(
+        (status.as_str(), inputs),
+        ("failed", Some(json!({ "n": 1 })))
+    );
+    assert!(error.unwrap().contains("boom"));
 
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
@@ -815,5 +832,105 @@ async fn a_module_that_cannot_load_fails_the_node() {
     .await;
 
     engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// The id of the job running `node`.
+async fn job_of(pool: &PgPool, node: &str) -> i64 {
+    sqlx::query_scalar("SELECT id FROM ishikari_jobs WHERE args->>'node_id' = $1")
+        .bind(node)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Which of the run's nodes have a recorded execution.
+async fn nodes_recorded(pool: &PgPool, run: i64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT node_id FROM ishikari_node_executions WHERE workflow_run_id = $1 ORDER BY node_id",
+    )
+    .bind(run)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A node whose handler never returns times out on its last attempt: it is recorded failed,
+/// and fails its run.
+#[tokio::test]
+async fn a_node_timing_out_on_its_last_attempt_fails_the_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({ "nodes": { "slow": { "type": "hangs", "timeout_seconds": 1 } } }),
+        &["slow"],
+        json!({}),
+    )
+    .await;
+
+    let types = NodeTypes::new(db.pool.clone()).register(NodeSpec::new("hangs"), Hangs);
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, _, error) = finished(&db.pool, None, run).await;
+    assert_eq!(status, "failed");
+    assert_eq!(
+        error.as_deref(),
+        Some("Node 'slow' failed: timed out after 1s")
+    );
+    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "slow").await;
+    assert_eq!(
+        (status.as_str(), error.as_deref()),
+        ("failed", Some("timed out after 1s"))
+    );
+    assert_eq!(db.state(job_of(&db.pool, "slow").await).await, "discarded");
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A node cancelled before it runs is recorded failed, with the reason given, and fails its
+/// run in the same transaction. Retrying it runs the run again.
+#[tokio::test]
+async fn a_node_cancelled_before_it_runs_fails_the_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({ "nodes": { "first": { "type": "hangs" }, "second": { "type": "hangs", "depends_on": ["first"] } } }),
+        &["first", "second"],
+        json!({}),
+    )
+    .await;
+
+    let storage = Postgres::new(db.pool.clone());
+    let first = job_of(&db.pool, "first").await;
+    assert!(storage.cancel_job(first, Some("not today")).await.unwrap());
+
+    let (status, _, error) = finished(&db.pool, None, run).await;
+    assert_eq!(
+        (status.as_str(), error.as_deref()),
+        ("failed", Some("Node 'first' failed: not today"))
+    );
+    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "first").await;
+    assert_eq!(
+        (status.as_str(), error.as_deref()),
+        ("failed", Some("not today"))
+    );
+    assert_eq!(nodes_recorded(&db.pool, run).await, ["first"]);
+
+    assert!(storage.retry_job(first).await.unwrap());
+    let (status, error): (String, Option<String>) =
+        sqlx::query_as("SELECT status, error FROM ishikari_workflow_runs WHERE id = $1")
+            .bind(run)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), error), ("running", None));
+
     db.finish().await;
 }

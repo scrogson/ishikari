@@ -12,6 +12,7 @@ use crate::Job;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
+mod runs;
 mod saga;
 
 /// Postgres-backed job storage, optionally in a schema other than the connection's default.
@@ -300,7 +301,8 @@ impl Postgres {
 
     /// After `id` was discarded or cancelled: everything that depends on it, directly or not,
     /// can never run, so its dependencies are marked failed and those jobs cancelled. A workflow
-    /// that isn't a saga is marked failed; a saga rolls back, or its rollback moves on.
+    /// that isn't a saga is marked failed; a saga rolls back, or its rollback moves on. A node
+    /// of a definition's run fails its run (see `runs.rs`).
     async fn after_failed(
         &self,
         tx: &mut sqlx::PgConnection,
@@ -355,6 +357,7 @@ impl Postgres {
             .execute(&mut *tx)
             .await?;
             self.advance_saga(tx, workflow_id).await?;
+            self.fail_node_run(tx, id).await?;
         }
         Ok(())
     }
@@ -363,7 +366,8 @@ impl Postgres {
     /// (its attempts reset, its errors kept), an executing one is given back (the interrupted
     /// attempt refunded; if its run is still going, its result is dropped), and a scheduled one
     /// runs now. A workflow step whose upstreams haven't all completed waits for them again,
-    /// the steps its failure cancelled wait again too, and its workflow is running again.
+    /// the steps its failure cancelled wait again too, and its workflow is running again, as is
+    /// the definition run of a node's job.
     ///
     /// A saga's step runs again only while the saga is running, and a compensation only once
     /// its rollback has reached it: retrying one that failed resumes the rollback. Returns false
@@ -446,6 +450,7 @@ impl Postgres {
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
+            self.revive_node_run(&mut tx, id).await?;
             // A failed compensation: its saga's rollback resumes.
             sqlx::query(&format!(
                 "SELECT 1 FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
