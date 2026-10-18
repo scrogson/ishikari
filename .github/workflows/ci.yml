@@ -47,6 +47,18 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/ishikari_test
 
+  # Branch protection requires a check named `Test`, which the matrix's jobs are not. This one
+  # passes only when every Postgres version's run did; `always()` so it fails, not skips, when
+  # one didn't (a skipped check counts as passed).
+  test-gate:
+    name: Test
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every Postgres version passed
+        run: test "${{ needs.test.result }}" = success
+
   check:
     name: Check
     runs-on: ubuntu-latest
