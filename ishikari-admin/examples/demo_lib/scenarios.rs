@@ -313,8 +313,8 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
     });
 
     let data_outputs = serde_json::json!({
-        "record_count": "{{nodes.store.inserted_count}}",
-        "status": "{{nodes.store.status}}"
+        "record_count": "{{nodes.store.rows_affected}}",
+        "status": "{{nodes.fetch.status}}"
     });
 
     sqlx::query(
@@ -346,7 +346,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
         "send_email": {
             "type": "email/send",
             "depends_on": ["check_preferences"],
-            "when": "{{nodes.check_preferences.email_enabled}}",
+            "when": "{{nodes.check_preferences.rows[0].email_enabled}}",
             "inputs": {
                 "to": "{{inputs.email}}",
                 "subject": "{{inputs.subject}}",
@@ -356,7 +356,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
         "send_sms": {
             "type": "sms/send",
             "depends_on": ["check_preferences"],
-            "when": "{{nodes.check_preferences.sms_enabled}}",
+            "when": "{{nodes.check_preferences.rows[0].sms_enabled}}",
             "inputs": {
                 "phone": "{{inputs.phone}}",
                 "message": "{{inputs.message}}"
@@ -369,8 +369,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
                 "table": "notification_log",
                 "records": [{
                     "user_id": "{{inputs.user_id}}",
-                    "type": "{{inputs.notification_type}}",
-                    "sent_at": "{{now()}}"
+                    "type": "{{inputs.notification_type}}"
                 }]
             }
         }
