@@ -221,18 +221,48 @@ place) never go through the layout.
 
 The Definitions pages keep workflow definitions: YAML node graphs, imported or drawn in the
 builder. **Run** inserts one as a workflow with a step per node, each an
-`ishikari::execution::NodeJob` in the `workflows` queue that waits on its upstreams. Your node
-types run them: implement `NodeRunner`, and run the queue in an engine whose state is a
-`NodeJobs` (an engine of its own when your workers have a state of their own):
+`ishikari::execution::NodeJob` in the `workflows` queue that waits on its upstreams.
+
+The node types are yours. Register each in a `NodeTypes`: a `NodeSpec` (its name, palette
+category, description, inputs and outputs) and a `NodeHandler` that runs it. Give its catalog to
+the dashboard, and run the queue in an engine whose state is a `NodeJobs` of it (an engine of its
+own when your workers have a state of their own):
 
 ```rust
-use ishikari::execution::{NodeJob, NodeJobs};
+use ishikari::execution::{NodeJob, NodeJobs, NodeSpec, NodeTypes, SchemaField};
 
+let types = NodeTypes::new(pool.clone()).register(
+    NodeSpec::new("slack/post")
+        .category("chat")
+        .description("Post a message to a channel")
+        .input("channel", SchemaField::string().required())
+        .input("text", SchemaField::string().required())
+        .output("ts", SchemaField::string()),
+    SlackPost, // your NodeHandler
+);
+
+let admin = ishikari_admin::app(
+    ishikari_admin::AppState::new(pool.clone()).with_node_types(types.catalog()),
+);
 let definitions = Engine::builder("definitions")
-    .with_state(Arc::new(NodeJobs::new(MyNodes)))
+    .with_state(Arc::new(NodeJobs::new(types)))
     .with_queue(Queue::builder(NodeJob::QUEUE))
     .start(Postgres::new(pool.clone()));
 ```
+
+The builder's palette offers the catalog, and saving or importing a definition with a node of
+another type is refused. With no catalog the palette is empty (a node's type is typed in) and
+any type is saved.
+
+For each node, `NodeTypes` resolves its inputs (`{{inputs.name}}`, `{{nodes.id.field}}`) against
+the run's inputs, where a declared input left out takes its `default`, and the outputs of the
+nodes before it. A node whose `when` is falsy (false, null, 0, `""`, `"false"`, `"0"`) or doesn't
+resolve is skipped, and the nodes after it run. It records each node's inputs, output and
+duration, completes the run with the definition's outputs once every node has completed or been
+skipped, and fails it when a node fails its last attempt. A node of an unregistered type fails
+its run without retrying.
+
+To run nodes some other way, implement `NodeRunner` and give it to `NodeJobs` instead.
 
 ### Theming
 
