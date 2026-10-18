@@ -29,7 +29,7 @@ use serde::Serialize;
 use sqlx::{Acquire, Postgres as Pg};
 use std::fmt::Debug;
 use std::time::Duration;
-use tracing::info;
+use tracing::debug;
 
 /// Options for one insert. Anything left unset comes from the worker (queue, max attempts,
 /// unique) or the table's defaults.
@@ -345,7 +345,7 @@ where
     )
     .fetch_all(&mut *conn)
     .await?;
-    info!(count = inserted.len(), of = rows.len(), "jobs inserted");
+    debug!(count = inserted.len(), of = rows.len(), "jobs inserted");
     Ok(inserted)
 }
 
@@ -362,7 +362,6 @@ pub(crate) struct Row {
     scheduled_at: Option<DateTime<Utc>>,
     unique_key: Option<String>,
     unique_states: Option<Vec<String>>,
-    debug: String,
 }
 
 impl Row {
@@ -399,7 +398,6 @@ impl Row {
             tags: opts.tags.clone(),
             meta: opts.meta.clone().unwrap_or_else(|| serde_json::json!({})),
             scheduled_at: opts.scheduled_at,
-            debug: format!("{job:?}"),
         })
     }
 }
@@ -463,14 +461,17 @@ pub(crate) async fn insert_row(
             })
             .transpose()?;
         match found {
+            // The args may hold personal data; they aren't logged.
             Some((job, false)) => {
-                info!("Job inserted id={}, args={}", job.id, row.debug);
+                debug!(id = job.id, worker = %job.worker, queue = %job.queue, "job inserted");
                 return Ok(Inserted::New(job));
             }
             Some((job, true)) => {
-                info!(
-                    "Job not inserted: duplicate of id={}, args={}",
-                    job.id, row.debug
+                debug!(
+                    id = job.id,
+                    worker = %job.worker,
+                    queue = %job.queue,
+                    "job not inserted: a duplicate"
                 );
                 return Ok(Inserted::Duplicate(job));
             }
