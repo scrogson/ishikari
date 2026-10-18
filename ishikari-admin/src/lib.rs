@@ -46,6 +46,7 @@ use tower_http::trace::TraceLayer;
 
 pub mod layout;
 pub mod routes;
+mod same_origin;
 pub mod templates;
 
 pub use layout::{embed_stylesheet_href, Layout, Page};
@@ -228,7 +229,6 @@ fn routes() -> Router<AppState> {
         .route("/jobs/{id}", get(routes::jobs::show))
         .route("/jobs/{id}/retry", post(routes::actions::retry_job))
         .route("/jobs/{id}/cancel", post(routes::actions::cancel_job))
-        .route("/jobs/{id}/discard", post(routes::jobs::discard))
         // Queues
         .route("/queues", get(routes::queues::list))
         .route("/queues/{name}", get(routes::queues::show))
@@ -304,6 +304,7 @@ fn routes() -> Router<AppState> {
         .route("/builder", get(routes::frontend::serve_builder))
         // Embedded CSS/JS for the admin UI
         .route("/assets/{file}", get(routes::assets::serve))
+        .layer(axum::middleware::from_fn(same_origin::check))
 }
 
 /// Build the application router mounted at a specific path.

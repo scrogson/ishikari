@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/builder/',
+  // Relative, so the assets' own URLs work wherever the admin is mounted.
+  base: './',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
