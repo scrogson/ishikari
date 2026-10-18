@@ -1,6 +1,6 @@
 [package]
 name = "ishikari"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version.workspace = true
 description = "Atomic, transaction-safe job queueing for Rust applications. Backed by PostgreSQL. Features include reliable background job execution, queue management, retry mechanisms, and flexible backoff strategies."
@@ -16,7 +16,7 @@ chrono = { version = "0.4.31", features = ["serde"] }
 chrono-tz = "0.10"
 croner = "4"
 futures = "0.3.29"
-ishikari-macros = { version = "0.3.0", path = "../ishikari-macros" }
+ishikari-macros = { version = "0.4.0", path = "../ishikari-macros" }
 rand = "0.8.5"
 regex = "1.10"
 serde = { version = "1.0.193", features = ["derive"] }

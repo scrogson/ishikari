@@ -1,11 +1,32 @@
 # Changelog
 
-## 0.3.1 (unreleased)
+## 0.4.0
 
-`ishikari` and `ishikari-admin` change. No migration.
+All four crates move to 0.4.0. Migrations **v06** and **v07**.
+
+### Upgrading
+
+- **Run v06 and v07** (`ishikari generate migration --database-url …`, or
+  `migrations::migrate`). On a large `ishikari_jobs`, create `ishikari_jobs_staging_index`
+  `CONCURRENTLY` first (see `migrations/v06.sql`); the migration then skips it.
+- **Upgrade every node together:** v07 changes how sagas roll back, and an older node's
+  resolver would roll them back the old way.
+- **Keep the `Engine`:** dropping it now stops it, so `let _ = Engine::builder(..).start(..)`
+  stops at once. Hold it until `shutdown`.
+- **Behind PgBouncer in transaction mode**, set `EngineBuilder::listen(false)`.
+- **`tokio` features:** `ishikari` asks only for `macros`, `rt`, `sync` and `time`. Ask for
+  `rt-multi-thread`, `signal` and the like yourself.
+- `Workflow::set_state`, `complete`, `fail` and `cancel` return `Result<bool>`.
+- The admin's job lists take `before`/`after` instead of `page`, and its list templates take a
+  `Pager`.
 
 ### Added
 
+- **`EngineBuilder::listen`** (on by default): the engine listens for jobs becoming available
+  on one of the pool's connections and wakes their queue.
+- **`Postgres::cancel_saga`** cancels a running saga and rolls it back. A step that is running is
+  left to finish, then undone.
+- **`Queue::heartbeat_interval`**, for a queue started on its own (default 15 s).
 - **`ishikari::execution::NodeJob`**, the job for one node of a workflow definition's run, is
   now the library's: its arguments, its name (`ishikari::execution::NodeJob`), its queue
   (`workflows`), and the node's attempts and timeout. A host runs its node types through a
@@ -14,55 +35,115 @@
 
 ### Changed
 
+- **Jobs start when there's room, not at the next poll:**
+  - a queue refills a finished job's slot at once while jobs are waiting;
+  - the engine wakes a queue when a job is inserted available or becomes available (staged,
+    released by its upstreams, retried, given back);
+  - each queue's `interval` is now a fallback poll;
+  - a queue was capped at concurrency ÷ interval (10 jobs/s by default), and a new job waited up
+    to a second.
+
+  v06 notifies on jobs becoming available by update, and adds an index that makes staging an
+  index scan.
+- **Sagas roll back in the transaction that fails their step**, not on the resolver's next tick:
+  - its unstarted steps are cancelled;
+  - once nothing is running, the completed steps are undone in reverse order, one compensation
+    at a time;
+  - a failed compensation marks its step `compensation_failed` and the rest still run;
+  - the saga ends `compensated`, or `failed` if a compensation failed;
+  - retrying a failed compensation (`retry_job`, or the admin's Retry) finishes the rollback.
+
+  Cancelling a saga (the admin's Cancel) rolls it back too, ending `compensated` or `failed`.
+  Compensations wait in `pending` rather than `scheduled` in the year 3000. v07 moves rollbacks
+  in progress to the new scheme.
+- **`#[ishikari::job]` and `#[ishikari::worker]` need only `ishikari`:** they reach `serde`,
+  `typetag` and `async-trait` through it, so a host can drop those dependencies.
+  `#[ishikari::job]` with arguments is a compile error; it ignored them, and options such as
+  `queue` go on `#[ishikari::worker]`.
+- **Engines supervise their background tasks.** The queues, heartbeat, stager, rescuer,
+  resolver, cron, pruner and listener restart after a panic, with a backoff of 1 s doubling to
+  60 s, and the panic is logged at error. A queue keeps the jobs it is running.
+- **`Engine` is `#[must_use]`, and dropping it stops it:** its queues give their running jobs
+  back with the attempt refunded, and its background tasks are aborted. `shutdown` is still the
+  graceful path.
+- **The admin reads indexes, not the whole jobs table:**
+  - the job lists page by id;
+  - counts are exact up to 10,000 and estimated past that (`≈1.2M`);
+  - the dashboard's and queues' per-state counts, and the filter dropdowns, come from the state
+    index.
+
+  On a million jobs, the dashboard went from 348 ms to 8 ms and a deep `/jobs` page from 17 s to
+  2 ms.
+- **Inserts log only the job's id, worker and queue, at debug.** They no longer log the args,
+  which may hold personal data, at info.
+- **A worker's error is stored with its sources**, as `outer: inner: root`.
+- **`serde_norway` replaces `serde_yaml`.** The admin reads and writes definitions' YAML with
+  the maintained fork of the deprecated `serde_yaml`, whose `unsafe-libyaml` is unmaintained
+  (RUSTSEC-2024-0449).
 - **`rust-version = "1.83"`** on every crate, checked in CI.
-- **Fewer dependencies:** `ishikari` no longer depends on `figment` or `tracing-subscriber`, and
-  asks `tokio` for `macros`, `rt`, `sync` and `time` (at least 1.41) instead of `full`. A host
-  that relied on `ishikari` to turn on other `tokio` features (`rt-multi-thread` for
-  `#[tokio::main]`, `signal`, `net`...) needs to ask for them itself.
+- **Fewer dependencies:**
+  - `ishikari` no longer depends on `figment` or `tracing-subscriber`;
+  - it asks `tokio` (at least 1.41) for `macros`, `rt`, `sync` and `time` instead of `full`.
 
 ### Fixed
 
-- Running a definition from the admin inserted jobs for `ishikari_workflows::NodeJob`, a worker
-  nothing registers, so none could run. A run is now one transaction: its row and a Dag of
-  `NodeJob`s, each step named by its node, the roots available and the rest `pending` until
-  their upstreams complete (they were `scheduled`, so the stager started them at once). A
-  node's `max_retries: 0` is one attempt (it was zero, which the database refused), and its
-  `timeout_seconds` applies.
-- A definition's recent runs in the admin showed every run `running`, even once its workflow
+- **A queue started on its own** (`Queue::builder(..).build(..).start()`) **heartbeats as its own
+  node:** an engine's rescuer used to run its jobs a second time after `node_timeout`. Its node is
+  named `{queue}-{host}-{pid}-{random}`; the old `{queue}-{pid}` collided across containers.
+- **Jobs whose worker type the node doesn't have**, as during a rolling deploy, are put back for
+  later without using an attempt or recording an error: 5 s, doubling to 5 min. Args that don't
+  fit a known worker are still an error.
+- **Saga compensations can't run or be retried before their rollback reaches them.** A
+  compensation dropped after a successful saga can't be retried either.
+- **A rolled-back saga can't be retried forward:** `retry_job` refuses a step of a saga that
+  isn't running.
+- A saga with no compensations whose step is cancelled ends `compensated`, not `completed`.
+- The resolver no longer flags every compensation in progress as stuck on every tick.
+- **Running a definition from the admin** inserted jobs for `ishikari_workflows::NodeJob`, a
+  worker nothing registers, so none could run. A run is now one transaction:
+  - its row, and a Dag of `NodeJob`s, each step named by its node;
+  - the roots are available and the rest `pending` until their upstreams complete (they were
+    `scheduled`, so the stager started them at once);
+  - a node's `max_retries: 0` is one attempt (it was zero, which the database refused);
+  - its `timeout_seconds` applies.
+- **A definition's recent runs in the admin showed every run `running`,** even once its workflow
   had completed or failed: nothing updated the run row's status. A run's status and completion
   time are now its workflow's once the workflow has finished, so the run follows it through a
-  failure and a retry; while the workflow runs, the run row's status stands.
-- The published `ishikari-admin` has the workflow builder: `frontend/dist` was gitignored, so
-  the crate embedded nothing and the definition editor never loaded. The build is committed
-  now (`mise run frontend:build`). Its assets' URLs are relative, so they work under a base
-  path, and the builder's other paths (`/builder/...`) go to the definition editor.
-- A job's Retry or Cancel that changes nothing (the job had moved on) says so on the job's
+  failure and a retry. While the workflow runs, the run row's status stands.
+- **The published `ishikari-admin` has the workflow builder.** `frontend/dist` was gitignored, so
+  the crate embedded nothing and the definition editor never loaded. The build is now committed
+  (`mise run frontend:build`). Its assets' URLs are relative, so they work under a base path,
+  and the builder's other paths (`/builder/...`) go to the definition editor.
+- **A job's Retry or Cancel that changes nothing** (the job had moved on) says so on the job's
   page, rather than looking as if it worked.
-- The admin refuses (403) actions a browser sends from another site, so another site can't
-  have an admin's browser retry, cancel or run jobs (CSRF): a POST or PUT whose
-  `Sec-Fetch-Site` is another site's, or, without it, whose `Origin` isn't the `Host`. Requests
-  with neither header (not a browser's) pass.
-- A job whose outcome couldn't be written no longer stays `executing` until its node restarts
-  (the rescuer leaves a live node's jobs alone): a failed write is retried with backoff for up
-  to a minute, and a worker's `backoff` or `timeout` that panics no longer kills the run. A
-  panicking `backoff` gets the default instead; a panicking `timeout` fails the attempt as a
-  panic.
-- `Backoff` no longer overflows or panics: `Exponential` at high attempts, `ExponentialJitter`
-  on a base under a second, and `Linear` and `Fixed` past chrono's range. The built-in
-  strategies work in milliseconds, so a sub-second base no longer counts as zero, and never
-  wait longer than `Backoff::MAX_DELAY` (7 days).
-- A zero interval panics where it is set (`Queue::interval`, the engine's `*_interval`
-  setters, `Stager::new`, `DependencyResolver::new`), naming it, rather than silently killing
-  the background task it drives (a queue, or the heartbeat, which got the node's jobs rescued).
-- Cron slots are no longer lost: a slot whose insert fails is tried again on later checks
-  (within `cron_catch_up`), and when more than 100 slots are due at once the rest are inserted
-  on the next check, with a warning, instead of being skipped.
+- **The admin refuses (403) actions a browser sends from another site (CSRF):** a POST or PUT
+  whose `Sec-Fetch-Site` is another site's, or, without it, whose `Origin` isn't the `Host`.
+  Requests with neither header (not a browser's) pass.
+- **A job whose outcome couldn't be written no longer stays `executing` until its node
+  restarts.** The rescuer leaves a live node's jobs alone, so:
+  - a failed write is retried with backoff for up to a minute;
+  - a worker's `backoff` that panics gets the default instead;
+  - a worker's `timeout` that panics fails the attempt as a panic, rather than killing the run.
+- **`Backoff` no longer overflows or panics:**
+  - `Exponential` at high attempts;
+  - `ExponentialJitter` on a base under a second;
+  - `Linear` and `Fixed` past chrono's range.
+
+  The built-in strategies work in milliseconds, so a sub-second base no longer counts as zero.
+  They never wait longer than `Backoff::MAX_DELAY` (7 days).
+- **A zero interval panics where it is set** (`Queue::interval`, the engine's `*_interval`
+  setters, `Stager::new`, `DependencyResolver::new`), naming it. It used to silently kill the
+  background task it drives: a queue, or the heartbeat, which got the node's jobs rescued.
+- **Cron slots are no longer lost:**
+  - a slot whose insert fails is tried again on later checks, within `cron_catch_up`;
+  - when more than 100 slots are due at once, the rest are inserted on the next check, with a
+    warning, instead of being skipped.
 
 ### Removed
 
-- The admin's `POST /jobs/{id}/discard` (`routes::jobs::discard`): nothing used it, and it
-  marked a job discarded with `completed_at` set rather than `discarded_at`, outside the
-  library. Cancel stops a job.
+- **The admin's `POST /jobs/{id}/discard`** (`routes::jobs::discard`). Nothing used it, and it
+  marked a job discarded outside the library, setting `completed_at` rather than `discarded_at`.
+  Cancel stops a job.
 
 ## 0.3.0
 
