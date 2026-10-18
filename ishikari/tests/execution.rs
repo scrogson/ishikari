@@ -891,6 +891,72 @@ async fn a_node_timing_out_on_its_last_attempt_fails_the_run() {
     db.finish().await;
 }
 
+/// A node whose job is rescued from a stopped node on its last attempt is discarded without its
+/// handler seeing it: the resolver's sweep records it failed and fails its run. The node after
+/// it, cancelled because it can never run, is not recorded.
+#[tokio::test]
+async fn a_node_rescued_on_its_last_attempt_fails_the_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({
+            "nodes": {
+                "lost": { "type": "hangs" },
+                "after": { "type": "hangs", "depends_on": ["lost"] }
+            }
+        }),
+        &["lost", "after"],
+        json!({}),
+    )
+    .await;
+    // Claimed by a node that has since stopped.
+    let lost = job_of(&db.pool, "lost").await;
+    sqlx::query(
+        "UPDATE ishikari_jobs SET state = 'executing', attempt = 1, attempted_by = '{gone}', \
+         attempted_at = now() - interval '1 hour' WHERE id = $1",
+    )
+    .bind(lost)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let types = NodeTypes::new(db.pool.clone()).register(NodeSpec::new("hangs"), Hangs);
+    let engine = Engine::builder("test")
+        .stager_interval(Duration::from_millis(20))
+        .node_timeout(Duration::from_millis(300))
+        .rescue_interval(Duration::from_millis(50))
+        .resolver_interval(Duration::from_millis(50))
+        .with_state(Arc::new(NodeJobs::new(types)))
+        .with_queue(Queue::builder(NodeJob::QUEUE).interval(Duration::from_millis(20)))
+        .start(Postgres::new(db.pool.clone()));
+
+    let (status, _, error) = finished(&db.pool, None, run).await;
+    assert_eq!(status, "failed");
+    assert_eq!(
+        error.as_deref(),
+        Some("Node 'lost' failed: rescued: node gone stopped heartbeating")
+    );
+    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "lost").await;
+    assert_eq!(
+        (status.as_str(), error.as_deref()),
+        ("failed", Some("rescued: node gone stopped heartbeating"))
+    );
+    assert_eq!(db.state(lost).await, "discarded");
+    common::eventually(
+        "the node after is cancelled",
+        Duration::from_secs(10),
+        || async { db.state(job_of(&db.pool, "after").await).await == "cancelled" },
+    )
+    .await;
+    assert_eq!(nodes_recorded(&db.pool, run).await, ["lost"]);
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
 /// A node cancelled before it runs is recorded failed, with the reason given, and fails its
 /// run in the same transaction. Retrying it runs the run again.
 #[tokio::test]

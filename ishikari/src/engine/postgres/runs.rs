@@ -5,7 +5,8 @@
 //! end where its runner doesn't see it: timed out, panicking, cancelled, or rescued from a
 //! stopped node and discarded. Its end records the node failed, with the job's error, and fails
 //! the run while it is still running. A failure the runner recorded for the same attempt is
-//! kept, so the two never disagree. Retrying the job runs its failed run again.
+//! kept, so the two never disagree. The resolver's sweep does the same for a job that ended
+//! without it (one rescued and discarded). Retrying the job runs its failed run again.
 
 use super::Postgres;
 use crate::execution::NodeJob;
@@ -81,6 +82,14 @@ impl Postgres {
         .execute(&mut *tx)
         .await?;
         Ok(())
+    }
+
+    /// Fail a run for the node's job `id` in a transaction of its own; the resolver's sweep,
+    /// for a job that ended without its end doing it (one rescued and discarded).
+    pub(crate) async fn sweep_node_run(&self, id: i64) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        self.fail_node_run(&mut tx, id).await?;
+        tx.commit().await
     }
 
     /// After the job `id` was retried: when it runs a node of a definition's run that failed,

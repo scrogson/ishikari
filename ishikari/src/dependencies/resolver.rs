@@ -14,6 +14,8 @@
 //! 5. Also handles failed/cancelled/discarded jobs by marking dependencies as 'failed'
 //! 6. Finishes workflows whose jobs have all finished, and moves on sagas whose jobs
 //!    ended without moving them (see [`crate::workflows::Saga`])
+//! 7. Fails definition runs whose node's job ended without failing them (see
+//!    [`crate::execution::NodeJob`])
 
 use crate::workflows::{Result, Workflow};
 use sqlx::PgPool;
@@ -256,6 +258,54 @@ impl DependencyResolver {
         // Move on sagas their jobs left behind
         self.sweep_sagas().await?;
 
+        // Fail definition runs their nodes' jobs left behind
+        self.sweep_runs().await?;
+
+        Ok(())
+    }
+
+    /// Fail the definition runs still running that a node's job left behind: one discarded, or
+    /// cancelled other than because a job it depends on failed (that one never ran), without
+    /// its end failing the run (see `Postgres::fail_node_run`).
+    async fn sweep_runs(&self) -> Result<()> {
+        let schema = self.schema.as_deref();
+        let (jobs, deps, runs) = (
+            table_name("ishikari_jobs", schema),
+            table_name("ishikari_job_dependencies", schema),
+            table_name("ishikari_workflow_runs", schema),
+        );
+        let behind: Vec<i64> = sqlx::query_scalar(&format!(
+            r#"
+            SELECT j.id FROM {runs} r
+            JOIN {jobs} j ON j.workflow_id = r.workflow_id
+                         AND j.args->>'workflow_run_id' = r.id::text
+            WHERE r.status = 'running'
+              AND j.worker = $1
+              AND (j.state = 'discarded'
+                   OR (j.state = 'cancelled'
+                       AND NOT EXISTS (SELECT 1 FROM {deps} d
+                                       WHERE d.job_id = j.id AND d.state = 'failed')))
+            ORDER BY j.id
+            "#
+        ))
+        .bind(crate::execution::NodeJob::WORKER)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        if behind.is_empty() {
+            return Ok(());
+        }
+        let storage = crate::Postgres::from(self.pool.clone());
+        let storage = match schema {
+            Some(schema) => storage.with_schema(schema),
+            None => storage,
+        };
+        for job in behind {
+            warn!(
+                job_id = job,
+                "failing a definition run its node's job left behind"
+            );
+            storage.sweep_node_run(job).await?;
+        }
         Ok(())
     }
 
