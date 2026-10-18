@@ -3,9 +3,13 @@
 mod common;
 
 use common::TestDb;
-use ishikari::execution::ExecutionStorage;
-use ishikari::workflows::Workflow;
+use ishikari::execution::{ExecutionStorage, NodeJob, NodeJobs, NodeRunner};
+use ishikari::prelude::*;
+use ishikari::workflows::{Dag, Workflow};
+use ishikari::{Engine, Postgres, Queue};
 use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[tokio::test]
 async fn node_executions_go_through_every_status() {
@@ -95,5 +99,80 @@ async fn node_executions_go_through_every_status() {
         .expect("the run");
     assert_eq!(found.id, run);
 
+    db.finish().await;
+}
+
+/// Records the nodes it runs, completing them.
+struct Recorder(tokio::sync::mpsc::UnboundedSender<(i64, String, String)>);
+
+#[async_trait::async_trait]
+impl NodeRunner for Recorder {
+    async fn run(&self, job: &NodeJob, _ctx: Context) -> PerformResult {
+        self.0
+            .send((
+                job.workflow_run_id,
+                job.node_id.clone(),
+                job.node_type.clone(),
+            ))
+            .unwrap();
+        Complete::default().into()
+    }
+}
+
+/// A definition's nodes, as the steps of a Dag, run through the host's runner in the
+/// `workflows` queue, each after its upstreams.
+#[tokio::test]
+async fn node_jobs_run_through_the_engines_runner() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let node = |id: &str, node_type: &str| NodeJob {
+        workflow_run_id: 7,
+        node_id: id.into(),
+        node_type: node_type.into(),
+        raw_inputs: Default::default(),
+        condition: None,
+        max_attempts: 1,
+        timeout_seconds: None,
+    };
+    let workflow = Dag::new("greet")
+        .add("hello", node("hello", "echo"))
+        .add_after("shout", node("shout", "uppercase"), ["hello"])
+        .run(&db.pool)
+        .await
+        .unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let engine = Engine::builder("test")
+        .stager_interval(Duration::from_millis(20))
+        .with_state(Arc::new(NodeJobs::new(Recorder(tx))))
+        .with_queue(Queue::builder(NodeJob::QUEUE).interval(Duration::from_millis(20)))
+        .start(Postgres::new(db.pool.clone()));
+
+    let ran = tokio::time::timeout(Duration::from_secs(10), async {
+        vec![rx.recv().await.unwrap(), rx.recv().await.unwrap()]
+    })
+    .await
+    .expect("both nodes run");
+    assert_eq!(
+        ran,
+        [
+            (7, "hello".into(), "echo".into()),
+            (7, "shout".into(), "uppercase".into())
+        ]
+    );
+    common::eventually(
+        "the workflow completes",
+        Duration::from_secs(10),
+        || async {
+            Workflow::get(&db.pool, workflow.id, None)
+                .await
+                .unwrap()
+                .is_some_and(|w| w.state == ishikari::WorkflowState::Completed)
+        },
+    )
+    .await;
+
+    engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
 }

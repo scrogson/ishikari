@@ -14,6 +14,7 @@ use axum::Router;
 use demo_lib::scenarios;
 use demo_lib::workers::NodeJobState;
 use ishikari::dependencies::DependencyResolver;
+use ishikari::execution::NodeJobs;
 use ishikari::{Engine, Postgres, Queue};
 use ishikari_admin::{app, app_at, app_with_layout, AppState};
 use sqlx::PgPool;
@@ -70,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_job_state = NodeJobState::new(pool.clone());
     let _engine = Engine::builder("demo")
         .stager_interval(Duration::from_secs(1))
-        .with_state(Arc::new(node_job_state))
+        .with_state(Arc::new(NodeJobs::new(node_job_state)))
         .with_queue(Queue::builder("default").concurrency(5))
         .with_queue(Queue::builder("email").concurrency(3))
         .with_queue(Queue::builder("etl").concurrency(2))
