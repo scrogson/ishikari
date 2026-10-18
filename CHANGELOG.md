@@ -20,6 +20,10 @@
   their upstreams complete (they were `scheduled`, so the stager started them at once). A
   node's `max_retries: 0` is one attempt (it was zero, which the database refused), and its
   `timeout_seconds` applies.
+- A definition's recent runs in the admin showed every run `running`, even once its workflow
+  had completed or failed: nothing updated the run row's status. A run's status and completion
+  time are now its workflow's once the workflow has finished, so the run follows it through a
+  failure and a retry; while the workflow runs, the run row's status stands.
 - The published `ishikari-admin` has the workflow builder: `frontend/dist` was gitignored, so
   the crate embedded nothing and the definition editor never loaded. The build is committed
   now (`mise run frontend:build`). Its assets' URLs are relative, so they work under a base
