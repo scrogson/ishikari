@@ -437,6 +437,9 @@
         if (document.fonts) document.fonts.ready.then(() => { if (!view.touched) build(); });
     }
 
+    // The workflow builder (builder.js) lays definitions out with the same layout.
+    window.ikGraph = { layout, curve };
+
     const scan = () => document.querySelectorAll("[data-ik-graph]").forEach(init);
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", scan);
     else scan();

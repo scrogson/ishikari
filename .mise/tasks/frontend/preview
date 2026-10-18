@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Preview production build"
-#MISE dir="ishikari-admin/frontend"
-set -e
-npm run preview

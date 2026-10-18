@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Build the workflow builder into ishikari-admin/frontend/dist (committed: the crate embeds it)"
-#MISE dir="ishikari-admin/frontend"
-set -e
-[ -d node_modules ] || npm ci
-npm run build

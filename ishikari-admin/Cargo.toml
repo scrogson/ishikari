@@ -8,8 +8,9 @@ license = "MIT"
 repository = "https://github.com/scrogson/ishikari"
 
 [features]
-default = ["embed-frontend"]
-embed-frontend = ["rust-embed", "mime_guess"]
+# Does nothing: the workflow builder is plain JS (assets/builder.js) and always included. Kept
+# so hosts that name it still build.
+embed-frontend = []
 
 [dependencies]
 # Core ishikari
@@ -40,10 +41,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # IDs
 uuid = { version = "1", features = ["v4", "serde"] }
-
-# Frontend embedding (optional)
-rust-embed = { version = "8", optional = true }
-mime_guess = { version = "2", optional = true }
 
 # Utilities
 thiserror = "2"

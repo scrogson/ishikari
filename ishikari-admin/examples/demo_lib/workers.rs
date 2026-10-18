@@ -41,19 +41,13 @@ impl NodeJobState {
 
 // ============ Expression Evaluation ============
 
-/// Context for expression evaluation.
+/// Context for expression evaluation: `{{inputs.name}}` and `{{nodes.id.field}}`.
 #[derive(Debug, Serialize)]
 struct EvaluationContext {
     /// Workflow inputs.
     inputs: Value,
-    /// Node outputs (node_id -> { outputs: Value }).
-    #[serde(flatten)]
-    nodes: HashMap<String, NodeOutputContext>,
-}
-
-#[derive(Debug, Serialize)]
-struct NodeOutputContext {
-    outputs: Value,
+    /// Node outputs (node_id -> output).
+    nodes: HashMap<String, Value>,
 }
 
 /// Evaluate expressions in a value recursively.
@@ -269,14 +263,9 @@ impl Node<'_> {
         );
 
         // Build evaluation context for final outputs
-        let nodes: HashMap<String, NodeOutputContext> = node_outputs
-            .into_iter()
-            .map(|(id, output)| (id, NodeOutputContext { outputs: output }))
-            .collect();
-
         let context = EvaluationContext {
             inputs: workflow_inputs,
-            nodes,
+            nodes: node_outputs,
         };
 
         // Setup handlebars
@@ -319,14 +308,9 @@ impl Node<'_> {
         node_outputs: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>, String> {
         // Build evaluation context
-        let nodes: HashMap<String, NodeOutputContext> = node_outputs
-            .into_iter()
-            .map(|(id, output)| (id, NodeOutputContext { outputs: output }))
-            .collect();
-
         let context = EvaluationContext {
             inputs: workflow_inputs,
-            nodes,
+            nodes: node_outputs,
         };
 
         // Setup handlebars

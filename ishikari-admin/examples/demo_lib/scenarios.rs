@@ -218,7 +218,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
             "type": "uppercase",
             "depends_on": ["echo"],
             "inputs": {
-                "text": "{{echo.outputs.message}}"
+                "text": "{{nodes.echo.message}}"
             }
         }
     });
@@ -232,7 +232,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
     });
 
     let hello_outputs = serde_json::json!({
-        "result": "{{transform.outputs.result}}"
+        "result": "{{nodes.transform.result}}"
     });
 
     sqlx::query(
@@ -267,7 +267,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
             "type": "json/validate",
             "depends_on": ["fetch"],
             "inputs": {
-                "data": "{{fetch.outputs.body}}",
+                "data": "{{nodes.fetch.body}}",
                 "schema": "{{inputs.schema}}"
             }
         },
@@ -275,7 +275,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
             "type": "json/transform",
             "depends_on": ["validate"],
             "inputs": {
-                "data": "{{validate.outputs.data}}",
+                "data": "{{nodes.validate.data}}",
                 "mapping": "{{inputs.field_mapping}}"
             }
         },
@@ -284,7 +284,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
             "depends_on": ["transform"],
             "inputs": {
                 "table": "{{inputs.target_table}}",
-                "records": "{{transform.outputs.records}}"
+                "records": "{{nodes.transform.records}}"
             }
         }
     });
@@ -313,8 +313,8 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
     });
 
     let data_outputs = serde_json::json!({
-        "record_count": "{{store.outputs.inserted_count}}",
-        "status": "{{store.outputs.status}}"
+        "record_count": "{{nodes.store.inserted_count}}",
+        "status": "{{nodes.store.status}}"
     });
 
     sqlx::query(
@@ -346,7 +346,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
         "send_email": {
             "type": "email/send",
             "depends_on": ["check_preferences"],
-            "when": "{{check_preferences.outputs.email_enabled}}",
+            "when": "{{nodes.check_preferences.email_enabled}}",
             "inputs": {
                 "to": "{{inputs.email}}",
                 "subject": "{{inputs.subject}}",
@@ -356,7 +356,7 @@ pub async fn create_sample_workflow_definitions(pool: &PgPool) -> Result<(), sql
         "send_sms": {
             "type": "sms/send",
             "depends_on": ["check_preferences"],
-            "when": "{{check_preferences.outputs.sms_enabled}}",
+            "when": "{{nodes.check_preferences.sms_enabled}}",
             "inputs": {
                 "phone": "{{inputs.phone}}",
                 "message": "{{inputs.message}}"

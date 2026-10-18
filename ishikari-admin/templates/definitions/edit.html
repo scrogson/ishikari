@@ -5,24 +5,37 @@
 {% block main_class %}flex flex-1 flex-col{% endblock %}
 
 {% block content %}
-<div id="workflow-builder-root" class="flex h-[calc(100vh-3.5rem)] flex-col">
-    <div class="flex h-full items-center justify-center gap-3 text-sm ik-muted">
-        <span class="ik-spinner"></span>
-        Loading workflow builder…
+<div class="ik-builder" data-ik-builder data-base-path="{{ base_path }}"{% if let Some(id) = definition_id %} data-definition-id="{{ id }}"{% endif %}>
+    <header class="ik-builder-bar">
+        <a href="{{ base_path }}/definitions" class="ik-btn ik-btn-ghost ik-btn-sm ik-btn-icon" aria-label="Back to definitions" title="Definitions">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+        </a>
+        <div class="flex min-w-0 items-center gap-2">
+            <h1 class="ik-builder-name" data-name>{{ name }}</h1>
+            <span class="ik-tag" data-version></span>
+        </div>
+        <span class="ik-builder-status" data-status aria-live="polite"></span>
+        <div class="ik-builder-actions">
+            <button type="button" class="ik-btn ik-btn-ghost ik-btn-sm ik-btn-icon" data-action="undo" aria-label="Undo" title="Undo (⌘Z)" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+            </button>
+            <button type="button" class="ik-btn ik-btn-ghost ik-btn-sm ik-btn-icon" data-action="redo" aria-label="Redo" title="Redo (⇧⌘Z)" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+            </button>
+            <a class="ik-btn ik-btn-ghost ik-btn-sm" data-view-link{% if let Some(id) = definition_id %} href="{{ base_path }}/definitions/{{ id }}"{% else %} hidden{% endif %}>View</a>
+            <button type="button" class="ik-btn ik-btn-primary ik-btn-sm" data-action="save" title="Save (⌘S)">Save</button>
+        </div>
+    </header>
+    <div class="ik-alert ik-alert-error ik-builder-alert" data-error role="alert" hidden></div>
+    <div class="ik-builder-body">
+        <aside class="ik-builder-palette" data-palette aria-label="Node types">
+            <div class="ik-builder-loading"><span class="ik-spinner" aria-label="Loading"></span></div>
+        </aside>
+        <div class="ik-builder-canvas ik-graph" data-canvas></div>
+        <aside class="ik-builder-panel" data-panel aria-label="Properties">
+            <noscript><p class="ik-builder-section ik-hint">The builder needs JavaScript. You can import a definition as YAML instead.</p></noscript>
+        </aside>
     </div>
 </div>
-
-<!-- Pass data to React -->
-<script>
-    window.__WORKFLOW_BUILDER__ = {
-        definitionId: {% match definition_id %}{% when Some with (id) %}{{ id }}{% when None %}null{% endmatch %},
-        isNew: {{ is_new }},
-        basePath: '{{ base_path }}',
-        apiBase: '{{ base_path }}/api'
-    };
-</script>
-
-<!-- Load React app from embedded assets -->
-<link rel="stylesheet" href="{{ base_path }}/builder/assets/index.css">
-<script type="module" src="{{ base_path }}/builder/assets/index.js"></script>
+<script src="{{ base_path }}/assets/builder.js?v={{ crate::layout::ASSET_VERSION }}" defer></script>
 {% endblock %}

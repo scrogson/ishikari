@@ -8,7 +8,7 @@
 //! - Job listing with dependency information
 //! - Queue management
 //! - Workflow listing and details
-//! - Workflow definition builder (React + xyflow)
+//! - Workflow definition builder (a canvas of HTML nodes and SVG edges, no build step)
 //! - Pipeline/DAG/Saga visualization
 //! - Job dependency graphs
 //! - Analytics dashboard
@@ -299,9 +299,9 @@ fn routes() -> Router<AppState> {
             "/api/definitions/validate",
             post(routes::api::validate_definition),
         )
-        // Visual workflow builder (React SPA)
-        .route("/builder/{*path}", get(routes::frontend::serve_builder))
-        .route("/builder", get(routes::frontend::serve_builder))
+        // The workflow builder's old paths go to the definition editor
+        .route("/builder/{*path}", get(routes::builder::redirect))
+        .route("/builder", get(routes::builder::redirect))
         // Embedded CSS/JS for the admin UI
         .route("/assets/{file}", get(routes::assets::serve))
         .layer(axum::middleware::from_fn(same_origin::check))
