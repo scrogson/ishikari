@@ -170,14 +170,14 @@ impl WorkflowDefinition {
     /// Parse a workflow definition from YAML.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
         let def: WorkflowDefinition =
-            serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
+            serde_norway::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
         def.validate()?;
         Ok(def)
     }
 
     /// Serialize the workflow definition to YAML.
     pub fn to_yaml(&self) -> Result<String, String> {
-        serde_yaml::to_string(self).map_err(|e| format!("YAML serialize error: {}", e))
+        serde_norway::to_string(self).map_err(|e| format!("YAML serialize error: {}", e))
     }
 
     /// Validate the workflow definition.
