@@ -1,6 +1,6 @@
 [package]
 name = "ishikari-admin"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version.workspace = true
 description = "Admin dashboard for ishikari job queue"
@@ -13,7 +13,7 @@ embed-frontend = ["rust-embed", "mime_guess"]
 
 [dependencies]
 # Core ishikari
-ishikari = { version = "0.3.0", path = "../ishikari" }
+ishikari = { version = "0.4.0", path = "../ishikari" }
 
 # Web framework
 axum = { version = "0.8", features = ["macros"] }

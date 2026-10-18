@@ -1,6 +1,6 @@
 [package]
 name = "ishikari-macros"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version.workspace = true
 description = "Procedural macros for the Ishikari job processing framework. Provides #[worker] and #[job] attribute macros for implementing worker traits and deriving job-related functionality."
