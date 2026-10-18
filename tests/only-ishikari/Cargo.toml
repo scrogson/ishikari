@@ -1,0 +1,11 @@
+# A host whose only dependency is ishikari: `#[ishikari::job]` and `#[ishikari::worker]` must
+# compile without serde, typetag or async-trait. Don't add dependencies here.
+[package]
+name = "only-ishikari"
+version = "0.0.0"
+edition = "2021"
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ishikari = { path = "../../ishikari" }

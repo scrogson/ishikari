@@ -1,0 +1,5 @@
+error: #[ishikari::job] takes no arguments; set options such as `queue` on #[ishikari::worker]
+ --> tests/ui/job_arguments.rs:4:17
+  |
+4 | #[ishikari::job(queue = "a")]
+  |                 ^^^^^^^^^^^

@@ -55,4 +55,3 @@ tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
 async-trait = "0.1"
 handlebars = "6"
-typetag = "0.2"

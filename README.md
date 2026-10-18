@@ -32,9 +32,10 @@ PostgreSQL 12 or later, and Rust 1.83 or later.
 ```toml
 [dependencies]
 ishikari = "0.3"
-async-trait = "0.1"   # used by the macros
-typetag = "0.2"       # used by the macros
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
+
+The macros need nothing else: no `serde`, `typetag` or `async-trait` of your own.
 
 ### The schema
 
