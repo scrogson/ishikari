@@ -1,0 +1,27 @@
+{#- Links between the pages of a list of jobs newest first, from the template's `pager` (a
+    `Pager`, which keeps the list's filters). The includer sets `pager_api` (the htmx fragment's
+    path under base_path, empty for plain links) and `pager_target`. Like pager.html, without
+    page numbers: the pages are keyset pages, read from an id rather than counted. -#}
+{% if pager.is_shown() %}
+<nav class="ik-pagination" aria-label="Pagination">
+    <span class="ik-muted">Newest first</span>
+    <div class="ik-pages">
+        {% if pager.paged %}
+        {% let q = pager.newest_query() %}
+        <a class="ik-page" href="?{{ q }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?{{ q }}" hx-target="{{ pager_target }}"{% endif %} aria-label="Newest jobs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+        </a>
+        {% endif %}
+        {% if let Some(q) = pager.newer_query() %}
+        <a class="ik-page" href="?{{ q }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?{{ q }}" hx-target="{{ pager_target }}"{% endif %} aria-label="Newer jobs" rel="prev">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        {% endif %}
+        {% if let Some(q) = pager.older_query() %}
+        <a class="ik-page" href="?{{ q }}"{% if !pager_api.is_empty() %} hx-get="{{ base_path }}{{ pager_api }}?{{ q }}" hx-target="{{ pager_target }}"{% endif %} aria-label="Older jobs" rel="next">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+        {% endif %}
+    </div>
+</nav>
+{% endif %}

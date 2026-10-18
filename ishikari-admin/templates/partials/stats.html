@@ -1,12 +1,12 @@
 {% import "partials/ui.html" as ui %}
 {% macro segment(label, count, tone) %}
-{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count }}"></span>{% endif %}
+{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count|count }}"></span>{% endif %}
 {% endmacro %}
 <div class="ik-card">
     <div class="ik-card-header">
         <div>
             <h2 class="ik-card-title">Jobs</h2>
-            <p class="ik-card-desc"><span class="tabular-nums">{{ stats.total }}</span> in total</p>
+            <p class="ik-card-desc"><span class="tabular-nums">{{ stats.total|count }}</span> in total</p>
         </div>
         <div class="flex items-center gap-3">
             <span class="ik-badge ik-dot ik-live ik-tone-success" title="Refreshes every 5 seconds">Live</span>

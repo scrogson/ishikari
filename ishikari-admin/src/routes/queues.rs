@@ -6,6 +6,8 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use super::dashboard::{count_by_state, count_rows, jobs_table, state_type};
+use super::jobs::{query_string, Keyset, Pager};
 use crate::templates::{QueueDetailTemplate, QueuesListTemplate};
 use crate::AppState;
 
@@ -55,7 +57,10 @@ impl QueueJobInfo {
 #[derive(Debug, Deserialize, Default)]
 pub struct QueueQuery {
     pub state: Option<String>,
-    pub page: Option<i64>,
+    /// The page of jobs older than this id.
+    pub before: Option<i64>,
+    /// The page of jobs newer than this id.
+    pub after: Option<i64>,
 }
 
 /// Queue information for display.
@@ -70,6 +75,52 @@ pub struct QueueInfo {
     pub discarded: i64,
     pub cancelled: i64,
     pub total: i64,
+}
+
+impl QueueInfo {
+    /// The queue's jobs counted by state (exact up to
+    /// [`EXACT_COUNT_LIMIT`](super::dashboard::EXACT_COUNT_LIMIT), estimated past it).
+    fn from_counts(name: String, counts: Vec<(String, i64)>) -> Self {
+        let mut info = QueueInfo {
+            name,
+            available: 0,
+            scheduled: 0,
+            executing: 0,
+            retryable: 0,
+            completed: 0,
+            discarded: 0,
+            cancelled: 0,
+            total: 0,
+        };
+        for (state, count) in counts {
+            match state.as_str() {
+                "available" => info.available = count,
+                "scheduled" => info.scheduled = count,
+                "executing" => info.executing = count,
+                "retryable" => info.retryable = count,
+                "completed" => info.completed = count,
+                "discarded" => info.discarded = count,
+                "cancelled" => info.cancelled = count,
+                _ => {}
+            }
+            info.total += count;
+        }
+        info
+    }
+
+    /// The jobs in `state`, when it's one of the counted states.
+    fn count(&self, state: &str) -> Option<i64> {
+        match state {
+            "available" => Some(self.available),
+            "scheduled" => Some(self.scheduled),
+            "executing" => Some(self.executing),
+            "retryable" => Some(self.retryable),
+            "completed" => Some(self.completed),
+            "discarded" => Some(self.discarded),
+            "cancelled" => Some(self.cancelled),
+            _ => None,
+        }
+    }
 }
 
 /// List queues page.
@@ -88,35 +139,30 @@ pub async fn show(
     Path(name): Path<String>,
     Query(query): Query<QueueQuery>,
 ) -> QueueDetailTemplate {
-    let stats = get_queue_stats(&state.pool, state.schema.as_deref(), &name)
-        .await
-        .unwrap_or_else(|| QueueInfo {
-            name: name.clone(),
-            available: 0,
-            scheduled: 0,
-            executing: 0,
-            retryable: 0,
-            completed: 0,
-            discarded: 0,
-            cancelled: 0,
-            total: 0,
-        });
+    let schema = state.schema.as_deref();
+    let stats = get_queue_stats(&state.pool, schema, &name).await;
+    let current_state = query.state.filter(|s| !s.is_empty());
 
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = 25i64;
-    let offset = (page - 1) * per_page;
-
-    let (jobs, total) = get_queue_jobs(
+    let (jobs, pager) = get_queue_jobs(
         &state.pool,
-        state.schema.as_deref(),
+        schema,
         &name,
-        query.state.as_deref(),
-        per_page,
-        offset,
+        current_state.as_deref(),
+        Keyset::new(query.before, query.after),
     )
     .await;
 
-    let total_pages = (total as f64 / per_page as f64).ceil() as i64;
+    let total = match current_state.as_deref() {
+        None => stats.total,
+        Some(s) => match stats.count(s) {
+            Some(count) => count,
+            None => {
+                let (from, binds) = queue_jobs_from(schema, Some(s));
+                let binds: Vec<&str> = std::iter::once(name.as_str()).chain(binds).collect();
+                count_rows(&state.pool, &from, &binds).await
+            }
+        },
+    };
 
     QueueDetailTemplate {
         base_path: state.base_path.to_string(),
@@ -124,108 +170,138 @@ pub async fn show(
         queue_name: name,
         stats,
         jobs,
-        current_state: query.state,
-        page,
+        current_state,
+        pager,
         total,
-        total_pages,
     }
+}
+
+/// The names of the queues that have jobs, read from the state index (a skip over each
+/// state's distinct queues) rather than from every job.
+pub(crate) async fn queue_names(pool: &PgPool, schema: Option<&str>) -> Vec<String> {
+    let query = format!(
+        r#"
+        WITH RECURSIVE pairs AS (
+            (SELECT state, queue FROM {jobs} ORDER BY state, queue LIMIT 1)
+            UNION ALL
+            SELECT next.state, next.queue
+            FROM pairs, LATERAL (
+                SELECT j.state, j.queue FROM {jobs} j
+                WHERE (j.state, j.queue) > (pairs.state, pairs.queue)
+                ORDER BY j.state, j.queue
+                LIMIT 1
+            ) next
+        )
+        SELECT DISTINCT queue FROM pairs ORDER BY queue
+        "#,
+        jobs = jobs_table(schema)
+    );
+    sqlx::query_scalar(&query)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "listing queues");
+            Vec::new()
+        })
 }
 
 /// Get all queues with their statistics.
 async fn get_queues(pool: &PgPool, schema: Option<&str>) -> Vec<QueueInfo> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        SELECT
-            queue,
-            COUNT(*) FILTER (WHERE state = 'available') as available,
-            COUNT(*) FILTER (WHERE state = 'scheduled') as scheduled,
-            COUNT(*) FILTER (WHERE state = 'executing') as executing,
-            COUNT(*) FILTER (WHERE state = 'retryable') as retryable,
-            COUNT(*) FILTER (WHERE state = 'completed') as completed,
-            COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
-            COUNT(*) FILTER (WHERE state = 'cancelled') as cancelled,
-            COUNT(*) as total
-        FROM {}
-        GROUP BY queue
-        ORDER BY queue
-        "#,
-        table
-    );
-
-    let rows: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-    rows.into_iter()
-        .map(|row| QueueInfo {
-            name: row.0,
-            available: row.1,
-            scheduled: row.2,
-            executing: row.3,
-            retryable: row.4,
-            completed: row.5,
-            discarded: row.6,
-            cancelled: row.7,
-            total: row.8,
-        })
-        .collect()
+    let mut queues = Vec::new();
+    for name in queue_names(pool, schema).await {
+        let counts = count_by_state(pool, schema, Some(&name)).await;
+        queues.push(QueueInfo::from_counts(name, counts));
+    }
+    queues
 }
 
-/// Get jobs for a specific queue.
+/// The `FROM ... WHERE ...` of a queue's jobs (the queue is `$1`), in `state` if given, and the
+/// values for its other `$n`.
+fn queue_jobs_from<'a>(schema: Option<&str>, state: Option<&'a str>) -> (String, Vec<&'a str>) {
+    let saga_steps_table = match schema {
+        Some(s) => format!("{}.ishikari_saga_steps", s),
+        None => "ishikari_saga_steps".to_string(),
+    };
+    let mut from = format!("FROM {} j WHERE j.queue = $1", jobs_table(schema));
+    let mut binds = Vec::new();
+    match state {
+        // Not a job state: completed jobs whose saga step was rolled back
+        Some("compensated") => from.push_str(&format!(
+            " AND j.state = 'completed' AND j.id IN (SELECT s.job_id FROM {} s WHERE s.state IN {})",
+            saga_steps_table,
+            super::sagas::ROLLBACK_STATES_SQL
+        )),
+        Some(s) => {
+            from.push_str(&format!(" AND j.state = $2::{}", state_type(schema)));
+            binds.push(s);
+        }
+        None => {}
+    }
+    (from, binds)
+}
+
+/// A page of a queue's jobs, newest first, and the links to the others.
 async fn get_queue_jobs(
     pool: &PgPool,
     schema: Option<&str>,
     queue_name: &str,
     state_filter: Option<&str>,
+    mut keyset: Keyset,
+) -> (Vec<QueueJobInfo>, Pager) {
+    let limit = 25;
+    let filters = query_string(&[("state", state_filter.map(str::to_string))]);
+    loop {
+        let rows = read_queue_jobs(pool, schema, queue_name, state_filter, keyset, limit).await;
+        if keyset.reached_newest(rows.len(), limit) {
+            keyset = Keyset::default();
+            continue;
+        }
+        return keyset.page(rows, limit, |j| j.id, filters);
+    }
+}
+
+/// `limit + 1` of a queue's jobs, of `keyset`'s page, in its order.
+async fn read_queue_jobs(
+    pool: &PgPool,
+    schema: Option<&str>,
+    queue_name: &str,
+    state_filter: Option<&str>,
+    keyset: Keyset,
     limit: i64,
-    offset: i64,
-) -> (Vec<QueueJobInfo>, i64) {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
+) -> Vec<QueueJobInfo> {
     let saga_steps_table = match schema {
         Some(s) => format!("{}.ishikari_saga_steps", s),
         None => "ishikari_saga_steps".to_string(),
     };
 
-    // "compensated" isn't a job state: completed jobs whose saga step was rolled back
-    let compensated = state_filter == Some("compensated");
-    let state_filter = state_filter.filter(|_| !compensated);
-
-    let mut conditions = vec!["j.queue = $1".to_string()];
-    let mut param_count = 1;
-
-    if compensated {
-        conditions.push(super::sagas::compensated_condition(&saga_steps_table, "j"));
+    let (mut from, binds) = queue_jobs_from(schema, state_filter);
+    let (cursor, order) = keyset.sql("j");
+    if let Some(cursor) = cursor {
+        from = format!("{from} AND {cursor}");
     }
-    if state_filter.is_some() {
-        param_count += 1;
-        conditions.push(format!("j.state::text = ${}", param_count));
-    }
-
-    let where_clause = format!("WHERE {}", conditions.join(" AND "));
-
-    let count_query = format!("SELECT COUNT(*) FROM {} j {}", table, where_clause);
     let list_query = format!(
         r#"
         SELECT j.id, j.queue, j.worker, j.state::text, j.attempt, j.max_attempts,
                j.inserted_at, j.scheduled_at, j.attempted_at, j.completed_at,
-               (SELECT s.state FROM {} s WHERE s.job_id = j.id LIMIT 1) as saga_step_state
-        FROM {} j {}
-        ORDER BY j.id DESC
-        LIMIT {} OFFSET {}
+               saga.state as saga_step_state
+        FROM (
+            SELECT j.id, j.queue, j.worker, j.state, j.attempt, j.max_attempts, j.inserted_at,
+                j.scheduled_at, j.attempted_at, j.completed_at, j.workflow_id
+            {from}
+            ORDER BY j.id {order}
+            LIMIT {limit}
+        ) j
+        LEFT JOIN LATERAL (
+            SELECT s.state FROM {steps} s
+            WHERE s.workflow_id = j.workflow_id AND s.job_id = j.id
+            LIMIT 1
+        ) saga ON true
+        ORDER BY j.id {order}
         "#,
-        saga_steps_table, table, where_clause, limit, offset
+        steps = saga_steps_table,
+        limit = limit + 1,
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query).bind(queue_name);
     let mut list_q = sqlx::query_as::<
         _,
         (
@@ -243,17 +319,16 @@ async fn get_queue_jobs(
         ),
     >(&list_query)
     .bind(queue_name);
-
-    if let Some(s) = state_filter {
-        count_q = count_q.bind(s);
-        list_q = list_q.bind(s);
+    for b in binds {
+        list_q = list_q.bind(b);
     }
 
-    let total: i64 = count_q.fetch_one(pool).await.unwrap_or(0);
-    let rows = list_q.fetch_all(pool).await.unwrap_or_default();
+    let rows = list_q.fetch_all(pool).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "listing a queue's jobs");
+        Vec::new()
+    });
 
-    let jobs = rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| QueueJobInfo {
             id: row.0,
             queue: row.1,
@@ -267,56 +342,11 @@ async fn get_queue_jobs(
             completed_at: row.9,
             saga_step_state: row.10,
         })
-        .collect();
-
-    (jobs, total)
+        .collect()
 }
 
 /// Get statistics for a single queue.
-async fn get_queue_stats(
-    pool: &PgPool,
-    schema: Option<&str>,
-    queue_name: &str,
-) -> Option<QueueInfo> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        r#"
-        SELECT
-            queue,
-            COUNT(*) FILTER (WHERE state = 'available') as available,
-            COUNT(*) FILTER (WHERE state = 'scheduled') as scheduled,
-            COUNT(*) FILTER (WHERE state = 'executing') as executing,
-            COUNT(*) FILTER (WHERE state = 'retryable') as retryable,
-            COUNT(*) FILTER (WHERE state = 'completed') as completed,
-            COUNT(*) FILTER (WHERE state = 'discarded') as discarded,
-            COUNT(*) FILTER (WHERE state = 'cancelled') as cancelled,
-            COUNT(*) as total
-        FROM {}
-        WHERE queue = $1
-        GROUP BY queue
-        "#,
-        table
-    );
-
-    let row: Option<(String, i64, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
-        .bind(queue_name)
-        .fetch_optional(pool)
-        .await
-        .ok()?;
-
-    row.map(|r| QueueInfo {
-        name: r.0,
-        available: r.1,
-        scheduled: r.2,
-        executing: r.3,
-        retryable: r.4,
-        completed: r.5,
-        discarded: r.6,
-        cancelled: r.7,
-        total: r.8,
-    })
+async fn get_queue_stats(pool: &PgPool, schema: Option<&str>, queue_name: &str) -> QueueInfo {
+    let counts = count_by_state(pool, schema, Some(queue_name)).await;
+    QueueInfo::from_counts(queue_name.to_string(), counts)
 }

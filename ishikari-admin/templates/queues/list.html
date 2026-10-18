@@ -2,11 +2,11 @@
 {% import "partials/ui.html" as ui %}
 
 {% macro segment(label, count, tone) %}
-{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count }}"></span>{% endif %}
+{% if count > 0 %}<span class="{{ tone }}" style="flex: {{ count }} 1 0%" title="{{ label }}: {{ count|count }}"></span>{% endif %}
 {% endmacro %}
 
 {% macro num(value) %}
-{% if value > 0 %}{{ value }}{% else %}<span class="ik-none">0</span>{% endif %}
+{% if value > 0 %}{{ value|count }}{% else %}<span class="ik-none">0</span>{% endif %}
 {% endmacro %}
 
 {% macro head(label, tone) %}
@@ -62,8 +62,8 @@
                     <td class="ik-num">{% call num(queue.scheduled) %}</td>
                     <td class="ik-num">{% call num(queue.retryable) %}</td>
                     <td class="ik-num">{% call num(queue.completed) %}</td>
-                    <td class="ik-num">{% if queue.discarded > 0 %}<span class="font-medium text-ik-danger">{{ queue.discarded }}</span>{% else %}<span class="ik-none">0</span>{% endif %}</td>
-                    <td class="ik-num font-semibold">{{ queue.total }}</td>
+                    <td class="ik-num">{% if queue.discarded > 0 %}<span class="font-medium text-ik-danger">{{ queue.discarded|count }}</span>{% else %}<span class="ik-none">0</span>{% endif %}</td>
+                    <td class="ik-num font-semibold">{{ queue.total|count }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

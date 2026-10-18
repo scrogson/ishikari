@@ -39,14 +39,7 @@
         </tbody>
     </table>
 </div>
+{% endif %}
 {% let pager_api = "" %}
 {% let pager_target = "" %}
-{% let pager_include = "" %}
-{% if let Some(s) = current_state %}
-{% let pager_extra = "&state={}"|format(s) %}
-{% include "partials/pager.html" %}
-{% else %}
-{% let pager_extra = "" %}
-{% include "partials/pager.html" %}
-{% endif %}
-{% endif %}
+{% include "partials/keyset_pager.html" %}

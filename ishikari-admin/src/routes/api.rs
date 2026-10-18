@@ -536,20 +536,12 @@ pub async fn enhanced_jobs_table(
     State(state): State<AppState>,
     Query(query): Query<EnhancedJobsQuery>,
 ) -> EnhancedJobsTablePartial {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(50).min(100);
-    let offset = (page - 1) * per_page;
-
-    let (jobs, total) =
-        get_enhanced_jobs(&state.pool, state.schema(), &query, per_page, offset).await;
-
-    let total_pages = (total as f64 / per_page as f64).ceil() as i64;
+    let (jobs, pager) = get_enhanced_jobs(&state.pool, state.schema(), &query).await;
 
     EnhancedJobsTablePartial {
         base_path: state.base_path.to_string(),
         jobs,
-        page,
-        total_pages,
+        pager,
     }
 }
 

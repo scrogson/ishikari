@@ -13,20 +13,20 @@
             <span class="ik-mono">{{ queue_name }}</span>
         </nav>
         <h1 class="ik-title ik-mono">{{ queue_name }}</h1>
-        <p class="ik-subtitle"><span class="tabular-nums">{{ total }}</span> jobs{% if let Some(s) = current_state %} <span class="ik-muted">·</span> {{ s }}{% endif %}</p>
+        <p class="ik-subtitle"><span class="tabular-nums">{{ total|count }}</span> jobs{% if let Some(s) = current_state %} <span class="ik-muted">·</span> {{ s }}{% endif %}</p>
     </div>
 </header>
 
 <section class="ik-card">
     <div class="ik-metrics border-t-0 grid-cols-2 sm:grid-cols-4 xl:grid-cols-8">
-        {% call ui::tile("Available", stats.available, "ik-tone-primary", "") %}
-        {% call ui::tile("Executing", stats.executing, "ik-tone-info", "") %}
-        {% call ui::tile("Scheduled", stats.scheduled, "ik-tone-violet", "") %}
-        {% call ui::tile("Retryable", stats.retryable, "ik-tone-warning", "") %}
-        {% call ui::tile("Completed", stats.completed, "ik-tone-success", "") %}
-        {% call ui::tile("Discarded", stats.discarded, "ik-tone-danger", "") %}
-        {% call ui::tile("Cancelled", stats.cancelled, "ik-tone-neutral", "") %}
-        {% call ui::tile("Total", stats.total, "", "") %}
+        {% call ui::tile("Available", stats.available|count, "ik-tone-primary", "") %}
+        {% call ui::tile("Executing", stats.executing|count, "ik-tone-info", "") %}
+        {% call ui::tile("Scheduled", stats.scheduled|count, "ik-tone-violet", "") %}
+        {% call ui::tile("Retryable", stats.retryable|count, "ik-tone-warning", "") %}
+        {% call ui::tile("Completed", stats.completed|count, "ik-tone-success", "") %}
+        {% call ui::tile("Discarded", stats.discarded|count, "ik-tone-danger", "") %}
+        {% call ui::tile("Cancelled", stats.cancelled|count, "ik-tone-neutral", "") %}
+        {% call ui::tile("Total", stats.total|count, "", "") %}
     </div>
 </section>
 
