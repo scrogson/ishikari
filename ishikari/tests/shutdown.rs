@@ -148,3 +148,52 @@ async fn shutdown_gives_back_what_outlasts_the_grace() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn dropping_the_engine_stops_it() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(Sleeps { millis: 10_000 }, &db.pool)
+        .await
+        .unwrap();
+    let engine = Engine::builder("test")
+        .node_name("dropped")
+        .heartbeat_interval(Duration::from_millis(50))
+        .stager_interval(Duration::from_millis(20))
+        .with_queue(Queue::builder("default").interval(Duration::from_millis(20)))
+        .start(Postgres::new(db.pool.clone()));
+    started(&db, job.id).await;
+
+    drop(engine);
+    // The running job is given back, attempt refunded, as when the grace runs out.
+    eventually("the job is given back", Duration::from_secs(2), || async {
+        db.state(job.id).await == "available"
+    })
+    .await;
+    let attempt: i32 = sqlx::query_scalar("SELECT attempt FROM ishikari_jobs WHERE id = $1")
+        .bind(job.id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(attempt, 0);
+
+    // Nothing of the engine is left running: no new job is picked up, no heartbeat recorded.
+    let heartbeat = || async {
+        sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+            "SELECT heartbeat_at FROM ishikari_nodes WHERE name = 'dropped'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+    let before = heartbeat().await;
+    let later = ishikari::insert(Sleeps { millis: 1 }, &db.pool)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(db.state(later.id).await, "available");
+    assert_eq!(heartbeat().await, before);
+
+    db.finish().await;
+}

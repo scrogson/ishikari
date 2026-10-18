@@ -11,6 +11,8 @@
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Executor, PgPool};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct TestDb {
@@ -122,5 +124,81 @@ where
             panic!("timed out after {timeout:?} waiting for: {what}");
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// What is logged on this thread, at every level and without colors, while the guard lives. A
+/// test on the default (current-thread) runtime sees its engine's logs too.
+pub fn capture_logs() -> (tracing::subscriber::DefaultGuard, Logs) {
+    let logs = Logs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    (tracing::subscriber::set_default(subscriber), logs)
+}
+
+#[derive(Clone, Default)]
+pub struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+
+    fn make_writer(&'a self) -> Logs {
+        self.clone()
+    }
+}
+
+/// Once armed, panic in the next event logged on this thread with `message`, as a bug in the
+/// code logging it would. Disarms itself.
+pub fn panic_on(message: &'static str) -> (tracing::subscriber::DefaultGuard, Arc<AtomicBool>) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let armed = Arc::new(AtomicBool::new(false));
+    let layer = PanicOn {
+        message,
+        armed: armed.clone(),
+    };
+    let subscriber = tracing_subscriber::registry().with(layer);
+    (tracing::subscriber::set_default(subscriber), armed)
+}
+
+struct PanicOn {
+    message: &'static str,
+    armed: Arc<AtomicBool>,
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PanicOn {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        struct Message(Option<String>);
+        impl tracing::field::Visit for Message {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = Some(format!("{value:?}"));
+                }
+            }
+        }
+        let mut message = Message(None);
+        event.record(&mut message);
+        if message.0.as_deref() == Some(self.message) && self.armed.swap(false, Ordering::SeqCst) {
+            panic!("injected panic logging {:?}", self.message);
+        }
     }
 }

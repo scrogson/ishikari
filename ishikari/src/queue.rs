@@ -144,6 +144,7 @@ impl QueueBuilder {
             storage,
             stop,
             wake,
+            heartbeat: Duration::from_secs(15),
         }
     }
 }
@@ -173,6 +174,8 @@ pub struct Queue {
     stop: watch::Receiver<Option<Instant>>,
     /// Notified when jobs became available in the queue.
     wake: Arc<Notify>,
+    /// How often a queue started on its own records that its node is alive.
+    heartbeat: Duration,
 }
 
 impl Queue {
@@ -183,6 +186,13 @@ impl Queue {
             concurrency: None,
             interval: None,
         }
+    }
+
+    /// How often a queue started on its own (with [`start`](Queue::start)) records that its
+    /// node is alive. Defaults to 15 seconds.
+    pub fn heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat = interval;
+        self
     }
 
     /// Starts the queue, polling for jobs at the specified interval.

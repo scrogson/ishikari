@@ -69,6 +69,44 @@ impl Worker for BadTimeout {
     }
 }
 
+#[ishikari::job]
+struct Counts {
+    n: u32,
+}
+
+#[ishikari::worker]
+impl Worker for Counts {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        Complete::default().into()
+    }
+}
+
+#[ishikari::job]
+struct FailsDeep;
+
+#[ishikari::worker(max_attempts = 1)]
+impl Worker for FailsDeep {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        let root = anyhow::anyhow!("connection refused");
+        Err(root
+            .context("fetching the feed")
+            .context("syncing town 7")
+            .into())
+    }
+}
+
+/// Insert a job row as another node's code would, with `args` as given.
+async fn insert_raw(db: &TestDb, args: serde_json::Value) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO ishikari_jobs (queue, worker, args) VALUES ('default', $1, $2) RETURNING id",
+    )
+    .bind(args["ishikari_worker"].as_str().unwrap().to_string())
+    .bind(args)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+}
+
 fn engine(db: &TestDb) -> Engine {
     Engine::builder("test")
         .stager_interval(Duration::from_millis(20))
@@ -192,6 +230,96 @@ async fn an_outcome_write_that_fails_for_a_while_is_retried() {
         || async { db.state(job.id).await == "completed" },
     )
     .await;
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_job_of_a_worker_this_node_doesnt_know_waits_without_using_an_attempt() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    // During a rolling deploy, a new node inserts a job of a worker the old nodes don't have.
+    let id = insert_raw(
+        &db,
+        serde_json::json!({"ishikari_worker": "AddedInTheNextDeploy"}),
+    )
+    .await;
+    let _engine = engine(&db);
+
+    eventually("the job is put back", Duration::from_secs(5), || async {
+        db.state(id).await == "scheduled"
+    })
+    .await;
+    let (attempt, max_attempts, errors, later): (i32, i32, i64, bool) = sqlx::query_as(
+        "SELECT attempt, max_attempts, cardinality(errors)::bigint, scheduled_at > now() \
+         FROM ishikari_jobs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(max_attempts - attempt, 20, "no attempt used");
+    assert_eq!(errors, 0, "no error recorded");
+    assert!(later, "it waits a while before it is tried again");
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_job_whose_args_dont_fit_its_worker_fails() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let id = insert_raw(
+        &db,
+        serde_json::json!({"ishikari_worker": "Counts", "n": "many"}),
+    )
+    .await;
+    let _engine = engine(&db);
+
+    eventually(
+        "the failure is recorded",
+        Duration::from_secs(5),
+        || async { db.state(id).await == "retryable" },
+    )
+    .await;
+    let errors: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT errors FROM ishikari_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["kind"], "error");
+    let error = errors[0]["error"].as_str().unwrap();
+    assert!(error.contains("invalid type"), "{error}");
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn an_error_is_recorded_with_its_sources() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(FailsDeep, &db.pool).await.unwrap();
+    let _engine = engine(&db);
+
+    eventually("the job is discarded", Duration::from_secs(5), || async {
+        db.state(job.id).await == "discarded"
+    })
+    .await;
+    let errors: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT errors FROM ishikari_jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        errors[0]["error"],
+        "syncing town 7: fetching the feed: connection refused"
+    );
 
     db.finish().await;
 }
