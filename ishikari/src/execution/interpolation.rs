@@ -5,10 +5,13 @@
 //! - `{{nodes.node_id.field}}` - Reference node output
 //! - `{{nodes.node_id.field.nested.path}}` - Nested field access
 //! - `{{nodes.node_id.field[0]}}` - Array indexing
+//!
+//! A node that was skipped (see [`Interpolator::skipped`]) gave nothing: anything under
+//! `{{nodes.skipped_id...}}` is null.
 
 use regex::Regex;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use super::types::NodeData;
@@ -24,6 +27,8 @@ pub struct Interpolator<'a> {
     inputs: &'a HashMap<String, NodeData>,
     /// Node outputs (keyed by node ID)
     node_outputs: &'a HashMap<String, NodeData>,
+    /// Nodes that were skipped
+    skipped: Option<&'a HashSet<String>>,
 }
 
 impl<'a> Interpolator<'a> {
@@ -35,7 +40,15 @@ impl<'a> Interpolator<'a> {
         Self {
             inputs,
             node_outputs,
+            skipped: None,
         }
+    }
+
+    /// The nodes that were skipped: any output of one is null, where a node that gave no
+    /// output and wasn't skipped is an error.
+    pub fn skipped(mut self, nodes: &'a HashSet<String>) -> Self {
+        self.skipped = Some(nodes);
+        self
     }
 
     /// Interpolate all expressions in a value.
@@ -136,10 +149,12 @@ impl<'a> Interpolator<'a> {
         // Split into node ID and field path
         let (node_id, field_path) = split_first_segment(path);
 
-        let node_data = self
-            .node_outputs
-            .get(node_id)
-            .ok_or_else(|| InterpolationError::MissingNodeOutput(node_id.to_string()))?;
+        let Some(node_data) = self.node_outputs.get(node_id) else {
+            return match self.skipped {
+                Some(skipped) if skipped.contains(node_id) => Ok(Value::Null),
+                _ => Err(InterpolationError::MissingNodeOutput(node_id.to_string())),
+            };
+        };
 
         if let Some(field) = field_path {
             node_data
@@ -328,6 +343,33 @@ mod tests {
         assert!(matches!(
             result,
             Err(InterpolationError::MissingNodeOutput(_))
+        ));
+    }
+
+    #[test]
+    fn a_skipped_nodes_outputs_are_null() {
+        let inputs = HashMap::new();
+        let outputs = make_node_outputs();
+        let skipped = HashSet::from(["notify".to_string()]);
+        let interp = Interpolator::new(&inputs, &outputs).skipped(&skipped);
+
+        assert_eq!(
+            interp
+                .interpolate(&json!({
+                    "whole": "{{nodes.notify}}",
+                    "field": "{{nodes.notify.sent.at[0]}}",
+                    "text": "sent: {{nodes.notify.sent}}"
+                }))
+                .unwrap(),
+            json!({ "whole": null, "field": null, "text": "sent: " })
+        );
+        assert!(matches!(
+            interp.interpolate(&json!("{{nodes.missing.field}}")),
+            Err(InterpolationError::MissingNodeOutput(_))
+        ));
+        assert!(matches!(
+            interp.interpolate(&json!("{{nodes.calculate.nope}}")),
+            Err(InterpolationError::MissingField { .. })
         ));
     }
 

@@ -571,6 +571,51 @@ async fn a_rust_node_reads_the_hosts_secrets() {
     db.finish().await;
 }
 
+/// A skipped node gives nothing: what refers to its outputs is null, in the inputs of the nodes
+/// after it and in the run's outputs.
+#[tokio::test]
+async fn a_skipped_nodes_outputs_are_null() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({
+            "inputs": { "loud": { "type": "boolean" } },
+            "nodes": {
+                "maybe": { "type": "shout", "when": "{{inputs.loud}}", "inputs": { "text": "hi" } },
+                "last": {
+                    "type": "shout",
+                    "depends_on": ["maybe"],
+                    "inputs": { "text": "got {{nodes.maybe.result}}", "raw": "{{nodes.maybe.result}}" }
+                }
+            },
+            "outputs": { "maybe": "{{nodes.maybe.result}}", "last": "{{nodes.last.result}}" }
+        }),
+        &["maybe", "last"],
+        json!({ "loud": false }),
+    )
+    .await;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let types = NodeTypes::new(db.pool.clone()).register(shout(), Shout(tx));
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, outputs, error) = finished(&db.pool, None, run).await;
+    assert_eq!((status.as_str(), error), ("completed", None));
+    assert_eq!(outputs, json!({ "maybe": null, "last": "GOT " }));
+    let given = |inputs: Value| serde_json::from_value::<HashMap<String, Value>>(inputs).unwrap();
+    assert_eq!(
+        rx.recv().await.unwrap(),
+        ("last".into(), given(json!({ "text": "got ", "raw": null })))
+    );
+    assert!(rx.try_recv().is_err(), "the skipped node ran");
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
 /// A node of a type the host didn't register fails, and fails its run, without retrying.
 #[tokio::test]
 async fn an_unregistered_node_type_fails_the_run() {

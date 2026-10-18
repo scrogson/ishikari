@@ -94,7 +94,8 @@ impl NodeSpec {
 /// (`ishikari_admin::AppState::with_node_types`). As the [`NodeRunner`] of a
 /// [`NodeJobs`](super::NodeJobs), it runs the nodes of the admin's runs: for each node it
 /// - resolves the node's inputs against the run's inputs (a declared input left out takes its
-///   default, else null) and the outputs of the nodes completed before it;
+///   default, else null) and the outputs of the nodes completed before it (a skipped node's
+///   are null);
 /// - skips the node when its `when` is falsy ([`is_truthy`](super::is_truthy)) or doesn't
 ///   resolve, and lets the nodes after it run;
 /// - runs the handler of its type, and records the execution (`ishikari_node_executions`);
@@ -259,7 +260,8 @@ impl NodeRunner for NodeTypes {
             .storage
             .get_all_node_outputs(job.workflow_run_id)
             .await?;
-        let interpolator = Interpolator::new(&inputs, &outputs);
+        let skipped = node.storage.skipped_nodes(job.workflow_run_id).await?;
+        let interpolator = Interpolator::new(&inputs, &outputs).skipped(&skipped);
 
         if let Some(reason) = job
             .condition
@@ -447,7 +449,8 @@ impl Node<'_> {
         }
 
         let outputs = self.storage.get_all_node_outputs(run_id).await?;
-        let interpolator = Interpolator::new(inputs, &outputs);
+        let skipped = self.storage.skipped_nodes(run_id).await?;
+        let interpolator = Interpolator::new(inputs, &outputs).skipped(&skipped);
         let mut result = serde_json::Map::new();
         for (name, expr) in run.output_schema.as_object().into_iter().flatten() {
             match interpolator.interpolate(expr) {
