@@ -37,10 +37,13 @@ impl DependencyResolver {
     ///
     /// * `pool` - The database connection pool
     /// * `interval` - How often to check for completed jobs
+    ///
+    /// Panics if `interval` is zero.
+    #[track_caller]
     pub fn new(pool: impl Into<Arc<PgPool>>, interval: Duration) -> Self {
         Self {
             pool: pool.into(),
-            interval,
+            interval: crate::nonzero(interval, "the resolver's interval"),
             schema: None,
         }
     }

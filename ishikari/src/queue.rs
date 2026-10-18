@@ -36,12 +36,12 @@
 //! # }
 //! ```
 
-use crate::{Backoff, Context, ErrorKind, Job, Postgres, State, Status};
-use chrono::Duration as ChronoDuration;
+use crate::{Backoff, Context, ErrorKind, Job, Postgres, State, Status, Worker};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::FutureExt;
 use std::any::Any;
 use std::collections::HashMap;
-use std::panic::AssertUnwindSafe;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -97,9 +97,10 @@ impl QueueBuilder {
 
     /// Sets the polling interval for the queue.
     ///
-    /// This determines how often the queue checks for new jobs.
+    /// This determines how often the queue checks for new jobs. Panics if `interval` is zero.
+    #[track_caller]
     pub fn interval(mut self, interval: Duration) -> Self {
-        self.interval = Some(interval);
+        self.interval = Some(crate::nonzero(interval, "the queue's interval"));
         self
     }
 
@@ -334,44 +335,70 @@ fn extract_panic_message(panic: &Box<dyn Any + Send>) -> String {
     }
 }
 
+/// What a run came to, to be written back to its job.
+enum Outcome {
+    Complete,
+    Cancel(Option<String>),
+    Snooze(u64),
+    Error(ErrorKind, String, DateTime<Utc>),
+}
+
+impl Outcome {
+    fn name(&self) -> &'static str {
+        match self {
+            Outcome::Complete => "complete",
+            Outcome::Cancel(_) => "cancel",
+            Outcome::Snooze(_) => "snooze",
+            Outcome::Error(..) => "error",
+        }
+    }
+}
+
 /// Run one claimed job and record its outcome.
 async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
+    let outcome = run(&job, state).await;
+    record(&storage, &job, &outcome).await;
+}
+
+/// Run the job's worker, turning its panics and its timeout into errors.
+async fn run(job: &Job, state: State) -> Outcome {
     let worker = match job.worker() {
         Ok(worker) => worker,
         Err(e) => {
             error!(id = job.id, error = %e, "failed to deserialize worker");
-            let retry_at = Backoff::Exponential(ChronoDuration::seconds(5)).next_retry(job.attempt);
-            let written = storage
-                .error(
-                    &job,
-                    ErrorKind::Error,
-                    &format!("Failed to deserialize worker: {e}"),
-                    retry_at,
-                )
-                .await;
-            log_write(&job, "error", written);
-            return;
+            return Outcome::Error(
+                ErrorKind::Error,
+                format!("Failed to deserialize worker: {e}"),
+                default_backoff(job.attempt),
+            );
+        }
+    };
+    let limit = match catch_unwind(AssertUnwindSafe(|| worker.timeout())) {
+        Ok(limit) => limit,
+        Err(panic) => {
+            let panic_msg = extract_panic_message(&panic);
+            error!(id = job.id, attempt = job.attempt, panic = %panic_msg, "worker's timeout panicked");
+            return Outcome::Error(
+                ErrorKind::Panic,
+                format!("Worker's timeout panicked: {panic_msg}"),
+                retry_at(&*worker, job),
+            );
         }
     };
     let context = Context::new(Arc::new(job.clone()), state);
 
     // Wrap perform in catch_unwind to handle panics gracefully, and in the worker's timeout.
     let run = AssertUnwindSafe(worker.perform(context)).catch_unwind();
-    let result = match worker.timeout() {
+    let result = match limit {
         Some(limit) => match tokio::time::timeout(limit, run).await {
             Ok(result) => result,
             Err(_) => {
                 error!(id = job.id, attempt = job.attempt, ?limit, "job timed out");
-                let written = storage
-                    .error(
-                        &job,
-                        ErrorKind::Timeout,
-                        &format!("timed out after {limit:?}"),
-                        worker.backoff(job.attempt),
-                    )
-                    .await;
-                log_write(&job, "error", written);
-                return;
+                return Outcome::Error(
+                    ErrorKind::Timeout,
+                    format!("timed out after {limit:?}"),
+                    retry_at(&*worker, job),
+                );
             }
         },
         None => run.await,
@@ -380,19 +407,15 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
     match result {
         Ok(Ok(Status::Complete(complete))) => {
             info!(id = job.id, result = complete.0, "job completed");
-            log_write(&job, "complete", storage.complete(&job).await);
+            Outcome::Complete
         }
         Ok(Ok(Status::Cancel(cancel))) => {
             info!(id = job.id, reason = cancel.0, "job cancelled");
-            log_write(
-                &job,
-                "cancel",
-                storage.cancel(&job, cancel.0.as_deref()).await,
-            );
+            Outcome::Cancel(cancel.0)
         }
         Ok(Ok(Status::Snooze(snooze))) => {
             info!(id = job.id, snooze = snooze.0, "job snoozed");
-            log_write(&job, "snooze", storage.snooze(&job, snooze.0).await);
+            Outcome::Snooze(snooze.0)
         }
         Ok(Err(e)) => {
             error!(
@@ -401,43 +424,75 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
                 error = e.to_string(),
                 "job failed"
             );
-            let written = storage
-                .error(
-                    &job,
-                    ErrorKind::Error,
-                    &e.to_string(),
-                    worker.backoff(job.attempt),
-                )
-                .await;
-            log_write(&job, "error", written);
+            Outcome::Error(ErrorKind::Error, e.to_string(), retry_at(&*worker, job))
         }
         Err(panic_info) => {
             let panic_msg = extract_panic_message(&panic_info);
             error!(id = job.id, attempt = job.attempt, panic = %panic_msg, "worker panicked");
-            let written = storage
-                .error(
-                    &job,
-                    ErrorKind::Panic,
-                    &format!("Worker panicked: {panic_msg}"),
-                    worker.backoff(job.attempt),
-                )
-                .await;
-            log_write(&job, "error", written);
+            Outcome::Error(
+                ErrorKind::Panic,
+                format!("Worker panicked: {panic_msg}"),
+                retry_at(&*worker, job),
+            )
         }
     }
 }
 
-/// Log an outcome write that failed, or that found the job had moved on (rescued, cancelled or
-/// retried while this run was going): its result is dropped.
-fn log_write(job: &Job, outcome: &str, written: Result<bool, sqlx::Error>) {
-    match written {
-        Ok(true) => {}
-        Ok(false) => warn!(
-            id = job.id,
-            attempt = job.attempt,
-            outcome,
-            "job changed while it ran; result dropped"
-        ),
-        Err(e) => error!(id = job.id, outcome, error = %e, "failed to record job outcome"),
+/// When to run a failed job again: the worker's backoff, or the default when it panics.
+fn retry_at(worker: &dyn Worker, job: &Job) -> DateTime<Utc> {
+    catch_unwind(AssertUnwindSafe(|| worker.backoff(job.attempt))).unwrap_or_else(|panic| {
+        let panic_msg = extract_panic_message(&panic);
+        error!(id = job.id, attempt = job.attempt, panic = %panic_msg, "worker's backoff panicked; using the default");
+        default_backoff(job.attempt)
+    })
+}
+
+/// The default [`Worker::backoff`].
+fn default_backoff(attempt: i32) -> DateTime<Utc> {
+    Backoff::Exponential(ChronoDuration::seconds(5)).next_retry(attempt)
+}
+
+/// How long a failed outcome write is retried. Until it is written the job stays executing, and
+/// a live node's jobs aren't rescued, so a transient error (a dropped connection, a failover)
+/// mustn't drop it.
+const RECORD_FOR: Duration = Duration::from_secs(60);
+
+/// Write the outcome, retrying a failed write with backoff for up to [`RECORD_FOR`]. A job that
+/// moved on while it ran (rescued, cancelled or retried) keeps its new state; the result is
+/// dropped.
+async fn record(storage: &Postgres, job: &Job, outcome: &Outcome) {
+    let started = Instant::now();
+    let mut delay = Duration::from_millis(100);
+    loop {
+        let written = match outcome {
+            Outcome::Complete => storage.complete(job).await,
+            Outcome::Cancel(reason) => storage.cancel(job, reason.as_deref()).await,
+            Outcome::Snooze(seconds) => storage.snooze(job, *seconds).await,
+            Outcome::Error(kind, error, retry_at) => {
+                storage.error(job, *kind, error, *retry_at).await
+            }
+        };
+        let outcome = outcome.name();
+        match written {
+            Ok(true) => return,
+            Ok(false) => {
+                warn!(
+                    id = job.id,
+                    attempt = job.attempt,
+                    outcome,
+                    "job changed while it ran; result dropped"
+                );
+                return;
+            }
+            Err(e) if started.elapsed() + delay < RECORD_FOR => {
+                warn!(id = job.id, outcome, error = %e, retry_in = ?delay, "failed to record job outcome; retrying");
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(5));
+            }
+            Err(e) => {
+                error!(id = job.id, outcome, error = %e, "failed to record job outcome; giving up, the job stays executing until its node stops");
+                return;
+            }
+        }
     }
 }

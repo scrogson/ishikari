@@ -31,6 +31,10 @@
   their upstreams complete (they were `scheduled`, so the stager started them at once). A
   node's `max_retries: 0` is one attempt (it was zero, which the database refused), and its
   `timeout_seconds` applies.
+- A definition's recent runs in the admin showed every run `running`, even once its workflow
+  had completed or failed: nothing updated the run row's status. A run's status and completion
+  time are now its workflow's once the workflow has finished, so the run follows it through a
+  failure and a retry; while the workflow runs, the run row's status stands.
 - The published `ishikari-admin` has the workflow builder: `frontend/dist` was gitignored, so
   the crate embedded nothing and the definition editor never loaded. The build is committed
   now (`mise run frontend:build`). Its assets' URLs are relative, so they work under a base
@@ -41,6 +45,21 @@
   have an admin's browser retry, cancel or run jobs (CSRF): a POST or PUT whose
   `Sec-Fetch-Site` is another site's, or, without it, whose `Origin` isn't the `Host`. Requests
   with neither header (not a browser's) pass.
+- A job whose outcome couldn't be written no longer stays `executing` until its node restarts
+  (the rescuer leaves a live node's jobs alone): a failed write is retried with backoff for up
+  to a minute, and a worker's `backoff` or `timeout` that panics no longer kills the run. A
+  panicking `backoff` gets the default instead; a panicking `timeout` fails the attempt as a
+  panic.
+- `Backoff` no longer overflows or panics: `Exponential` at high attempts, `ExponentialJitter`
+  on a base under a second, and `Linear` and `Fixed` past chrono's range. The built-in
+  strategies work in milliseconds, so a sub-second base no longer counts as zero, and never
+  wait longer than `Backoff::MAX_DELAY` (7 days).
+- A zero interval panics where it is set (`Queue::interval`, the engine's `*_interval`
+  setters, `Stager::new`, `DependencyResolver::new`), naming it, rather than silently killing
+  the background task it drives (a queue, or the heartbeat, which got the node's jobs rescued).
+- Cron slots are no longer lost: a slot whose insert fails is tried again on later checks
+  (within `cron_catch_up`), and when more than 100 slots are due at once the rest are inserted
+  on the next check, with a warning, instead of being skipped.
 
 ### Removed
 

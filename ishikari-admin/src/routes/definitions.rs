@@ -973,16 +973,25 @@ async fn create_workflow_run(
     Ok(workflow.id)
 }
 
-/// Get workflow runs for a definition.
+/// Get workflow runs for a definition. A run is as finished as its workflow: once the workflow
+/// has finished, its state and completion time are the run's, so the run follows it through a
+/// failure and a retry (the library doesn't write them to the run row). While the workflow
+/// runs, the run row's own status stands, as a `WorkflowExecutor` writes it.
 async fn get_definition_runs(
     pool: &PgPool,
     schema: Option<&str>,
     definition_id: i64,
     limit: i64,
 ) -> Result<Vec<WorkflowRunInfo>, String> {
-    let table = match schema {
-        Some(s) => format!("{}.ishikari_workflow_runs", s),
-        None => "ishikari_workflow_runs".to_string(),
+    let (table, workflows) = match schema {
+        Some(s) => (
+            format!("{}.ishikari_workflow_runs", s),
+            format!("{}.ishikari_workflows", s),
+        ),
+        None => (
+            "ishikari_workflow_runs".to_string(),
+            "ishikari_workflows".to_string(),
+        ),
     };
 
     // Check if table exists
@@ -993,13 +1002,18 @@ async fn get_definition_runs(
 
     let query = format!(
         r#"
-        SELECT id, workflow_id, status, inputs, created_at, completed_at
-        FROM {}
-        WHERE definition_id = $1
-        ORDER BY created_at DESC
+        SELECT r.id, r.workflow_id,
+               CASE WHEN w.state IS NULL OR w.state = 'running' THEN r.status ELSE w.state END,
+               r.inputs, r.created_at,
+               CASE WHEN w.state IS NULL OR w.state = 'running' THEN r.completed_at
+                    ELSE w.completed_at END
+        FROM {} r
+        LEFT JOIN {} w ON w.id = r.workflow_id
+        WHERE r.definition_id = $1
+        ORDER BY r.created_at DESC
         LIMIT $2
         "#,
-        table
+        table, workflows
     );
 
     let rows: Vec<(
