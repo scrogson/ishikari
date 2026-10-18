@@ -6,6 +6,7 @@ mod common;
 use common::{eventually, TestDb};
 use ishikari::prelude::*;
 use ishikari::{Engine, Postgres, Queue};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Hangs on its first attempt, as if its node died mid-run; succeeds after.
@@ -117,6 +118,47 @@ async fn a_long_job_on_a_live_node_is_not_rescued() {
     .await
     .unwrap();
     assert_eq!((attempt, errors), (1, 0));
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_long_job_on_a_standalone_queue_is_not_rescued() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(Long, &db.pool).await.unwrap();
+    // An engine that only rescues, with a node timeout well under the job's 800 ms.
+    let _rescuer = Engine::builder("rescuer")
+        .heartbeat_interval(Duration::from_millis(50))
+        .node_timeout(Duration::from_millis(300))
+        .rescue_interval(Duration::from_millis(50))
+        .start(Postgres::new(db.pool.clone()));
+    Queue::builder("default")
+        .interval(Duration::from_millis(20))
+        .build(Arc::new(Postgres::new(db.pool.clone())), Arc::new(()))
+        .heartbeat_interval(Duration::from_millis(50))
+        .start();
+
+    eventually("the job completes", Duration::from_secs(5), || async {
+        db.state(job.id).await == "completed"
+    })
+    .await;
+    let (attempt, errors, by): (i32, i64, Vec<String>) = sqlx::query_as(
+        "SELECT attempt, cardinality(errors)::bigint, attempted_by FROM ishikari_jobs WHERE id = $1",
+    )
+    .bind(job.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!((attempt, errors), (1, 0), "run once, never rescued");
+    let queues: Vec<String> =
+        sqlx::query_scalar("SELECT queues FROM ishikari_nodes WHERE name = $1")
+            .bind(&by[0])
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(queues, vec!["default"], "the queue's node heartbeats");
 
     db.finish().await;
 }

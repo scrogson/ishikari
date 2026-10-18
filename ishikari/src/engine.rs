@@ -3,14 +3,17 @@ mod postgres;
 pub(crate) use postgres::qualified;
 pub use postgres::{ErrorKind, Postgres};
 
-use crate::queue::{QueueBuilder, QueueStop};
+use crate::queue::{extract_panic_message, QueueBuilder, QueueStop, RESTART_AFTER};
 use crate::{Cron, InsertOpts, Inserted, Job, Stager, State, Worker};
 use futures::future::BoxFuture;
+use futures::FutureExt;
 use serde::Serialize;
 use sqlx::postgres::PgListener;
 use std::{
     collections::HashMap,
     fmt::Debug,
+    future::Future,
+    panic::AssertUnwindSafe,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -248,6 +251,11 @@ impl EngineBuilder {
     /// 1. Initialize the stager with the configured interval and limit
     /// 2. Build and start all configured queues
     /// 3. Return an [`Engine`] instance that can be used to insert jobs
+    ///
+    /// The engine runs until it is shut down or dropped; keep it for as long as it should run.
+    /// Each of its background tasks (the queues, heartbeat, stager, rescuer, resolver, cron,
+    /// pruner and listener) is restarted if it panics, after a backoff, and the panic is logged
+    /// at error.
     pub fn start(self, storage: Postgres) -> Engine {
         let storage = Arc::new(match self.schema {
             Some(schema) => storage.with_schema(schema),
@@ -265,48 +273,51 @@ impl EngineBuilder {
             .collect();
 
         let mut tasks = Vec::new();
-        tasks.push(heartbeat(
-            storage.clone(),
-            node.clone(),
-            queue_names,
-            self.heartbeat_interval,
-        ));
-        tasks.push(rescuer(
-            storage.clone(),
-            self.rescue_interval,
-            self.node_timeout,
-            self.rescue_unowned_after,
-        ));
+        let (every, s, n) = (self.heartbeat_interval, storage.clone(), node.clone());
+        tasks.push(spawn_supervised("heartbeat", move || {
+            heartbeat(s.clone(), n.clone(), queue_names.clone(), every)
+        }));
+        let (s, every) = (storage.clone(), self.rescue_interval);
+        let (node_timeout, unowned_after) = (self.node_timeout, self.rescue_unowned_after);
+        tasks.push(spawn_supervised("rescuer", move || {
+            rescuer(s.clone(), every, node_timeout, unowned_after)
+        }));
 
-        let mut resolver = crate::dependencies::DependencyResolver::new(
-            storage.pool.clone(),
-            self.resolver_interval,
-        );
-        if let Some(schema) = storage.schema() {
-            resolver = resolver.schema(schema);
-        }
-        tasks.push(resolver.start());
+        let (pool, every) = (storage.pool.clone(), self.resolver_interval);
+        let schema = storage.schema().map(str::to_string);
+        tasks.push(spawn_supervised("dependency resolver", move || {
+            let mut resolver = crate::dependencies::DependencyResolver::new(pool.clone(), every);
+            if let Some(schema) = &schema {
+                resolver = resolver.schema(schema);
+            }
+            spawned(resolver.start())
+        }));
 
         if let Some(after) = self.prune_after {
-            tasks.push(pruner(
+            let (s, after, every) = (
                 storage.clone(),
                 after.max(self.cron_catch_up),
                 self.prune_interval,
-            ));
+            );
+            tasks.push(spawn_supervised("pruner", move || {
+                pruner(s.clone(), after, every)
+            }));
         }
 
         if !self.crons.is_empty() {
-            tasks.push(cron_task(
-                storage.clone(),
-                self.crons,
-                self.cron_interval,
-                self.cron_catch_up,
-            ));
+            let (s, crons) = (storage.clone(), Arc::new(self.crons));
+            let (every, catch_up) = (self.cron_interval, self.cron_catch_up);
+            tasks.push(spawn_supervised("cron", move || {
+                cron_task(s.clone(), crons.clone(), every, catch_up)
+            }));
         }
 
         let stager_interval = self.stager_interval.unwrap_or(Duration::from_secs(1));
         let stager_limit = self.stager_limit.unwrap_or(100);
-        tasks.push(Stager::new(storage.clone(), stager_interval, stager_limit).start());
+        let s = storage.clone();
+        tasks.push(spawn_supervised("stager", move || {
+            spawned(Stager::new(s.clone(), stager_interval, stager_limit).start())
+        }));
 
         let wakes: HashMap<String, Arc<Notify>> = self
             .queues
@@ -314,7 +325,10 @@ impl EngineBuilder {
             .map(|q| (q.name.as_str().to_string(), Arc::default()))
             .collect();
         if self.listen && !wakes.is_empty() {
-            tasks.push(listener(storage.clone(), wakes.clone()));
+            let (s, wakes) = (storage.clone(), wakes.clone());
+            tasks.push(spawn_supervised("listener", move || {
+                listener(s.clone(), wakes.clone())
+            }));
         }
 
         let (stop, stop_rx) = watch::channel(None);
@@ -354,13 +368,16 @@ impl EngineBuilder {
 /// - Inserting jobs into its schema
 ///
 /// An engine instance is created using the [`EngineBuilder`] and represents
-/// a running job processing system. Once started, it will continue processing
-/// jobs until the application terminates.
+/// a running job processing system. It runs until [`shutdown`](Engine::shutdown), the graceful
+/// way to stop it, or until it is dropped. Dropping it stops it without waiting: its running
+/// jobs are aborted and given back to their queues (with the attempt refunded) while the runtime
+/// lasts, its background tasks are aborted and its node's row is left for the rescuer.
+#[must_use = "an engine stops when it is dropped"]
 pub struct Engine {
     name: EngineName,
     node: Arc<str>,
     storage: Arc<Postgres>,
-    /// Heartbeat, rescuer and stager.
+    /// The background tasks, each supervised.
     tasks: Vec<JoinHandle<()>>,
     queues: Vec<JoinHandle<QueueStop>>,
     stop: watch::Sender<Option<Instant>>,
@@ -420,10 +437,10 @@ impl Engine {
     /// doesn't leave jobs to the rescuer.
     ///
     /// Jobs given back were interrupted mid-run, so workers should be safe to run twice.
-    pub async fn shutdown(self, grace: Duration) -> Shutdown {
+    pub async fn shutdown(mut self, grace: Duration) -> Shutdown {
         let _ = self.stop.send(Some(Instant::now() + grace));
         let mut report = Shutdown::default();
-        for queue in self.queues {
+        for queue in std::mem::take(&mut self.queues) {
             match queue.await {
                 Ok(stop) => {
                     report.finished += stop.finished;
@@ -432,7 +449,7 @@ impl Engine {
                 Err(e) => error!(error = %e, "a queue task failed while stopping"),
             }
         }
-        for task in self.tasks {
+        for task in std::mem::take(&mut self.tasks) {
             task.abort();
             let _ = task.await;
         }
@@ -497,8 +514,82 @@ impl Engine {
     }
 }
 
+impl Drop for Engine {
+    /// Stop without waiting; see [`Engine`]. After [`shutdown`](Engine::shutdown) there is
+    /// nothing left to stop.
+    fn drop(&mut self) {
+        if self.queues.is_empty() && self.tasks.is_empty() {
+            return;
+        }
+        info!(node = %self.node, "engine dropped; stopping without waiting for running jobs");
+        // Each queue aborts its running jobs and gives them back, then ends.
+        let _ = self.stop.send(Some(Instant::now()));
+        self.queues.clear();
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
+}
+
+/// Spawn [`supervise`]`(task, make)`.
+fn spawn_supervised<F, Fut>(task: &'static str, make: F) -> JoinHandle<()>
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(supervise(task, make))
+}
+
+/// Run the future `make` returns, and when it panics, log the panic at error and run a new one
+/// after a backoff: 1 second, doubling up to a minute while it keeps panicking soon after it
+/// starts. Returns when a run returns.
+pub(crate) async fn supervise<F, Fut>(task: &'static str, make: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    supervise_with(task, RESTART_AFTER, make).await
+}
+
+async fn supervise_with<F, Fut>(task: &'static str, backoff: (Duration, Duration), mut make: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut delay = backoff.0;
+    loop {
+        let started = Instant::now();
+        let Err(panic) = AssertUnwindSafe(make()).catch_unwind().await else {
+            return;
+        };
+        if started.elapsed() >= backoff.1 {
+            delay = backoff.0;
+        }
+        let panic = extract_panic_message(&panic);
+        error!(task, panic, restart_in = ?delay, "background task panicked; restarting it");
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(backoff.1);
+    }
+}
+
+/// Wait for a task that spawned itself, passing on its panic, and abort it when dropped.
+async fn spawned(task: JoinHandle<()>) {
+    struct AbortOnDrop(JoinHandle<()>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let mut task = AbortOnDrop(task);
+    if let Err(e) = (&mut task.0).await {
+        if e.is_panic() {
+            std::panic::resume_unwind(e.into_panic());
+        }
+    }
+}
+
 /// `{engine}-{host}-{pid}-{random}`: unique per process, readable in the admin.
-fn default_node_name(engine: &str) -> String {
+pub(crate) fn default_node_name(engine: &str) -> String {
     let host = std::env::var("HOSTNAME")
         .ok()
         .filter(|h| !h.is_empty())
@@ -508,68 +599,64 @@ fn default_node_name(engine: &str) -> String {
 }
 
 /// Keep this node's row fresh so its running jobs aren't taken for lost.
-fn heartbeat(
+pub(crate) async fn heartbeat(
     storage: Arc<Postgres>,
     node: Arc<str>,
     queues: Vec<String>,
     every: Duration,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(every);
-        loop {
-            interval.tick().await;
-            if let Err(e) = storage.heartbeat(&node, &queues).await {
-                error!(node = %node, error = %e, "failed to record heartbeat");
-            }
+) {
+    let mut interval = tokio::time::interval(every);
+    loop {
+        interval.tick().await;
+        if let Err(e) = storage.heartbeat(&node, &queues).await {
+            error!(node = %node, error = %e, "failed to record heartbeat");
         }
-    })
+    }
 }
 
 /// Wake a queue when jobs become available in it. The jobs table notifies its channel with the
 /// job's queue whenever a job is inserted available or becomes available (staged, released by
 /// its upstreams, retried, given back). Notifications sent while the connection was down are
 /// lost, so every queue is woken on (re)connecting; polling covers the rest.
-fn listener(storage: Arc<Postgres>, wakes: HashMap<String, Arc<Notify>>) -> JoinHandle<()> {
+async fn listener(storage: Arc<Postgres>, wakes: HashMap<String, Arc<Notify>>) {
     let wake_all = move |wakes: &HashMap<String, Arc<Notify>>| {
         wakes.values().for_each(|wake| wake.notify_one());
     };
-    tokio::spawn(async move {
-        let mut delay = Duration::from_millis(100);
+    let mut delay = Duration::from_millis(100);
+    loop {
+        let mut listener = match subscribe(&storage).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                warn!(error = %e, retry_in = ?delay, "failed to listen for available jobs; polling meanwhile");
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(30));
+                continue;
+            }
+        };
+        delay = Duration::from_millis(100);
+        wake_all(&wakes);
         loop {
-            let mut listener = match subscribe(&storage).await {
-                Ok(listener) => listener,
-                Err(e) => {
-                    warn!(error = %e, retry_in = ?delay, "failed to listen for available jobs; polling meanwhile");
-                    tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(Duration::from_secs(30));
-                    continue;
-                }
-            };
-            delay = Duration::from_millis(100);
-            wake_all(&wakes);
-            loop {
-                match listener.try_recv().await {
-                    Ok(Some(notice)) => match queue_of(notice.payload()) {
-                        Some(queue) => {
-                            if let Some(wake) = wakes.get(&queue) {
-                                wake.notify_one();
-                            }
+            match listener.try_recv().await {
+                Ok(Some(notice)) => match queue_of(notice.payload()) {
+                    Some(queue) => {
+                        if let Some(wake) = wakes.get(&queue) {
+                            wake.notify_one();
                         }
-                        None => warn!(payload = notice.payload(), "unreadable job notification"),
-                    },
-                    // The connection dropped; the next call reconnects and listens again.
-                    Ok(None) => {
-                        warn!("lost the connection listening for available jobs; reconnecting");
-                        wake_all(&wakes);
                     }
-                    Err(e) => {
-                        warn!(error = %e, "failed listening for available jobs; reconnecting");
-                        break;
-                    }
+                    None => warn!(payload = notice.payload(), "unreadable job notification"),
+                },
+                // The connection dropped; the next call reconnects and listens again.
+                Ok(None) => {
+                    warn!("lost the connection listening for available jobs; reconnecting");
+                    wake_all(&wakes);
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed listening for available jobs; reconnecting");
+                    break;
                 }
             }
         }
-    })
+    }
 }
 
 /// A connection listening on the storage's channel.
@@ -593,65 +680,113 @@ fn queue_of(payload: &str) -> Option<String> {
 }
 
 /// Give back jobs whose node stopped heartbeating.
-fn rescuer(
+async fn rescuer(
     storage: Arc<Postgres>,
     every: Duration,
     node_timeout: Duration,
     unowned_after: Duration,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(every);
-        loop {
-            interval.tick().await;
-            match storage.rescue(node_timeout, unowned_after).await {
-                Ok(rescued) => {
-                    for (id, node) in rescued {
-                        warn!(id, node = %node, "rescued a job whose node stopped");
-                    }
+) {
+    let mut interval = tokio::time::interval(every);
+    loop {
+        interval.tick().await;
+        match storage.rescue(node_timeout, unowned_after).await {
+            Ok(rescued) => {
+                for (id, node) in rescued {
+                    warn!(id, node = %node, "rescued a job whose node stopped");
                 }
-                Err(e) => error!(error = %e, "failed to rescue jobs"),
             }
+            Err(e) => error!(error = %e, "failed to rescue jobs"),
         }
-    })
+    }
 }
 
 /// Insert cron slots as they fall due, starting `catch_up` in the past. Each entry goes on from
 /// its last slot that is in, never further back than `catch_up`: older slots' jobs may have been
 /// pruned, and inserting them again would run them twice.
-fn cron_task(
+async fn cron_task(
     storage: Arc<Postgres>,
-    crons: Vec<Cron>,
+    crons: Arc<Vec<Cron>>,
     every: Duration,
     catch_up: Duration,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let catch_up = chrono::Duration::from_std(catch_up).unwrap_or_default();
-        let mut done = vec![chrono::Utc::now() - catch_up; crons.len()];
-        let mut interval = tokio::time::interval(every);
-        loop {
-            interval.tick().await;
-            let now = chrono::Utc::now();
-            crate::cron::run_due(&crons, &storage, &mut done, now - catch_up, now).await;
-        }
-    })
+) {
+    let catch_up = chrono::Duration::from_std(catch_up).unwrap_or_default();
+    let mut done = vec![chrono::Utc::now() - catch_up; crons.len()];
+    let mut interval = tokio::time::interval(every);
+    loop {
+        interval.tick().await;
+        let now = chrono::Utc::now();
+        crate::cron::run_due(&crons, &storage, &mut done, now - catch_up, now).await;
+    }
 }
 
 /// Delete old finished jobs, 1,000 at a time, until none are left, then wait for the next tick.
-fn pruner(storage: Arc<Postgres>, after: Duration, every: Duration) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(every);
+async fn pruner(storage: Arc<Postgres>, after: Duration, every: Duration) {
+    let mut interval = tokio::time::interval(every);
+    loop {
+        interval.tick().await;
         loop {
-            interval.tick().await;
-            loop {
-                match storage.prune(after, 1000).await {
-                    Ok(0) => break,
-                    Ok(n) => tracing::debug!(n, "pruned finished jobs"),
-                    Err(e) => {
-                        error!(error = %e, "failed to prune jobs");
-                        break;
-                    }
+            match storage.prune(after, 1000).await {
+                Ok(0) => break,
+                Ok(n) => tracing::debug!(n, "pruned finished jobs"),
+                Err(e) => {
+                    error!(error = %e, "failed to prune jobs");
+                    break;
                 }
             }
         }
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn a_task_that_panics_is_restarted_with_backoff_until_it_returns() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let started = Instant::now();
+        let backoff = (Duration::from_millis(20), Duration::from_millis(80));
+        supervise_with("test", backoff, move || {
+            let run = counted.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if run < 3 {
+                    panic!("run {run} panicked");
+                }
+            }
+        })
+        .await;
+        assert_eq!(runs.load(Ordering::SeqCst), 4);
+        // 20, 40 and 80 ms between the runs.
+        assert!(started.elapsed() >= Duration::from_millis(140));
+    }
+
+    #[tokio::test]
+    async fn a_spawned_task_passes_on_its_panic_and_stops_with_its_supervisor() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let (alive, gone) = tokio::sync::oneshot::channel::<()>();
+        let mut alive = Some(alive);
+        let backoff = (Duration::from_millis(10), Duration::from_millis(10));
+        let supervisor = tokio::spawn(supervise_with("test", backoff, move || {
+            let run = counted.fetch_add(1, Ordering::SeqCst);
+            let alive = alive.take();
+            spawned(tokio::spawn(async move {
+                if run == 0 {
+                    panic!("the first run panicked");
+                }
+                let _alive = alive;
+                std::future::pending::<()>().await
+            }))
+        }));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 2, "restarted once");
+
+        supervisor.abort();
+        tokio::time::timeout(Duration::from_secs(1), gone)
+            .await
+            .expect("the spawned task is aborted with its supervisor")
+            .unwrap_err();
+    }
 }

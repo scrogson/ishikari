@@ -119,7 +119,7 @@ impl QueueBuilder {
     ///
     /// Returns a new `Queue` instance.
     pub fn build(self, storage: Arc<Postgres>, state: State) -> Queue {
-        let node = format!("{}-{}", self.name.as_str(), std::process::id());
+        let node = crate::engine::default_node_name(self.name.as_str());
         let (_, stop) = watch::channel(None);
         self.build_on(storage, state, node.into(), stop, Arc::default())
     }
@@ -144,6 +144,7 @@ impl QueueBuilder {
             storage,
             stop,
             wake,
+            heartbeat: Duration::from_secs(15),
         }
     }
 }
@@ -173,6 +174,8 @@ pub struct Queue {
     stop: watch::Receiver<Option<Instant>>,
     /// Notified when jobs became available in the queue.
     wake: Arc<Notify>,
+    /// How often a queue started on its own records that its node is alive.
+    heartbeat: Duration,
 }
 
 impl Queue {
@@ -185,14 +188,37 @@ impl Queue {
         }
     }
 
+    /// How often a queue started on its own (with [`start`](Queue::start)) records that its
+    /// node is alive, so that no engine's rescuer takes its running jobs for lost. Defaults to 15
+    /// seconds; keep it well under the `node_timeout` of the engines on the same schema. An
+    /// engine's queues use the engine's heartbeat instead. Panics if `interval` is zero.
+    #[track_caller]
+    pub fn heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat = crate::nonzero(interval, "the queue's heartbeat_interval");
+        self
+    }
+
     /// Starts the queue, polling for jobs at the specified interval.
     ///
-    /// This method spawns a new task to run the queue asynchronously. A queue started this way
+    /// This method spawns a new task to run the queue asynchronously, heartbeating as its own
+    /// node (`{queue}-{host}-{pid}-{random}`, in `ishikari_nodes`). A queue started this way
     /// runs until the runtime stops; queues an [`Engine`](crate::Engine) starts stop with
     /// [`Engine::shutdown`](crate::Engine::shutdown).
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     pub fn start(self) {
-        self.spawn();
+        let (storage, node, every) = (self.storage.clone(), self.node.clone(), self.heartbeat);
+        let queues = vec![self.name.as_str().to_string()];
+        let heartbeat = crate::engine::supervise("heartbeat", move || {
+            crate::engine::heartbeat(storage.clone(), node.clone(), queues.clone(), every)
+        });
+        let run = self.spawn();
+        // The heartbeat lasts as long as the queue.
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = run => {}
+                _ = heartbeat => {}
+            }
+        });
     }
 
     /// Start polling in a background task, returning its handle.
@@ -201,13 +227,46 @@ impl Queue {
         tokio::spawn(self.run())
     }
 
-    /// Claim jobs on every poll, whenever woken, and as slots free up while jobs are waiting,
-    /// until told to stop; then drain.
+    /// Claim jobs until told to stop, then drain. A panic in claiming is logged and claiming
+    /// starts again after a backoff (see [`supervise`](crate::engine::supervise)); the jobs
+    /// already running carry on.
     #[instrument(skip(self), fields(queue = self.name.as_str()))]
     async fn run(mut self) -> QueueStop {
+        let mut running = Running::default();
+        let mut delay = RESTART_AFTER.0;
+        loop {
+            let started = Instant::now();
+            let panic = match AssertUnwindSafe(self.claim(&mut running))
+                .catch_unwind()
+                .await
+            {
+                Ok(deadline) => return self.drain(running, deadline).await,
+                Err(panic) => extract_panic_message(&panic),
+            };
+            if started.elapsed() >= RESTART_AFTER.1 {
+                delay = RESTART_AFTER.0;
+            }
+            error!(
+                panic,
+                running = running.set.len(),
+                restart_in = ?delay,
+                "queue panicked; restarting it, its running jobs carry on"
+            );
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                deadline = stop_requested(&mut self.stop) => {
+                    return self.drain(running, deadline).await;
+                }
+            }
+            delay = (delay * 2).min(RESTART_AFTER.1);
+        }
+    }
+
+    /// Claim jobs on every poll, whenever woken, and as slots free up while jobs are waiting,
+    /// until told to stop. Returns the stop's deadline.
+    async fn claim(&mut self, running: &mut Running) -> Instant {
         let mut interval = tokio::time::interval(self.interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut running = Running::default();
         // Whether jobs may be waiting: the last claim filled every free slot, or there was no
         // slot to claim into. A slot that frees up is then refilled at once.
         let mut waiting = false;
@@ -215,22 +274,20 @@ impl Queue {
             tokio::select! {
                 _ = interval.tick() => {
                     debug!("polling jobs");
-                    waiting = self.execute_jobs(&mut running).await;
+                    waiting = self.execute_jobs(running).await;
                 }
                 _ = self.wake.notified() => {
                     debug!("woken: jobs became available");
-                    waiting = self.execute_jobs(&mut running).await;
+                    waiting = self.execute_jobs(running).await;
                 }
                 Some(done) = running.set.join_next_with_id(), if !running.set.is_empty() => {
                     running.forget(done);
                     running.reap();
                     if waiting {
-                        waiting = self.execute_jobs(&mut running).await;
+                        waiting = self.execute_jobs(running).await;
                     }
                 }
-                deadline = stop_requested(&mut self.stop) => {
-                    return self.drain(running, deadline).await;
-                }
+                deadline = stop_requested(&mut self.stop) => return deadline,
             }
         }
     }
@@ -257,8 +314,7 @@ impl Queue {
         if jobs.is_empty() {
             return false;
         }
-        let filled = jobs.len() == free;
-        info!(count = jobs.len(), "executing jobs");
+        let (count, filled) = (jobs.len(), jobs.len() == free);
         for job in jobs {
             let claimed = (job.id, job.attempt);
             let handle = running.set.spawn(run_job(
@@ -268,6 +324,7 @@ impl Queue {
             ));
             running.jobs.insert(handle.id(), claimed);
         }
+        info!(count, "executing jobs");
         filled
     }
 
@@ -352,8 +409,13 @@ async fn stop_requested(stop: &mut watch::Receiver<Option<Instant>>) -> Instant 
     }
 }
 
+/// How long to wait before restarting a task that panicked: the first, doubled on each panic up
+/// to the second. A task that ran at least the second before it panicked waits the first again.
+pub(crate) const RESTART_AFTER: (Duration, Duration) =
+    (Duration::from_secs(1), Duration::from_secs(60));
+
 /// Extracts a human-readable message from a panic payload.
-fn extract_panic_message(panic: &Box<dyn Any + Send>) -> String {
+pub(crate) fn extract_panic_message(panic: &Box<dyn Any + Send>) -> String {
     if let Some(s) = panic.downcast_ref::<&str>() {
         (*s).to_string()
     } else if let Some(s) = panic.downcast_ref::<String>() {
@@ -392,11 +454,21 @@ async fn run_job(storage: Arc<Postgres>, state: State, job: Job) {
 async fn run(job: &Job, state: State) -> Outcome {
     let worker = match job.worker() {
         Ok(worker) => worker,
+        Err(_) if unknown_worker(job) => {
+            let delay = unknown_worker_delay(job.attempt);
+            warn!(
+                id = job.id,
+                worker = %job.worker,
+                retry_in_secs = delay,
+                "this node doesn't have the job's worker; putting the job back for a node that does"
+            );
+            return Outcome::Snooze(delay);
+        }
         Err(e) => {
             error!(id = job.id, error = %e, "failed to deserialize worker");
             return Outcome::Error(
                 ErrorKind::Error,
-                format!("Failed to deserialize worker: {e}"),
+                e.to_string(),
                 default_backoff(job.attempt),
             );
         }
@@ -446,13 +518,9 @@ async fn run(job: &Job, state: State) -> Outcome {
             Outcome::Snooze(snooze.0)
         }
         Ok(Err(e)) => {
-            error!(
-                id = job.id,
-                attempt = job.attempt,
-                error = e.to_string(),
-                "job failed"
-            );
-            Outcome::Error(ErrorKind::Error, e.to_string(), retry_at(&*worker, job))
+            let error = error_chain(&*e);
+            error!(id = job.id, attempt = job.attempt, error, "job failed");
+            Outcome::Error(ErrorKind::Error, error, retry_at(&*worker, job))
         }
         Err(panic_info) => {
             let panic_msg = extract_panic_message(&panic_info);
@@ -464,6 +532,40 @@ async fn run(job: &Job, state: State) -> Outcome {
             )
         }
     }
+}
+
+/// Whether the job's worker is a type this binary doesn't have, as when a node of the next (or
+/// the last) deploy inserted it: its tag alone isn't found. Its args failing to fit a type that
+/// is found is an error, not this.
+fn unknown_worker(job: &Job) -> bool {
+    let Some(tag) = job.args.get("ishikari_worker").and_then(|t| t.as_str()) else {
+        return false;
+    };
+    let tag_only = serde_json::json!({ "ishikari_worker": tag });
+    match serde_json::from_value::<Box<dyn Worker>>(tag_only) {
+        Ok(_) => false,
+        Err(e) => e
+            .to_string()
+            .starts_with(&format!("unknown variant `{tag}`")),
+    }
+}
+
+/// How long a job whose worker this node doesn't have waits to be claimed again, in seconds: 5,
+/// doubling with each attempt up to 5 minutes. The wait doesn't use an attempt.
+fn unknown_worker_delay(attempt: i32) -> u64 {
+    (5u64 << (attempt.clamp(1, 7) - 1)).min(300)
+}
+
+/// An error and its sources: `outer: inner: root`.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut chain = error.to_string();
+    let mut source = error.source();
+    while let Some(e) = source {
+        chain.push_str(": ");
+        chain.push_str(&e.to_string());
+        source = e.source();
+    }
+    chain
 }
 
 /// When to run a failed job again: the worker's backoff, or the default when it panics.
