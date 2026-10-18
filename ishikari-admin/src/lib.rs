@@ -40,6 +40,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use ishikari::execution::NodeSpec;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -88,6 +89,7 @@ pub struct AppState {
     pub schema: Option<String>,
     pub base_path: Arc<String>,
     pub nav_items: Arc<Vec<NavItem>>,
+    pub node_types: Arc<Vec<NodeSpec>>,
 }
 
 impl AppState {
@@ -98,17 +100,33 @@ impl AppState {
             schema: None,
             base_path: Arc::new(String::new()),
             nav_items: Arc::new(Self::default_nav_items("")),
+            node_types: Arc::new(Vec::new()),
         }
     }
 
     /// Create app state with a custom schema for multi-tenant support.
     pub fn with_schema(pool: PgPool, schema: impl Into<String>) -> Self {
         Self {
-            pool,
             schema: Some(schema.into()),
-            base_path: Arc::new(String::new()),
-            nav_items: Arc::new(Self::default_nav_items("")),
+            ..Self::new(pool)
         }
+    }
+
+    /// The node types the workflow builder offers: your
+    /// [`NodeTypes`](ishikari::execution::NodeTypes)' catalog. Once you register them, a
+    /// definition with a node of another type isn't saved. With none, the builder offers none,
+    /// and takes any type you name.
+    ///
+    /// ```rust,no_run
+    /// # use ishikari::execution::NodeTypes;
+    /// # use ishikari_admin::AppState;
+    /// # fn f(pool: sqlx::PgPool, types: NodeTypes) {
+    /// let state = AppState::new(pool).with_node_types(types.catalog());
+    /// # }
+    /// ```
+    pub fn with_node_types(mut self, node_types: Vec<NodeSpec>) -> Self {
+        self.node_types = Arc::new(node_types);
+        self
     }
 
     /// Set the base path for when the admin is mounted at a subpath.

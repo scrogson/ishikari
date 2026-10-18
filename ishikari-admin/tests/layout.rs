@@ -103,7 +103,7 @@ async fn a_form_shown_again_comes_inside_the_layout_too() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let html = body(res).await;
     assert!(html.contains("host-chrome"));
     assert!(html.contains("<title>Import Definition · Host</title>"));

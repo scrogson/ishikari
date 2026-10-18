@@ -15,7 +15,7 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use ishikari::execution::NodeJob;
+use ishikari::execution::{NodeJob, NodeSpec};
 use ishikari::workflows::Dag;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -206,6 +206,24 @@ impl WorkflowDefinition {
         // Check for cycles using DFS
         self.detect_cycles()?;
 
+        Ok(())
+    }
+
+    /// [`validate`](Self::validate), and every node's type is one of `node_types`, when the
+    /// host registered any.
+    pub fn validate_for(&self, node_types: &[NodeSpec]) -> Result<(), String> {
+        self.validate()?;
+        if node_types.is_empty() {
+            return Ok(());
+        }
+        let mut ids: Vec<&String> = self.nodes.keys().collect();
+        ids.sort();
+        for id in ids {
+            let node_type = &self.nodes[id].node_type;
+            if !node_types.iter().any(|t| &t.name == node_type) {
+                return Err(format!("Unknown node type '{}'", node_type));
+            }
+        }
         Ok(())
     }
 
@@ -479,24 +497,35 @@ pub async fn import_form(State(state): State<AppState>) -> DefinitionImportTempl
 pub async fn import_yaml(
     State(state): State<AppState>,
     axum::Form(form): axum::Form<ImportForm>,
-) -> Result<Redirect, DefinitionImportTemplate> {
+) -> Result<Redirect, Response> {
     // Parse the YAML
-    let def = WorkflowDefinition::from_yaml(&form.yaml).map_err(|e| DefinitionImportTemplate {
-        base_path: state.base_path.to_string(),
-        nav_items: state.nav_items.to_vec(),
-        error: Some(e),
-        yaml: form.yaml.clone(),
-    })?;
+    let def = WorkflowDefinition::from_yaml(&form.yaml)
+        .and_then(|def| def.validate_for(&state.node_types).map(|()| def))
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                DefinitionImportTemplate {
+                    base_path: state.base_path.to_string(),
+                    nav_items: state.nav_items.to_vec(),
+                    error: Some(e),
+                    yaml: form.yaml.clone(),
+                },
+            )
+                .into_response()
+        })?;
 
     // Save to database
     let base_path = state.base_path.to_string();
     let id = save_definition(&state.pool, state.schema(), &def)
         .await
-        .map_err(|e| DefinitionImportTemplate {
-            base_path: state.base_path.to_string(),
-            nav_items: state.nav_items.to_vec(),
-            error: Some(format!("Failed to save: {}", e)),
-            yaml: form.yaml.clone(),
+        .map_err(|e| {
+            DefinitionImportTemplate {
+                base_path: state.base_path.to_string(),
+                nav_items: state.nav_items.to_vec(),
+                error: Some(format!("Failed to save: {}", e)),
+                yaml: form.yaml.clone(),
+            }
+            .into_response()
         })?;
 
     Ok(Redirect::to(&format!("{}/definitions/{}", base_path, id)))

@@ -647,6 +647,16 @@
 
         // ---- Palette ----------------------------------------------------------------------------
         function renderPalette() {
+            if (!types.length) {
+                // The host registered no node types: say how, and take any type by name.
+                els.palette.innerHTML =
+                    '<form class="ik-builder-custom" data-custom-type>' +
+                    '<h3 class="ik-builder-heading">No node types</h3>' +
+                    '<p class="ik-hint">None are registered. Register yours with <code class="ik-code-inline">AppState::with_node_types</code> to offer them here.</p>' +
+                    field("Custom type", '<input class="ik-input ik-input-sm ik-mono" name="type" placeholder="slack/post" spellcheck="false" autocomplete="off" required>') +
+                    '<button type="submit" class="ik-btn ik-btn-sm">Add node</button></form>';
+                return;
+            }
             const groups = new Map();
             types.forEach((t) => (groups.get(t.category) || groups.set(t.category, []).get(t.category)).push(t));
             const order = Array.from(groups.keys()).sort((a, b) => {
@@ -684,8 +694,19 @@
         });
         els.palette.addEventListener("click", (e) => {
             const b = e.target.closest("[data-type]");
-            if (!b) return;
-            // After the selected node, to its right; else in the middle of the view, clear of others.
+            if (b) addFromPalette(b.dataset.type);
+        });
+        els.palette.addEventListener("submit", (e) => {
+            const form = e.target.closest("[data-custom-type]");
+            if (!form) return;
+            e.preventDefault();
+            const name = form.elements.type.value.trim();
+            if (!name) return;
+            form.reset();
+            addFromPalette(name);
+        });
+        // After the selected node, to its right; else in the middle of the view, clear of others.
+        function addFromPalette(typeName) {
             const after = selected && selected.node && nodes.has(selected.node) ? selected.node : null;
             let at;
             if (after) {
@@ -696,9 +717,9 @@
                 at.x -= 80; at.y -= 24;
             }
             while (Array.from(nodes.values()).some((n) => Math.abs(n.x - at.x) < 140 && Math.abs(n.y - at.y) < 60)) at.y += 80;
-            const n = addNode(b.dataset.type, at, after);
+            const n = addNode(typeName, at, after);
             reveal(n.id);
-        });
+        }
 
         // ---- Panel ------------------------------------------------------------------------------
         const field = (label, control, hint) =>

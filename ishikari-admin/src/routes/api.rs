@@ -13,6 +13,8 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
+use ishikari::execution::NodeSpec;
+
 use super::definitions::{
     DefinitionDetail, DefinitionInfo, DefinitionsQuery, NodeDefinition, SchemaField,
     WorkflowDefinition,
@@ -694,470 +696,17 @@ async fn check_definitions_table_exists(pool: &PgPool, schema: Option<&str>) -> 
 // JSON API Endpoints for Workflow Builder
 // ============================================================================
 
-/// Node type information for the workflow builder palette.
-#[derive(Debug, Clone, Serialize)]
-pub struct NodeTypeInfo {
-    pub name: String,
-    pub description: Option<String>,
-    pub category: String,
-    pub input_schema: HashMap<String, SchemaField>,
-    pub output_schema: HashMap<String, SchemaField>,
-}
-
-/// Response containing all available node types.
+/// The node types the workflow builder's palette offers.
 #[derive(Debug, Serialize)]
 pub struct NodeTypesResponse {
-    pub node_types: Vec<NodeTypeInfo>,
+    pub node_types: Vec<NodeSpec>,
 }
 
-/// Get available node types for the workflow builder palette.
-pub async fn node_types() -> Json<NodeTypesResponse> {
-    // Built-in node types that match what the NodeJob worker can execute
-    let node_types = vec![
-        NodeTypeInfo {
-            name: "echo".to_string(),
-            description: Some("Echo a message back".to_string()),
-            category: "core".to_string(),
-            input_schema: HashMap::from([(
-                "message".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Message to echo".to_string()),
-                    default: None,
-                    required: true,
-                },
-            )]),
-            output_schema: HashMap::from([(
-                "message".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Echoed message".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "uppercase".to_string(),
-            description: Some("Convert text to uppercase".to_string()),
-            category: "transform".to_string(),
-            input_schema: HashMap::from([(
-                "text".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Text to transform".to_string()),
-                    default: None,
-                    required: true,
-                },
-            )]),
-            output_schema: HashMap::from([(
-                "result".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Transformed text".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "lowercase".to_string(),
-            description: Some("Convert text to lowercase".to_string()),
-            category: "transform".to_string(),
-            input_schema: HashMap::from([(
-                "text".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Text to transform".to_string()),
-                    default: None,
-                    required: true,
-                },
-            )]),
-            output_schema: HashMap::from([(
-                "result".to_string(),
-                SchemaField {
-                    field_type: "string".to_string(),
-                    description: Some("Transformed text".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "http/get".to_string(),
-            description: Some("Make an HTTP GET request".to_string()),
-            category: "http".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "url".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("URL to fetch".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "headers".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Request headers".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([
-                (
-                    "status".to_string(),
-                    SchemaField {
-                        field_type: "integer".to_string(),
-                        description: Some("HTTP status code".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-                (
-                    "body".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Response body".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-        },
-        NodeTypeInfo {
-            name: "http/post".to_string(),
-            description: Some("Make an HTTP POST request".to_string()),
-            category: "http".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "url".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("URL to post to".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "body".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Request body".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-                (
-                    "headers".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Request headers".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([
-                (
-                    "status".to_string(),
-                    SchemaField {
-                        field_type: "integer".to_string(),
-                        description: Some("HTTP status code".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-                (
-                    "body".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Response body".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-        },
-        NodeTypeInfo {
-            name: "json/validate".to_string(),
-            description: Some("Validate JSON against a schema".to_string()),
-            category: "transform".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "data".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("JSON data to validate".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "schema".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("JSON Schema".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([
-                (
-                    "valid".to_string(),
-                    SchemaField {
-                        field_type: "boolean".to_string(),
-                        description: Some("Whether data is valid".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-                (
-                    "data".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("The validated data".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-        },
-        NodeTypeInfo {
-            name: "json/transform".to_string(),
-            description: Some("Transform JSON data using a mapping".to_string()),
-            category: "transform".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "data".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Input JSON data".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "mapping".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Field mapping configuration".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "records".to_string(),
-                SchemaField {
-                    field_type: "array".to_string(),
-                    description: Some("Transformed records".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "db/query".to_string(),
-            description: Some("Execute a database query".to_string()),
-            category: "database".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "query".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("SQL query".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "params".to_string(),
-                    SchemaField {
-                        field_type: "array".to_string(),
-                        description: Some("Query parameters".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "rows".to_string(),
-                SchemaField {
-                    field_type: "array".to_string(),
-                    description: Some("Query results".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "db/insert".to_string(),
-            description: Some("Insert records into a table".to_string()),
-            category: "database".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "table".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Table name".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "records".to_string(),
-                    SchemaField {
-                        field_type: "array".to_string(),
-                        description: Some("Records to insert".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "rows_affected".to_string(),
-                SchemaField {
-                    field_type: "integer".to_string(),
-                    description: Some("Number of rows inserted".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "email/send".to_string(),
-            description: Some("Send an email".to_string()),
-            category: "notification".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "to".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Recipient email".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "subject".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Email subject".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "body".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Email body".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "sent".to_string(),
-                SchemaField {
-                    field_type: "boolean".to_string(),
-                    description: Some("Whether email was sent".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "sms/send".to_string(),
-            description: Some("Send an SMS message".to_string()),
-            category: "notification".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "phone".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Phone number".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "message".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Message text".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "sent".to_string(),
-                SchemaField {
-                    field_type: "boolean".to_string(),
-                    description: Some("Whether SMS was sent".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-        NodeTypeInfo {
-            name: "delay".to_string(),
-            description: Some("Wait for a duration".to_string()),
-            category: "control".to_string(),
-            input_schema: HashMap::from([(
-                "seconds".to_string(),
-                SchemaField {
-                    field_type: "integer".to_string(),
-                    description: Some("Seconds to wait".to_string()),
-                    default: None,
-                    required: true,
-                },
-            )]),
-            output_schema: HashMap::new(),
-        },
-        NodeTypeInfo {
-            name: "condition".to_string(),
-            description: Some("Conditional branching".to_string()),
-            category: "control".to_string(),
-            input_schema: HashMap::from([
-                (
-                    "expression".to_string(),
-                    SchemaField {
-                        field_type: "string".to_string(),
-                        description: Some("Condition expression".to_string()),
-                        default: None,
-                        required: true,
-                    },
-                ),
-                (
-                    "value".to_string(),
-                    SchemaField {
-                        field_type: "object".to_string(),
-                        description: Some("Value to compare".to_string()),
-                        default: None,
-                        required: false,
-                    },
-                ),
-            ]),
-            output_schema: HashMap::from([(
-                "result".to_string(),
-                SchemaField {
-                    field_type: "boolean".to_string(),
-                    description: Some("Condition result".to_string()),
-                    default: None,
-                    required: false,
-                },
-            )]),
-        },
-    ];
-
-    Json(NodeTypesResponse { node_types })
+/// The node types the host registered (`AppState::with_node_types`), for the builder's palette.
+pub async fn node_types(State(state): State<AppState>) -> Json<NodeTypesResponse> {
+    Json(NodeTypesResponse {
+        node_types: state.node_types.to_vec(),
+    })
 }
 
 /// Definition detail response for JSON API.
@@ -1208,7 +757,8 @@ pub async fn update_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate().map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    def.validate_for(&state.node_types)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Update in database
     let updated = update_definition_in_db(&state.pool, state.schema(), id, &def)
@@ -1224,7 +774,8 @@ pub async fn create_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate().map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    def.validate_for(&state.node_types)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Save to database
     let created = save_new_definition(&state.pool, state.schema(), &def)
@@ -1250,8 +801,11 @@ pub struct ValidationResponse {
 }
 
 /// Validate a workflow definition without saving.
-pub async fn validate_definition(Json(def): Json<WorkflowDefinition>) -> Json<ValidationResponse> {
-    match def.validate() {
+pub async fn validate_definition(
+    State(state): State<AppState>,
+    Json(def): Json<WorkflowDefinition>,
+) -> Json<ValidationResponse> {
+    match def.validate_for(&state.node_types) {
         Ok(()) => Json(ValidationResponse {
             valid: true,
             errors: vec![],
