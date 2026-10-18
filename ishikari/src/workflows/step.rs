@@ -2,7 +2,6 @@
 
 use crate::insert::{insert_row, Row};
 use crate::{InsertOpts, Job, JobState, Worker};
-use chrono::{TimeZone, Utc};
 use serde::Serialize;
 use sqlx::PgConnection;
 use std::fmt::Debug;
@@ -14,7 +13,8 @@ pub(crate) enum StepStart {
     Ready,
     /// Waits in `pending` until every job it depends on has completed.
     Waiting,
-    /// A saga compensation: parked (scheduled far in the future) until a rollback releases it.
+    /// A saga compensation: parked in `pending`, with nothing to wait for, until its saga's
+    /// rollback releases it.
     Compensation,
 }
 
@@ -44,14 +44,10 @@ where
         name: &str,
         start: StepStart,
     ) -> Result<Job, sqlx::Error> {
-        let mut opts = InsertOpts::new().meta(serde_json::json!({ "ishikari_step": name }));
+        let opts = InsertOpts::new().meta(serde_json::json!({ "ishikari_step": name }));
         let state = match start {
             StepStart::Ready => JobState::Available,
-            StepStart::Waiting => JobState::Pending,
-            StepStart::Compensation => {
-                opts = opts.schedule_at(Utc.with_ymd_and_hms(3000, 1, 1, 0, 0, 0).unwrap());
-                JobState::Scheduled
-            }
+            StepStart::Waiting | StepStart::Compensation => JobState::Pending,
         };
         // A step belongs to its workflow: the worker's uniqueness doesn't apply.
         let row = Row::new(self, &opts)?.without_unique();

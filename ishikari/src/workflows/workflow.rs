@@ -151,60 +151,55 @@ impl Workflow {
         }))
     }
 
-    /// Update the workflow state.
+    /// Set the state of a workflow that hasn't finished (running or compensating). Returns
+    /// false when it had finished, so a late update can't overwrite one that completed or was
+    /// cancelled meanwhile, or when it is missing.
+    ///
+    /// This only records the state: it doesn't cancel or run any of the workflow's jobs.
     pub async fn set_state(
         pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         state: WorkflowState,
         schema: Option<&str>,
-    ) -> super::error::Result<()> {
-        let table = match schema {
-            Some(s) => format!("{}.ishikari_workflows", s),
-            None => "ishikari_workflows".to_string(),
-        };
-
-        let query = if state.is_terminal() {
-            format!(
-                "UPDATE {} SET state = $1, completed_at = now() WHERE id = $2",
-                table
-            )
-        } else {
-            format!("UPDATE {} SET state = $1 WHERE id = $2", table)
-        };
-
-        sqlx::query(&query)
-            .bind(state.as_str())
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        Ok(())
+    ) -> super::error::Result<bool> {
+        let table = crate::engine::qualified(schema, "ishikari_workflows");
+        let completed_at = if state.is_terminal() { "now()" } else { "NULL" };
+        let updated = sqlx::query(&format!(
+            "UPDATE {table} SET state = $1, completed_at = {completed_at} \
+             WHERE id = $2 AND state IN ('running', 'compensating')"
+        ))
+        .bind(state.as_str())
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
     }
 
-    /// Mark the workflow as completed.
+    /// Mark the workflow as completed; see [`Workflow::set_state`].
     pub async fn complete(
         pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         schema: Option<&str>,
-    ) -> super::error::Result<()> {
+    ) -> super::error::Result<bool> {
         Self::set_state(pool, id, WorkflowState::Completed, schema).await
     }
 
-    /// Mark the workflow as failed.
+    /// Mark the workflow as failed; see [`Workflow::set_state`].
     pub async fn fail(
         pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         schema: Option<&str>,
-    ) -> super::error::Result<()> {
+    ) -> super::error::Result<bool> {
         Self::set_state(pool, id, WorkflowState::Failed, schema).await
     }
 
-    /// Mark the workflow as cancelled.
+    /// Mark the workflow as cancelled; see [`Workflow::set_state`]. Its jobs are left as they
+    /// are: to cancel a saga, see [`crate::Postgres::cancel_saga`].
     pub async fn cancel(
         pool: impl sqlx::PgExecutor<'_>,
         id: i64,
         schema: Option<&str>,
-    ) -> super::error::Result<()> {
+    ) -> super::error::Result<bool> {
         Self::set_state(pool, id, WorkflowState::Cancelled, schema).await
     }
 }

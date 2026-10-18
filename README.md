@@ -164,10 +164,11 @@ for step in progress.unwrap().steps {
 }
 ```
 
-`Pipeline` chains steps in order. A `Saga` runs a compensation for each completed step when a
-later one fails. Steps wait in the `pending` state until their upstreams complete. If a step
-fails for good, its dependents are cancelled and the workflow fails; retrying the step brings
-them back.
+`Pipeline` chains steps in order. A `Saga` runs a compensation for each completed step, last
+first, when a later one fails or the saga is cancelled; the rollback starts in the transaction
+that ends the failed step, and a failed compensation doesn't stop the rest. Steps wait in the
+`pending` state until their upstreams complete. If a step fails for good, its dependents are
+cancelled and the workflow fails; retrying the step brings them back.
 
 ## Admin dashboard
 

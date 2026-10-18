@@ -3,11 +3,7 @@
 //! Sagas provide a way to maintain data consistency across multiple steps
 //! where each step can be compensated (rolled back) if a later step fails.
 //!
-//! # How it works
-//!
-//! 1. Steps execute in order, each waiting for the previous to complete
-//! 2. If a step fails, compensation jobs run in reverse order
-//! 3. Only completed steps are compensated (not the failed step)
+//! How a saga rolls back is on [`Saga`].
 //!
 //! # Example
 //!
@@ -27,8 +23,8 @@
 //!
 //! // If BookCar fails:
 //! // 1. CancelHotel runs
-//! // 2. CancelFlight runs
-//! // 3. Workflow marked as "compensated"
+//! // 2. CancelFlight runs (even if CancelHotel failed)
+//! // 3. Workflow marked as "compensated" ("failed" if a compensation failed)
 //! ```
 
 use super::error::{Error, Result};
@@ -122,6 +118,27 @@ impl SagaStepBuilder {
 /// Sagas execute steps in sequence. If any step fails, compensation
 /// jobs run in reverse order for all previously completed steps.
 ///
+/// # Rollback
+///
+/// 1. Steps execute in order, each waiting for the previous to complete. Compensations wait,
+///    parked in `pending`, until a rollback releases them.
+/// 2. When every step completes, the saga is `completed` and its compensations are cancelled.
+/// 3. When a step is discarded or cancelled, the transaction that ends it starts the rollback:
+///    the saga is `compensating`, its steps that haven't started are cancelled, and once no
+///    step is running the completed steps' compensations run in reverse order, one at a time.
+///    The failed step, and steps that never ran, are not compensated.
+/// 4. A compensation that is discarded or cancelled doesn't stop the rollback: its step is
+///    `compensation_failed` and the compensations before it still run. The saga ends
+///    `compensated` when every compensation completed, `failed` when one didn't. Retrying a
+///    failed compensation ([`crate::Postgres::retry_job`]) resumes the rollback.
+/// 5. Cancelling a saga ([`crate::Postgres::cancel_saga`]) rolls it back as a failed step does,
+///    after letting a running step finish (and undoing it if it completed). Cancelling one of
+///    its jobs ([`crate::Postgres::cancel_job`]) fails that step.
+///
+/// A step of a saga that is rolling back, or has finished, doesn't run again: a retry of one is
+/// refused, as is a retry of a compensation its rollback hasn't reached. A saga is undone, not
+/// resumed; run a new one to try again.
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -208,8 +225,8 @@ impl Saga {
     /// and records compensation jobs for potential rollback.
     ///
     /// The first step starts immediately. Each subsequent step waits for
-    /// the previous to complete. If any step fails, the DependencyResolver
-    /// will trigger compensation jobs in reverse order.
+    /// the previous to complete. If any step fails, the completed steps'
+    /// compensations run in reverse order (see [`Saga`]).
     ///
     /// # Returns
     ///
