@@ -193,40 +193,56 @@ pub mod prelude {
 
 pub(crate) type State = Arc<dyn std::any::Any + Send + Sync>;
 
+/// `interval`, unless it is zero: a background task ticking at a zero interval would panic.
+#[track_caller]
+pub(crate) fn nonzero(interval: std::time::Duration, what: &str) -> std::time::Duration {
+    assert!(!interval.is_zero(), "{what} must be greater than zero");
+    interval
+}
+
 /// A backoff strategy for retrying jobs.
+///
+/// The built-in strategies work in milliseconds, so sub-second bases count, and never wait
+/// longer than [`Backoff::MAX_DELAY`] (7 days), however high the attempt. A zero or negative
+/// delay retries right away.
 pub enum Backoff {
     /// Fixed delay duration
     Fixed(Duration),
     /// Linear backoff based on attempt number
     Linear(Duration),
-    /// Exponential backoff with a base duration
+    /// Exponential backoff with a base duration: `base * 2^attempt`
     Exponential(Duration),
-    /// Exponential with jitter
+    /// Exponential with jitter: `base * 2^attempt`, plus up to as much again at random
     ExponentialJitter(Duration),
     /// Custom backoff strategy
     Custom(Box<dyn Fn(i32) -> DateTime<Utc> + Send + Sync>),
 }
 
 impl Backoff {
+    /// The longest delay a built-in strategy gives: 7 days.
+    pub const MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
     pub fn next_retry(&self, attempt: i32) -> DateTime<Utc> {
-        match self {
-            Backoff::Fixed(duration) => Utc::now() + *duration,
-            Backoff::Linear(base) => Utc::now() + (*base * attempt),
-            Backoff::Exponential(base) => {
-                let base_seconds = base.num_seconds();
-                let exp_delay = base_seconds * 2_i64.pow(attempt as u32);
-                Utc::now() + Duration::seconds(exp_delay)
-            }
+        let exponential = |base: &Duration| {
+            let factor = 2_i64.checked_pow(attempt.max(0) as u32);
+            base.num_milliseconds()
+                .saturating_mul(factor.unwrap_or(i64::MAX))
+        };
+        let delay = match self {
+            Backoff::Fixed(duration) => duration.num_milliseconds(),
+            Backoff::Linear(base) => base.num_milliseconds().saturating_mul(attempt as i64),
+            Backoff::Exponential(base) => exponential(base),
             Backoff::ExponentialJitter(base) => {
-                let base_seconds = base.num_seconds();
-                let exp_delay = base_seconds * 2_i64.pow(attempt as u32);
-                let jitter = rand::thread_rng().gen_range(0..exp_delay);
-                Utc::now() + Duration::seconds(exp_delay + jitter)
+                let delay = exponential(base).clamp(0, MAX_DELAY_MS);
+                delay.saturating_add(rand::thread_rng().gen_range(0..=delay))
             }
-            Backoff::Custom(strategy) => strategy(attempt),
-        }
+            Backoff::Custom(strategy) => return strategy(attempt),
+        };
+        Utc::now() + Duration::milliseconds(delay.clamp(0, MAX_DELAY_MS))
     }
 }
+
+const MAX_DELAY_MS: i64 = Backoff::MAX_DELAY.as_millis() as i64;
 
 use std::any::Any;
 use std::fmt::Debug;
@@ -554,7 +570,8 @@ pub trait Worker: Send + Sync {
     ///
     /// # Default
     ///
-    /// Returns a time 5 seconds in the future with exponential backoff if not overridden.
+    /// Returns a time 5 seconds in the future with exponential backoff if not overridden. A
+    /// backoff that panics gets the default instead.
     fn backoff(&self, attempt: i32) -> DateTime<Utc> {
         Backoff::Exponential(Duration::seconds(5)).next_retry(attempt)
     }
@@ -566,7 +583,8 @@ pub trait Worker: Send + Sync {
     }
 
     /// How long one attempt may run. When it runs longer, the attempt fails with a timeout
-    /// error and is retried like any other error. `None` (the default) lets it run.
+    /// error and is retried like any other error. `None` (the default) lets it run. A timeout
+    /// that panics fails the attempt, as a panicking `perform` does.
     fn timeout(&self) -> Option<std::time::Duration> {
         None
     }
@@ -778,6 +796,54 @@ mod tests {
         assert!((3..=5).contains(&diff1)); // ~4 seconds
         assert!((7..=9).contains(&diff2)); // ~8 seconds
         assert!((15..=17).contains(&diff3)); // ~16 seconds
+    }
+
+    /// The delay `backoff` gives `attempt`, in milliseconds.
+    fn delay_ms(backoff: &Backoff, attempt: i32) -> i64 {
+        let now = Utc::now();
+        (backoff.next_retry(attempt) - now).num_milliseconds()
+    }
+
+    #[test]
+    fn high_attempts_are_capped_rather_than_overflowing() {
+        for attempt in [40, 63, 64, 100, i32::MAX] {
+            for backoff in [
+                Backoff::Exponential(Duration::seconds(5)),
+                Backoff::ExponentialJitter(Duration::seconds(5)),
+                Backoff::Linear(Duration::days(100_000)),
+            ] {
+                let delay = delay_ms(&backoff, attempt);
+                assert!(
+                    (MAX_DELAY_MS - 1_000..=MAX_DELAY_MS).contains(&delay),
+                    "{attempt}: {delay}"
+                );
+            }
+        }
+        let fixed = Backoff::Fixed(Duration::days(100_000_000));
+        assert!((MAX_DELAY_MS - 1_000..=MAX_DELAY_MS).contains(&delay_ms(&fixed, 1)));
+    }
+
+    #[test]
+    fn sub_second_bases_count() {
+        // 250 ms * 2^2 = 1 s, not 0 * 2^2.
+        let delay = delay_ms(&Backoff::Exponential(Duration::milliseconds(250)), 2);
+        assert!((900..=1_000).contains(&delay), "{delay}");
+        // 500 ms * 2^1 = 1 s, plus up to as much again in jitter.
+        for _ in 0..20 {
+            let delay = delay_ms(&Backoff::ExponentialJitter(Duration::milliseconds(500)), 1);
+            assert!((900..=2_000).contains(&delay), "{delay}");
+        }
+    }
+
+    #[test]
+    fn a_zero_or_negative_delay_is_now() {
+        for backoff in [
+            Backoff::ExponentialJitter(Duration::zero()),
+            Backoff::Fixed(Duration::seconds(-5)),
+            Backoff::Linear(Duration::seconds(5)),
+        ] {
+            assert!((-1_000..=0).contains(&delay_ms(&backoff, 0)));
+        }
     }
 
     #[tokio::test]

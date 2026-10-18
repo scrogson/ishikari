@@ -30,6 +30,21 @@
   have an admin's browser retry, cancel or run jobs (CSRF): a POST or PUT whose
   `Sec-Fetch-Site` is another site's, or, without it, whose `Origin` isn't the `Host`. Requests
   with neither header (not a browser's) pass.
+- A job whose outcome couldn't be written no longer stays `executing` until its node restarts
+  (the rescuer leaves a live node's jobs alone): a failed write is retried with backoff for up
+  to a minute, and a worker's `backoff` or `timeout` that panics no longer kills the run. A
+  panicking `backoff` gets the default instead; a panicking `timeout` fails the attempt as a
+  panic.
+- `Backoff` no longer overflows or panics: `Exponential` at high attempts, `ExponentialJitter`
+  on a base under a second, and `Linear` and `Fixed` past chrono's range. The built-in
+  strategies work in milliseconds, so a sub-second base no longer counts as zero, and never
+  wait longer than `Backoff::MAX_DELAY` (7 days).
+- A zero interval panics where it is set (`Queue::interval`, the engine's `*_interval`
+  setters, `Stager::new`, `DependencyResolver::new`), naming it, rather than silently killing
+  the background task it drives (a queue, or the heartbeat, which got the node's jobs rescued).
+- Cron slots are no longer lost: a slot whose insert fails is tried again on later checks
+  (within `cron_catch_up`), and when more than 100 slots are due at once the rest are inserted
+  on the next check, with a warning, instead of being skipped.
 
 ### Removed
 
