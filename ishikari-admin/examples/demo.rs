@@ -12,7 +12,6 @@ mod demo_lib;
 
 use axum::Router;
 use demo_lib::scenarios;
-use demo_lib::workers::NodeJobState;
 use ishikari::dependencies::DependencyResolver;
 use ishikari::execution::NodeJobs;
 use ishikari::{Engine, Postgres, Queue};
@@ -67,11 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resolver = DependencyResolver::new(pool.clone(), Duration::from_millis(500)).start();
     tracing::info!("Started dependency resolver");
 
-    // Start worker engine with NodeJobState for workflow node execution
-    let node_job_state = NodeJobState::new(pool.clone());
+    // Start the worker engine, its state the demo's node types for definition runs
+    let node_types = demo_lib::nodes::node_types(pool.clone());
+    let catalog = node_types.catalog();
     let _engine = Engine::builder("demo")
         .stager_interval(Duration::from_secs(1))
-        .with_state(Arc::new(NodeJobs::new(node_job_state)))
+        .with_state(Arc::new(NodeJobs::new(node_types)))
         .with_queue(Queue::builder("default").concurrency(5))
         .with_queue(Queue::builder("email").concurrency(3))
         .with_queue(Queue::builder("etl").concurrency(2))
@@ -85,7 +85,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup admin
     // Set BASE_PATH (e.g. "/admin") to mount the admin at a subpath
     let base_path = std::env::var("BASE_PATH").unwrap_or_default();
-    let state = AppState::new(pool.clone()).with_base_path(&base_path);
+    let state = AppState::new(pool.clone())
+        .with_base_path(&base_path)
+        .with_node_types(catalog.clone());
     let admin = if base_path.is_empty() {
         app(state)
     } else {
@@ -93,7 +95,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // The same pages inside a host app's own layout and theme
     let hosted = app_with_layout(
-        AppState::new(pool).with_base_path("/host"),
+        AppState::new(pool)
+            .with_base_path("/host")
+            .with_node_types(catalog),
         demo_lib::host::layout,
     );
     let admin = Router::new().nest("/host", hosted).merge(admin);
