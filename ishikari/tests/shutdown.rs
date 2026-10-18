@@ -53,6 +53,14 @@ async fn nodes(db: &TestDb) -> i64 {
         .unwrap()
 }
 
+/// Wait for the engine's first heartbeat: a job can start before it lands.
+async fn recorded(db: &TestDb) {
+    eventually("the node is recorded", Duration::from_secs(5), || async {
+        nodes(db).await == 1
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn an_attempt_past_its_timeout_fails() {
     let Some(db) = TestDb::new().await else {
@@ -87,7 +95,7 @@ async fn shutdown_waits_for_running_jobs() {
         .unwrap();
     let engine = engine(&db);
     started(&db, job.id).await;
-    assert_eq!(nodes(&db).await, 1);
+    recorded(&db).await;
 
     let report = engine.shutdown(Duration::from_secs(5)).await;
     assert_eq!(
@@ -164,6 +172,7 @@ async fn dropping_the_engine_stops_it() {
         .with_queue(Queue::builder("default").interval(Duration::from_millis(20)))
         .start(Postgres::new(db.pool.clone()));
     started(&db, job.id).await;
+    recorded(&db).await;
 
     drop(engine);
     // The running job is given back, attempt refunded, as when the grace runs out.
