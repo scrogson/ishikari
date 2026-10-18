@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -449,16 +449,25 @@ async fn fetch_distinct_job_values(
         .unwrap_or_default()
 }
 
+/// Query parameters for a job's page.
+#[derive(Debug, Deserialize, Default)]
+pub struct JobQuery {
+    /// The action (`retry` or `cancel`) that just changed nothing.
+    pub unchanged: Option<String>,
+}
+
 /// Show enhanced job detail.
 pub async fn show(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<JobQuery>,
 ) -> Result<EnhancedJobDetailTemplate, Response> {
     match get_enhanced_job(&state.pool, state.schema(), id).await {
         Ok(Some(job)) => Ok(EnhancedJobDetailTemplate {
             base_path: state.base_path.to_string(),
             nav_items: state.nav_items.to_vec(),
             job,
+            unchanged: query.unchanged.filter(|a| a == "retry" || a == "cancel"),
         }),
         Ok(None) => Err((axum::http::StatusCode::NOT_FOUND, "Job not found").into_response()),
         Err(e) => Err((
@@ -980,21 +989,4 @@ async fn check_table_exists(pool: &PgPool, schema: Option<&str>, table_name: &st
     .flatten();
 
     result.unwrap_or(false)
-}
-
-/// Discard a job (mark it as discarded).
-pub async fn discard(State(state): State<AppState>, Path(id): Path<i64>) -> Redirect {
-    let table = match state.schema() {
-        Some(s) => format!("{}.ishikari_jobs", s),
-        None => "ishikari_jobs".to_string(),
-    };
-
-    let query = format!(
-        "UPDATE {} SET state = 'discarded', completed_at = NOW() WHERE id = $1 AND state NOT IN ('completed', 'discarded')",
-        table
-    );
-
-    let _ = sqlx::query(&query).bind(id).execute(&state.pool).await;
-
-    Redirect::to(&format!("{}/jobs/{}", state.base_path, id))
 }

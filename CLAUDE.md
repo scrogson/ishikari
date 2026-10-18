@@ -33,7 +33,9 @@ A workspace of four crates:
 - `ishikari-admin` - the dashboard: an axum router a host mounts behind its own auth, as
   standalone pages or inside the host's layout (`Layout`, `app_with_layout`). Its CSS is built
   from `styles/` (`mise run admin:css`) into `assets/admin.css` (with themes) and
-  `assets/admin-embed.css` (no themes, for a host's layout); both are committed.
+  `assets/admin-embed.css` (no themes, for a host's layout); both are committed. The workflow
+  builder (React, `frontend/`) is built by `mise run frontend:build` into `frontend/dist`, also
+  committed: the crate embeds it (`embed-frontend`).
 
 ### Core components (`ishikari/src`)
 

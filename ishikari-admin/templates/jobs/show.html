@@ -64,6 +64,13 @@
     </div>
 </header>
 
+{% if let Some(action) = unchanged %}
+<div role="status" class="ik-alert ik-alert-warning">
+    {% call ui::warn_icon() %}
+    <p>{% if action == "retry" %}Not retried{% else %}Not cancelled{% endif %}: the job is {{ job.state }}.</p>
+</div>
+{% endif %}
+
 {% if job.is_blocked() %}
 <div role="alert" class="ik-alert ik-alert-warning">
     {% call ui::warn_icon() %}

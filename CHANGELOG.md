@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 (unreleased)
+
+`ishikari` and `ishikari-admin` change. No migration.
+
+### Added
+
+- **`ishikari::execution::NodeJob`**, the job for one node of a workflow definition's run, is
+  now the library's: its arguments, its name (`ishikari::execution::NodeJob`), its queue
+  (`workflows`), and the node's attempts and timeout. A host runs its node types through a
+  `NodeRunner`, in an engine whose state is a `NodeJobs` (see the README's Running
+  definitions).
 
 ### Changed
 
@@ -12,6 +22,31 @@
 - **`serde_norway` in place of `serde_yaml`:** the admin reads and writes definitions' YAML with
   the maintained fork of the deprecated `serde_yaml`, whose `unsafe-libyaml` is unmaintained
   (RUSTSEC-2024-0449). Definitions parse, export and fail to parse as before.
+
+### Fixed
+
+- Running a definition from the admin inserted jobs for `ishikari_workflows::NodeJob`, a worker
+  nothing registers, so none could run. A run is now one transaction: its row and a Dag of
+  `NodeJob`s, each step named by its node, the roots available and the rest `pending` until
+  their upstreams complete (they were `scheduled`, so the stager started them at once). A
+  node's `max_retries: 0` is one attempt (it was zero, which the database refused), and its
+  `timeout_seconds` applies.
+- The published `ishikari-admin` has the workflow builder: `frontend/dist` was gitignored, so
+  the crate embedded nothing and the definition editor never loaded. The build is committed
+  now (`mise run frontend:build`). Its assets' URLs are relative, so they work under a base
+  path, and the builder's other paths (`/builder/...`) go to the definition editor.
+- A job's Retry or Cancel that changes nothing (the job had moved on) says so on the job's
+  page, rather than looking as if it worked.
+- The admin refuses (403) actions a browser sends from another site, so another site can't
+  have an admin's browser retry, cancel or run jobs (CSRF): a POST or PUT whose
+  `Sec-Fetch-Site` is another site's, or, without it, whose `Origin` isn't the `Host`. Requests
+  with neither header (not a browser's) pass.
+
+### Removed
+
+- The admin's `POST /jobs/{id}/discard` (`routes::jobs::discard`): nothing used it, and it
+  marked a job discarded with `completed_at` set rather than `discarded_at`, outside the
+  library. Cancel stops a job.
 
 ## 0.3.0
 

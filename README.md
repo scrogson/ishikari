@@ -172,6 +172,9 @@ let app = Router::new()
     .layer(axum::middleware::from_fn(require_admin)); // your auth
 ```
 
+Actions a browser sends from another site (cross-origin POSTs and PUTs) are refused; who may
+use the dashboard is your auth's call.
+
 Each page is a standalone page with its own sidebar and light/dark theme. To show the pages inside
 your app's admin instead (your header, navigation and theme), implement `Layout` and
 build the router with `app_with_layout`:
@@ -204,6 +207,23 @@ The embed stylesheet has the dashboard's components (classes prefixed `ik-`) and
 utilities its pages use: no theme, nothing on `:root`, and a reset only inside the dashboard, so
 it doesn't touch the rest of your page. htmx fragments (the tables and counts that refresh in
 place) never go through the layout.
+
+### Running definitions
+
+The Definitions pages keep workflow definitions: YAML node graphs, imported or drawn in the
+builder. **Run** inserts one as a workflow with a step per node, each an
+`ishikari::execution::NodeJob` in the `workflows` queue that waits on its upstreams. Your node
+types run them: implement `NodeRunner`, and run the queue in an engine whose state is a
+`NodeJobs` (an engine of its own when your workers have a state of their own):
+
+```rust
+use ishikari::execution::{NodeJob, NodeJobs};
+
+let definitions = Engine::builder("definitions")
+    .with_state(Arc::new(NodeJobs::new(MyNodes)))
+    .with_queue(Queue::builder(NodeJob::QUEUE))
+    .start(Postgres::new(pool.clone()));
+```
 
 ### Theming
 

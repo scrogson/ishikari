@@ -142,17 +142,22 @@ pub async fn retry_job(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    if let Err(e) = storage(&state.pool, schema).retry_job(id).await {
-        error!(job_id = id, error = %e, "failed to retry job");
-        return Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to retry job",
-        )
-            .into_response());
-    }
+    let retried = match storage(&state.pool, schema).retry_job(id).await {
+        Ok(retried) => retried,
+        Err(e) => {
+            error!(job_id = id, error = %e, "failed to retry job");
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retry job",
+            )
+                .into_response());
+        }
+    };
 
-    info!(job_id = id, "job retried");
-    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
+    if retried {
+        info!(job_id = id, "job retried");
+    }
+    Ok(job_page(&state, id, retried, "retry"))
 }
 
 /// Cancel a single job.
@@ -162,20 +167,37 @@ pub async fn cancel_job(
 ) -> Result<Redirect, Response> {
     let schema = state.schema();
 
-    if let Err(e) = storage(&state.pool, schema)
+    let cancelled = match storage(&state.pool, schema)
         .cancel_job(id, Some("cancelled from the admin"))
         .await
     {
-        error!(job_id = id, error = %e, "failed to cancel job");
-        return Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to cancel job",
-        )
-            .into_response());
-    }
+        Ok(cancelled) => cancelled,
+        Err(e) => {
+            error!(job_id = id, error = %e, "failed to cancel job");
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to cancel job",
+            )
+                .into_response());
+        }
+    };
 
-    info!(job_id = id, "job cancelled");
-    Ok(Redirect::to(&format!("{}/jobs/{}", state.base_path, id)))
+    if cancelled {
+        info!(job_id = id, "job cancelled");
+    }
+    Ok(job_page(&state, id, cancelled, "cancel"))
+}
+
+/// Back to the job's page, which says when the action changed nothing (the job had moved on).
+fn job_page(state: &AppState, id: i64, changed: bool, action: &str) -> Redirect {
+    if changed {
+        Redirect::to(&format!("{}/jobs/{}", state.base_path, id))
+    } else {
+        Redirect::to(&format!(
+            "{}/jobs/{}?unchanged={}",
+            state.base_path, id, action
+        ))
+    }
 }
 
 // Helper functions
