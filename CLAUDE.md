@@ -105,6 +105,7 @@ it creates.
 - v05: nodes, unique keys, error records, the `pending` state
 - v06: notify when jobs become available (insert or update), the staging index, saga step indexes
 - v07: saga rollbacks in progress moved off dependency chains (data only)
+- v08: node modules (node types uploaded through the admin)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.
