@@ -3,10 +3,11 @@
 
 mod common;
 
+use chrono::{DateTime, Utc};
 use common::TestDb;
 use ishikari::execution::{
-    ExecutionStorage, NodeContext, NodeData, NodeError, NodeHandler, NodeJob, NodeJobs, NodeRunner,
-    NodeSpec, NodeTypes, SchemaField,
+    ExecutionStorage, ModuleError, ModuleUpload, NodeContext, NodeData, NodeError, NodeHandler,
+    NodeJob, NodeJobs, NodeModule, NodeModules, NodeRunner, NodeSpec, NodeTypes, SchemaField,
 };
 use ishikari::prelude::*;
 use ishikari::workflows::{Dag, Workflow};
@@ -14,7 +15,7 @@ use ishikari::{Engine, Postgres, Queue};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[tokio::test]
@@ -521,11 +522,14 @@ async fn an_unregistered_node_type_fails_the_run() {
         (status.as_str(), error.as_deref()),
         ("failed", Some("Unknown node type 'nope'"))
     );
-    let state: String = sqlx::query_scalar("SELECT state::text FROM ishikari_jobs")
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
-    assert_eq!(state, "cancelled");
+    common::eventually("the job is cancelled", Duration::from_secs(10), || async {
+        sqlx::query_scalar::<_, String>("SELECT state::text FROM ishikari_jobs")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            == "cancelled"
+    })
+    .await;
 
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
@@ -555,6 +559,181 @@ async fn a_node_failing_its_last_attempt_fails_the_run() {
     let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "bad").await;
     assert_eq!(status, "failed");
     assert!(error.unwrap().contains("boom"));
+    common::eventually("the job is discarded", Duration::from_secs(10), || async {
+        sqlx::query_scalar::<_, String>("SELECT state::text FROM ishikari_jobs")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+            == "discarded"
+    })
+    .await;
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// Node types found as runs run (modules uploaded through the admin, say), each version with
+/// when it was uploaded and the output it gives.
+#[derive(Default)]
+struct Uploaded {
+    versions: Vec<(DateTime<Utc>, &'static str, Value)>,
+    broken: bool,
+    asked: Mutex<Vec<(String, DateTime<Utc>)>>,
+}
+
+#[async_trait::async_trait]
+impl NodeModules for Uploaded {
+    async fn handler(
+        &self,
+        node_type: &str,
+        as_of: DateTime<Utc>,
+    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((node_type.to_string(), as_of));
+        if self.broken {
+            return Err(ModuleError::Runtime("the module doesn't compile".into()));
+        }
+        Ok(self
+            .versions
+            .iter()
+            .rfind(|(at, name, _)| *name == node_type && *at <= as_of)
+            .map(|(_, _, output)| Arc::new(Fixed(output.clone())) as Arc<dyn NodeHandler>))
+    }
+
+    async fn modules(&self) -> Result<Vec<NodeModule>, ModuleError> {
+        Ok(Vec::new())
+    }
+
+    async fn describe(&self, _: &[u8]) -> Result<NodeSpec, ModuleError> {
+        Err(ModuleError::Invalid("read-only".into()))
+    }
+
+    async fn upload(&self, _: ModuleUpload) -> Result<NodeModule, ModuleError> {
+        Err(ModuleError::Invalid("read-only".into()))
+    }
+}
+
+async fn created_at(pool: &PgPool, run: i64) -> DateTime<Utc> {
+    sqlx::query_scalar("SELECT created_at FROM ishikari_workflow_runs WHERE id = $1")
+        .bind(run)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A node of a type the host didn't register in Rust runs through its modules, at the version
+/// uploaded last before the run was created; a type registered in Rust never asks them.
+#[tokio::test]
+async fn a_type_not_registered_runs_from_the_hosts_modules() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({
+            "nodes": {
+                "greet": { "type": "shout", "inputs": { "text": "hi" } },
+                "post": { "type": "slack/post", "depends_on": ["greet"] }
+            },
+            "outputs": { "posted": "{{nodes.post.version}}" }
+        }),
+        &["greet", "post"],
+        json!({}),
+    )
+    .await;
+
+    let hour = chrono::Duration::hours(1);
+    let modules = Arc::new(Uploaded {
+        versions: vec![
+            (
+                Utc::now() - hour,
+                "shout",
+                json!({ "result": "from a module" }),
+            ),
+            (Utc::now() - hour, "slack/post", json!({ "version": 1 })),
+            (Utc::now() + hour, "slack/post", json!({ "version": 2 })),
+        ],
+        ..Uploaded::default()
+    });
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let types = NodeTypes::new(db.pool.clone())
+        .register(shout(), Shout(tx))
+        .modules(modules.clone());
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, outputs, error) = finished(&db.pool, None, run).await;
+    assert_eq!((status.as_str(), error), ("completed", None));
+    assert_eq!(outputs, json!({ "posted": 1 }));
+    let (_, _, output, _, _, _) = recorded(&db.pool, None, run, "greet").await;
+    assert_eq!(output, Some(json!({ "result": "HI" })));
+    let created_at = created_at(&db.pool, run).await;
+    assert_eq!(
+        *modules.asked.lock().unwrap(),
+        [("slack/post".to_string(), created_at)]
+    );
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A type neither registered nor among the modules is unknown, and fails its run.
+#[tokio::test]
+async fn a_type_the_modules_dont_have_fails_the_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({ "nodes": { "lost": { "type": "nope" } } }),
+        &["lost"],
+        json!({}),
+    )
+    .await;
+
+    let types = NodeTypes::new(db.pool.clone()).modules(Arc::new(Uploaded::default()));
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, _, error) = finished(&db.pool, None, run).await;
+    assert_eq!(status, "failed");
+    assert!(error.unwrap().contains("Unknown node type 'nope'"));
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A module that can't be loaded fails its node like a failing handler, retried until its last
+/// attempt.
+#[tokio::test]
+async fn a_module_that_cannot_load_fails_the_node() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({ "nodes": { "post": { "type": "slack/post" } } }),
+        &["post"],
+        json!({}),
+    )
+    .await;
+
+    let modules = Uploaded {
+        broken: true,
+        ..Uploaded::default()
+    };
+    let types = NodeTypes::new(db.pool.clone()).modules(Arc::new(modules));
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, _, error) = finished(&db.pool, None, run).await;
+    assert_eq!(status, "failed");
+    assert!(error.unwrap().contains("the module doesn't compile"));
+    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "post").await;
+    assert_eq!(status, "failed");
+    assert!(error.unwrap().contains("the module doesn't compile"));
     common::eventually("the job is discarded", Duration::from_secs(10), || async {
         sqlx::query_scalar::<_, String>("SELECT state::text FROM ishikari_jobs")
             .fetch_one(&db.pool)

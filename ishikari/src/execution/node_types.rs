@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -14,6 +15,7 @@ use super::context::NodeContext;
 use super::executor::{skip_reason, NodeHandler};
 use super::interpolation::{InterpolationError, Interpolator};
 use super::node_job::{NodeJob, NodeRunner};
+use super::node_modules::{ModuleError, NodeModules};
 use super::storage::{ExecutionStorage, NodeRecord, RunDefinition};
 use super::types::{NodeData, NodeStatus, SchemaField};
 use crate::{Cancel, Complete, Context, PerformResult};
@@ -97,7 +99,9 @@ impl NodeSpec {
 /// - completes the run with the definition's outputs once every node has completed or been
 ///   skipped, and fails it when a node fails its last attempt.
 ///
-/// A node of a type not registered fails, and fails its run, without retrying.
+/// A node of a type not registered is looked up in the host's [`modules`](Self::modules), at
+/// the version uploaded last before its run was created. One of neither fails, and fails its
+/// run, without retrying.
 ///
 /// ```rust,no_run
 /// use ishikari::execution::{
@@ -141,6 +145,7 @@ pub struct NodeTypes {
     pool: PgPool,
     schema: Option<String>,
     types: Vec<(NodeSpec, Arc<dyn NodeHandler>)>,
+    modules: Option<Arc<dyn NodeModules>>,
 }
 
 impl NodeTypes {
@@ -150,6 +155,7 @@ impl NodeTypes {
             pool,
             schema: None,
             types: Vec::new(),
+            modules: None,
         }
     }
 
@@ -169,16 +175,33 @@ impl NodeTypes {
         self
     }
 
-    /// The node types, in the order they were registered.
+    /// Look up node types not registered here in `modules`: those the host's operators upload
+    /// through the admin (`ishikari-wasm`'s `WasmModules`). A type registered here wins over a
+    /// module of the same name.
+    pub fn modules(mut self, modules: Arc<dyn NodeModules>) -> Self {
+        self.modules = Some(modules);
+        self
+    }
+
+    /// The node types registered here, in the order they were registered.
     pub fn catalog(&self) -> Vec<NodeSpec> {
         self.types.iter().map(|(spec, _)| spec.clone()).collect()
     }
 
-    fn handler(&self, name: &str) -> Option<&Arc<dyn NodeHandler>> {
-        self.types
-            .iter()
-            .find(|(spec, _)| spec.name == name)
-            .map(|(_, handler)| handler)
+    /// The handler of the type `name`: the one registered here, else its module's version for a
+    /// run created at `as_of`.
+    async fn handler(
+        &self,
+        name: &str,
+        as_of: DateTime<Utc>,
+    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
+        if let Some((_, handler)) = self.types.iter().find(|(spec, _)| spec.name == name) {
+            return Ok(Some(handler.clone()));
+        }
+        match &self.modules {
+            Some(modules) => modules.handler(name, as_of).await,
+            None => Ok(None),
+        }
     }
 
     fn storage(&self) -> ExecutionStorage {
@@ -201,17 +224,24 @@ impl NodeRunner for NodeTypes {
             last_attempt: attempt.attempt >= attempt.max_attempts,
         };
 
-        let Some(handler) = self.handler(&job.node_type) else {
-            let error = format!("Unknown node type '{}'", job.node_type);
-            node.failed(&error, None, None, true).await?;
-            return Cancel::default().message(error).into();
-        };
-
         let run = node
             .storage
             .run_definition(job.workflow_run_id)
             .await?
             .ok_or_else(|| format!("no workflow run {}", job.workflow_run_id))?;
+        let handler = match self.handler(&job.node_type, run.created_at).await {
+            Ok(Some(handler)) => handler,
+            Ok(None) => {
+                let error = format!("Unknown node type '{}'", job.node_type);
+                node.failed(&error, None, None, true).await?;
+                return Cancel::default().message(error).into();
+            }
+            Err(e) => {
+                let error = e.to_string();
+                node.failed(&error, None, None, node.last_attempt).await?;
+                return Err(error.into());
+            }
+        };
         let inputs = run_inputs(&run);
         let outputs = node
             .storage
@@ -485,6 +515,7 @@ mod tests {
     fn a_declared_input_left_out_takes_its_default() {
         let run = RunDefinition {
             execution_id: None,
+            created_at: Utc::now(),
             inputs: json!({ "name": "ada" }),
             input_schema: json!({
                 "name": { "type": "string" },

@@ -413,7 +413,7 @@ impl ExecutionStorage {
     ) -> Result<Option<RunDefinition>, sqlx::Error> {
         let query = format!(
             r#"
-            SELECT r.execution_id, r.inputs, d.input_schema, d.nodes, d.output_schema
+            SELECT r.execution_id, r.created_at, r.inputs, d.input_schema, d.nodes, d.output_schema
             FROM {} r
             JOIN {} d ON d.id = r.definition_id
             WHERE r.id = $1
@@ -500,6 +500,7 @@ impl ExecutionStorage {
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct RunDefinition {
     pub execution_id: Option<Uuid>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub inputs: Value,
     pub input_schema: Value,
     pub nodes: Value,
