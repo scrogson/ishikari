@@ -373,6 +373,10 @@ fn routes() -> Router<AppState> {
                 .post(routes::node_types::script)
                 .layer(DefaultBodyLimit::max(routes::node_types::MAX_UPLOAD_BYTES)),
         )
+        .route(
+            "/node-types/job",
+            get(routes::node_types::job_form).post(routes::node_types::insert_job),
+        )
         // API endpoints for htmx
         .route("/api/jobs", get(routes::api::enhanced_jobs_table))
         .route("/api/stats", get(routes::api::stats_or_counts))

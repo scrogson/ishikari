@@ -288,7 +288,7 @@ uses the version uploaded last before it was created.
 
 A module also runs as a plain job, `ModuleJob::new("send-invoice", json!({ .. }))`, its args the
 module's inputs, in the `modules` queue of an engine whose state is the `NodeJobs` of those node
-types. What it returns completes the job, `{"snooze": seconds}` snoozes it and
+types; operators insert one from the Node types page too (Run as job). What it returns completes the job, `{"snooze": seconds}` snoozes it and
 `{"cancel": "why"}` cancels it. See [docs/wasm-nodes.md](docs/wasm-nodes.md) for the design.
 
 ### Theming

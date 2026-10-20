@@ -123,7 +123,8 @@ insert_with(
 
 What its node returns completes the job, unless it's `{"snooze": seconds}` (snoozed) or
 `{"cancel": "why"}` (cancelled); a node that fails fails the attempt, retried as any job's. A
-`Cron` entry of a `ModuleJob` runs a module on a schedule.
+`Cron` entry of a `ModuleJob` runs a module on a schedule, and an operator inserts one from the
+admin: Run as job, on the Node types page, takes its args, queue, attempts and delay.
 
 ## The sandbox
 

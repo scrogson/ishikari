@@ -5,13 +5,13 @@
 //!
 //! Then upload `tests/fixtures/testkit-v1.wasm` on http://127.0.0.1:3001/node-types, make a
 //! definition with a `test/kit` node (inputs `op: shout`, `text: hi`), and run it. Or write a
-//! script with New script, test it there, and save it.
+//! script with New script, test it there, and save it. Run as job inserts a module's job.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ishikari::execution::{NodeJob, NodeJobs, NodeTypes};
+use ishikari::execution::{ModuleJob, NodeJob, NodeJobs, NodeTypes};
 use ishikari::{Engine, Postgres, Queue};
 use ishikari_admin::AppState;
 use ishikari_wasm::WasmModules;
@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _engine = Engine::builder("wasm-demo")
         .with_state(Arc::new(NodeJobs::new(types)))
         .with_queue(Queue::builder(NodeJob::QUEUE).concurrency(4))
+        .with_queue(Queue::builder(ModuleJob::QUEUE).concurrency(4))
         .start(Postgres::new(pool.clone()));
 
     let state = AppState::new(pool)

@@ -1,5 +1,6 @@
 //! The Node types page: the types the host registered in Rust, and the modules its operators
-//! upload (`AppState::with_node_modules`) or write in its script editor.
+//! upload (`AppState::with_node_modules`) or write in its script editor, each of which also runs
+//! as a job.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -11,11 +12,12 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::{DateTime, Utc};
 use ishikari::execution::{
-    ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules, NodeSpec, TestRun,
+    ModuleError, ModuleGrants, ModuleJob, ModuleUpload, NodeModule, NodeModules, NodeSpec, TestRun,
 };
+use ishikari::{insert_with, InsertOpts};
 use serde::Deserialize;
 
-use crate::templates::{NodeTypesTemplate, ScriptTemplate};
+use crate::templates::{ModuleJobTemplate, NodeTypesTemplate, ScriptTemplate};
 use crate::AppState;
 
 /// The largest upload the page takes, module and form together.
@@ -41,6 +43,8 @@ pub struct ModuleInfo {
     pub shadowed: bool,
     /// The editor of its script, for a module written as one.
     pub edit: Option<String>,
+    /// Its job form.
+    pub run: String,
 }
 
 /// What the upload form was given, to show again when it's refused.
@@ -255,6 +259,7 @@ fn info(state: &AppState, module: NodeModule) -> ModuleInfo {
     ModuleInfo {
         shadowed: state.node_types.iter().any(|t| t.name == spec.name),
         edit: source.map(|_| editor_of(state, &spec.name)),
+        run: job_form_of(state, &spec.name),
         name: spec.name,
         version,
         category: spec.category,
@@ -367,9 +372,9 @@ pub async fn editor(State(state): State<AppState>, Query(query): Query<EditQuery
         };
         return script_page(&state, StatusCode::OK, form, None, None);
     };
-    let module = match modules.modules().await {
-        Ok(modules) => modules.into_iter().find(|m| m.spec.name == name),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    let module = match named(modules.as_ref(), &name).await {
+        Ok(module) => module,
+        Err(response) => return response,
     };
     let Some((module, source)) = module.and_then(|m| m.source.clone().map(|s| (m, s))) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -480,6 +485,20 @@ fn editor_of(state: &AppState, name: &str) -> String {
     format!("{}/node-types/script?{query}", state.base_path)
 }
 
+/// Where the job form of the module `name` is.
+fn job_form_of(state: &AppState, name: &str) -> String {
+    let query = serde_urlencoded::to_string([("module", name)]).unwrap_or_default();
+    format!("{}/node-types/job?{query}", state.base_path)
+}
+
+/// The latest version of the module `name`, if it was uploaded.
+async fn named(modules: &dyn NodeModules, name: &str) -> Result<Option<NodeModule>, Response> {
+    match modules.modules().await {
+        Ok(modules) => Ok(modules.into_iter().find(|m| m.spec.name == name)),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()),
+    }
+}
+
 fn script_page(
     state: &AppState,
     status: StatusCode,
@@ -493,6 +512,130 @@ fn script_page(
         form,
         error,
         run,
+    };
+    (status, template).into_response()
+}
+
+/// What a module's job form holds: the module, its node's args, and the job's options.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct JobForm {
+    pub module: String,
+    /// The node's inputs, a JSON object.
+    pub args: String,
+    /// The queue, blank for the worker's (`modules`).
+    pub queue: String,
+    /// Blank for the worker's.
+    pub max_attempts: String,
+    /// How long from now it runs, in seconds; blank to run now.
+    pub delay_seconds: String,
+}
+
+/// The job form of the module `module`: its args start as each of its inputs, unset.
+pub async fn job_form(State(state): State<AppState>, Query(query): Query<EditQuery>) -> Response {
+    let (Some(modules), Some(name)) = (state.node_modules.clone(), query.module) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let module = match named(modules.as_ref(), &name).await {
+        Ok(Some(module)) => module,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(response) => return response,
+    };
+    let form = JobForm {
+        args: example_inputs(&module.spec),
+        queue: ModuleJob::QUEUE.to_string(),
+        module: name,
+        ..JobForm::default()
+    };
+    job_page(&state, StatusCode::OK, module, form, None)
+}
+
+/// Insert a [`ModuleJob`] of a module, an `application/x-www-form-urlencoded` [`JobForm`], and
+/// go to the job.
+pub async fn insert_job(
+    State(state): State<AppState>,
+    form: Result<Form<JobForm>, FormRejection>,
+) -> Response {
+    let Some(modules) = state.node_modules.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let form = match form {
+        Ok(Form(form)) => form,
+        Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
+    };
+    let module = match named(modules.as_ref(), &form.module).await {
+        Ok(Some(module)) => module,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(response) => return response,
+    };
+    match insert(&state, &form).await {
+        Ok(id) => Redirect::to(&format!("{}/jobs/{id}", state.base_path)).into_response(),
+        Err((status, error)) => job_page(&state, status, module, form, Some(error)),
+    }
+}
+
+/// Insert the form's job, in the admin's schema: its id, or why it can't be inserted.
+async fn insert(state: &AppState, form: &JobForm) -> Result<i64, Refused> {
+    let bad = |why: &str| (StatusCode::BAD_REQUEST, why.to_string());
+    let args = match form.args.trim() {
+        "" => serde_json::Value::Object(Default::default()),
+        args => serde_json::from_str(args)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .ok_or_else(|| bad("The args must be a JSON object"))?,
+    };
+    let mut opts = InsertOpts::new();
+    if let Some(schema) = state.schema() {
+        opts = opts.schema(schema);
+    }
+    match form.queue.trim() {
+        "" => {}
+        queue => opts = opts.queue(queue),
+    }
+    match form.max_attempts.trim() {
+        "" => {}
+        attempts => {
+            let attempts = attempts
+                .parse::<i32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| bad("Max attempts must be a whole number above 0"))?;
+            opts = opts.max_attempts(attempts);
+        }
+    }
+    match form.delay_seconds.trim() {
+        "" => {}
+        seconds => {
+            let delay = seconds
+                .parse::<f64>()
+                .ok()
+                .filter(|s| *s >= 0.0)
+                .and_then(|s| Duration::try_from_secs_f64(s).ok())
+                .ok_or_else(|| bad("The delay must be a number of seconds"))?;
+            opts = opts.schedule_in(delay);
+        }
+    }
+    let job = ModuleJob::new(form.module.clone(), args);
+    let inserted = insert_with(job, opts, &state.pool).await.map_err(|e| {
+        let why = format!("Couldn't insert the job: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, why)
+    })?;
+    Ok(inserted.job().id)
+}
+
+fn job_page(
+    state: &AppState,
+    status: StatusCode,
+    module: NodeModule,
+    form: JobForm,
+    error: Option<String>,
+) -> Response {
+    let template = ModuleJobTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        module: info(state, module),
+        form,
+        error,
     };
     (status, template).into_response()
 }

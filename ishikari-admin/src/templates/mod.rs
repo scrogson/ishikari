@@ -11,7 +11,7 @@ use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
 use crate::routes::definitions::{DefinitionDetail, DefinitionInfo, WorkflowRunInfo};
 use crate::routes::dependencies::{DependencyInfo, DependencyStats, JobWithDependencies};
 use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo, Pager};
-use crate::routes::node_types::{ModuleInfo, ScriptForm, TestRunInfo, UploadForm};
+use crate::routes::node_types::{JobForm, ModuleInfo, ScriptForm, TestRunInfo, UploadForm};
 use crate::routes::queues::{QueueInfo, QueueJobInfo};
 use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
@@ -104,6 +104,7 @@ pages!(
     DefinitionEditTemplate,
     NodeTypesTemplate,
     ScriptTemplate,
+    ModuleJobTemplate,
 );
 
 /// Dashboard page template.
@@ -382,6 +383,17 @@ pub struct ScriptTemplate {
     pub error: Option<String>,
     /// The test run just made, if any.
     pub run: Option<TestRunInfo>,
+}
+
+/// A module's job form: a `ModuleJob` of it, inserted here.
+#[derive(Template)]
+#[template(path = "node_types/job.html", blocks = ["title", "content"])]
+pub struct ModuleJobTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub module: ModuleInfo,
+    pub form: JobForm,
+    pub error: Option<String>,
 }
 
 /// Workflow definition run form template.

@@ -45,8 +45,9 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   are plain JS with no build step: `assets/admin.js` (graphs, tooltips...) and
   `assets/builder.js`, the definition editor's workflow builder (HTML nodes, SVG edges, a
   `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`. Its Node types
-  page uploads the host's node modules (`AppState::with_node_modules`), and its script editor
-  (`/node-types/script`) writes, test-runs and saves scripts.
+  page uploads the host's node modules (`AppState::with_node_modules`), its script editor
+  (`/node-types/script`) writes, test-runs and saves scripts, and its job form
+  (`/node-types/job`) inserts a module's `ModuleJob`.
 - `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
   the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
   in a sandbox with its module's grants and limits. A script's types are stripped by swc

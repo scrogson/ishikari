@@ -127,11 +127,11 @@ second world: what the node returns completes the job, `{"snooze": seconds}` sno
 fails the attempt. The version is the one uploaded last before the job was inserted, so retries
 run the same code. A missing module, or args that aren't an object, cancel it. Queues, retries,
 unique jobs and cron work unchanged: `ModuleJob::new("send-invoice", json!({..}))` is inserted
-from Rust or by a `Cron` entry.
+from Rust, by a `Cron` entry, or in the admin (Run as job on the Node types page: its args,
+queue, attempts and delay).
 
 ## Open questions
 
-- Inserting module jobs from the admin.
 - Whether outcomes by output convention (`snooze`, `cancel`) are enough, or a job world with
   its own result type is worth it.
 - Pruning old versions no run or job can need.

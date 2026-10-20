@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
+
+{% block title %}Run {{ module.name }} as a Job{% endblock %}
+
+{% block content %}
+<header class="ik-page-header">
+    <div>
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/node-types">Node types</a><span aria-hidden="true">/</span><span>{{ module.name }}</span><span aria-hidden="true">/</span><span>Job</span></nav>
+        <h1 class="ik-title flex flex-wrap items-center gap-3">
+            <span class="min-w-0 break-words">Run {{ module.name }} as a job</span>
+            <span class="ik-badge ik-tone-info">v{{ module.version }}</span>
+        </h1>
+        <p class="ik-subtitle">{% if let Some(desc) = module.description %}{{ desc }}{% else %}A {{ module.category }} module{% endif %}</p>
+    </div>
+</header>
+
+{% if let Some(e) = error %}
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Refused</p>
+        <p class="break-words whitespace-pre-line">{{ e }}</p>
+    </div>
+</div>
+{% endif %}
+
+<form method="post" action="{{ base_path }}/node-types/job" class="grid gap-6 lg:grid-cols-3">
+    <input type="hidden" name="module" value="{{ form.module }}">
+    <section class="ik-card lg:col-span-2">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Args</h2>
+                <p class="ik-card-desc">The node's <code class="ik-code-inline">inputs</code>, a JSON object. It runs the version uploaded last before the job is inserted, retries included.</p>
+            </div>
+        </div>
+        <div class="ik-card-body">
+            <textarea name="args" aria-label="Args" data-ik-code rows="12" class="ik-textarea ik-mono text-xs" spellcheck="false">{{ form.args }}</textarea>
+        </div>
+    </section>
+
+    <div class="grid content-start gap-6">
+        <section class="ik-card">
+            <div class="ik-card-header">
+                <div>
+                    <h2 class="ik-card-title">Options</h2>
+                    <p class="ik-card-desc">It runs on an engine with this queue and your node types' <code class="ik-code-inline">NodeJobs</code> as its state</p>
+                </div>
+            </div>
+            <div class="ik-card-body grid gap-4">
+                <label class="ik-field">
+                    <span class="ik-label">Queue</span>
+                    <input type="text" name="queue" value="{{ form.queue }}" class="ik-input ik-mono" placeholder="modules" spellcheck="false">
+                </label>
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                    <label class="ik-field">
+                        <span class="ik-label">Max attempts</span>
+                        <input type="number" name="max_attempts" min="1" step="1" class="ik-input" placeholder="Default" value="{{ form.max_attempts }}">
+                    </label>
+                    <label class="ik-field">
+                        <span class="ik-label">Delay (seconds)</span>
+                        <input type="number" name="delay_seconds" min="0" step="any" class="ik-input" placeholder="Now" value="{{ form.delay_seconds }}">
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <div class="flex flex-wrap justify-end gap-2">
+            <a href="{{ base_path }}/node-types" class="ik-btn ik-btn-ghost">Cancel</a>
+            <button type="submit" class="ik-btn ik-btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18l15-9Z"/></svg>
+                Insert job
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}

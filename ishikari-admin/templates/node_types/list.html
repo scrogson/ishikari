@@ -113,7 +113,7 @@
                     <td class="whitespace-nowrap tabular-nums">{% if let Some(mb) = m.memory %}{{ mb }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>
                     <td class="ik-num whitespace-nowrap">{{ m.size }}</td>
                     <td class="whitespace-nowrap ik-muted tabular-nums">{{ m.uploaded_at.format("%Y-%m-%d %H:%M") }}</td>
-                    <td class="text-right">{% if let Some(edit) = m.edit %}<a href="{{ edit }}" class="ik-btn ik-btn-ghost ik-btn-xs">Edit</a>{% endif %}</td>
+                    <td class="text-right whitespace-nowrap"><a href="{{ m.run }}" class="ik-btn ik-btn-ghost ik-btn-xs">Run as job</a>{% if let Some(edit) = m.edit %}<a href="{{ edit }}" class="ik-btn ik-btn-ghost ik-btn-xs">Edit</a>{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
