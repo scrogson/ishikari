@@ -1,6 +1,6 @@
-//! Scripts, node types written in JavaScript, are uploaded and versioned as components are, and
-//! run by the JavaScript runtime ishikari-wasm ships, in the same sandbox and within the same
-//! limits.
+//! Scripts, node types written in TypeScript or JavaScript, are uploaded and versioned as
+//! components are, and run by the JavaScript runtime ishikari-wasm ships, in the same sandbox and
+//! within the same limits.
 
 mod common;
 
@@ -103,7 +103,10 @@ async fn scripts_that_arent_node_types_are_refused() {
     }
 
     let why = refused(modules.describe(b"export const spec = {").await);
-    assert!(why.starts_with("its spec failed: SyntaxError"), "{why}");
+    assert!(
+        why.starts_with("the script isn't valid TypeScript: ") && why.contains("(script:1:"),
+        "{why}"
+    );
     let why = refused(modules.describe(b"export function run() {}").await);
     assert_eq!(why, "its spec failed: the script exports no `spec`");
     let why = refused(
@@ -128,9 +131,96 @@ async fn scripts_that_arent_node_types_are_refused() {
             .upload(upload("export const spec = {", ModuleGrants::default()))
             .await,
     );
-    assert!(why.starts_with("its spec failed: SyntaxError"), "{why}");
+    assert!(
+        why.starts_with("the script isn't valid TypeScript: "),
+        "{why}"
+    );
 
     assert!(modules.modules().await.unwrap().is_empty());
+
+    db.finish().await;
+}
+
+const TYPED: &str = r#"
+interface Inputs {
+  name: string;
+  times?: number;
+}
+
+enum Punctuation {
+  Calm = ".",
+  Loud = "!",
+}
+
+type Output = { greeting: string; punctuation: Punctuation };
+
+export const spec = {
+  name: "test/typed",
+  category: "test",
+  input_schema: { name: { type: "string", required: true } },
+} as const;
+
+function repeat<T>(item: T, times: number): T[] {
+  return Array.from({ length: times }, () => item);
+}
+
+export async function run({ inputs }: { inputs: Inputs }): Promise<Output> {
+  if (inputs.name === "") {
+    throw new Error("no name");
+  }
+  const greeting: string = repeat<string>(`hi ${inputs.name}`, inputs.times ?? 1).join(" ");
+  return { greeting, punctuation: Punctuation.Loud };
+}
+"#;
+
+/// A script in TypeScript runs as JavaScript, its types stripped: an `enum` too. What it throws
+/// says where in the TypeScript.
+#[tokio::test]
+async fn a_script_may_be_typescript() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = WasmModules::new(db.pool.clone());
+
+    let module = modules
+        .upload(upload(TYPED, ModuleGrants::default()))
+        .await
+        .unwrap();
+    assert_eq!(module.spec.name, "test/typed");
+    assert_eq!(module.source.as_deref(), Some(TYPED));
+
+    let run = |inputs| common::run(&modules, &db.pool, "test/typed", inputs);
+    assert_eq!(
+        run(json!({ "name": "Ada", "times": 2 })).await.unwrap(),
+        json!({ "greeting": "hi Ada hi Ada", "punctuation": "!" })
+    );
+    let error = failure(run(json!({ "name": "" })).await);
+    assert!(error.starts_with("Error: no name (script:"), "{error}");
+
+    // Without the enum, its types are blanked where they stand: lines and columns are the
+    // TypeScript's.
+    let plain = TYPED
+        .replace(
+            "enum Punctuation {\n  Calm = \".\",\n  Loud = \"!\",\n}",
+            "\n\n\n",
+        )
+        .replace("Punctuation.Loud", "\"!\"")
+        .replace("punctuation: Punctuation", "punctuation: string");
+    modules
+        .upload(upload(&plain, ModuleGrants::default()))
+        .await
+        .unwrap();
+    let error = failure(run(json!({ "name": "" })).await);
+    assert_eq!(error, "Error: no name (script:26:11)");
+
+    let why = match modules.describe(b"export const spec: = {};").await {
+        Err(ModuleError::Invalid(why)) => why,
+        other => panic!("expected the script to be refused, got {other:?}"),
+    };
+    assert!(
+        why.starts_with("the script isn't valid TypeScript: ") && why.ends_with("(script:1:20)"),
+        "{why}"
+    );
 
     db.finish().await;
 }

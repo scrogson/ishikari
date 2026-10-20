@@ -84,7 +84,8 @@ impl Script {
 
         let source = script::source();
         let source = Source::from_bytes(source.as_bytes()).with_path(Path::new("script"));
-        let module = Module::parse(source, None, &mut context).map_err(|e| e.to_string())?;
+        let module = Module::parse(source, None, &mut context);
+        let module = module.map_err(|e| native(e.to_string()))?;
         let mut script = Script { context, module };
         let evaluated = script.module.load_link_evaluate(&mut script.context);
         script.settled(Ok(evaluated.into()))?;
@@ -137,12 +138,8 @@ impl Script {
     /// What `error` says: `TypeError: ... (script:7:19)` for an error, with where it was
     /// thrown when that's known; else what was thrown, as JSON.
     fn message(&mut self, error: JsError) -> String {
-        if let Ok(native) = error.try_native(&mut self.context) {
-            let message = native.to_string();
-            return match message.strip_suffix(" (native)") {
-                Some(message) => message.to_string(),
-                None => message,
-            };
+        if let Ok(error) = error.try_native(&mut self.context) {
+            return native(error.to_string());
         }
         let thrown = match error.into_opaque(&mut self.context) {
             Ok(thrown) => thrown,
@@ -155,6 +152,14 @@ impl Script {
             Ok(Some(json)) => json,
             _ => thrown.display().to_string(),
         }
+    }
+}
+
+/// A native error's message, without the ` (native)` Boa ends one with when it has no position.
+fn native(message: String) -> String {
+    match message.strip_suffix(" (native)") {
+        Some(message) => message.to_string(),
+        None => message,
     }
 }
 

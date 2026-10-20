@@ -1,7 +1,8 @@
 //! Loading and calling modules: a wasmtime engine whose epoch a ticker advances, a linker with
 //! WASI (nothing to reach, and sleeps that end at the call's deadline), `host` and `script`, and
-//! loaded modules cached by their sha256. A component is compiled; a script is run by the
-//! JavaScript runtime (`js-runtime.wasm`, built from `js-runtime/`), compiled once.
+//! loaded modules cached by their sha256. A component is compiled; a script is stripped of its
+//! TypeScript and run by the JavaScript runtime (`js-runtime.wasm`, built from `js-runtime/`),
+//! compiled once.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -17,6 +18,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::output::Output;
 use crate::sandbox::Sandbox;
+use crate::typescript;
 
 pub(crate) mod bindings {
     // The world of the runtime of scripts, which is a node's and `script`: a component of the
@@ -149,7 +151,7 @@ impl Runtime {
             },
             Kind::Script(source) => Guest {
                 pre: self.js_runtime()?,
-                script: Some(source.into()),
+                script: Some(typescript::javascript(source)?.into()),
             },
         };
         self.loaded

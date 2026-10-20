@@ -29,10 +29,12 @@
 //! linked for guests' standard libraries, with no files, environment, arguments or sockets;
 //! stdout and stderr go to the node's logs with `host.log`.
 //!
-//! Or a module is a script, uploaded as text: an ES module exporting `spec` (the node type, as
-//! an object) and `run` (from the node's input to its output, or a promise of it), run by the
-//! JavaScript runtime this crate ships (a component of the `script-node` world, with Boa) in the
-//! same sandbox. `console` goes to the node's logs and `fetch` through `host.fetch`.
+//! Or a module is a script, uploaded as text: an ES module in TypeScript or JavaScript exporting
+//! `spec` (the node type, as an object) and `run` (from the node's input to its output, or a
+//! promise of it), run by the JavaScript runtime this crate ships (a component of the
+//! `script-node` world, with Boa) in the same sandbox. Its types are stripped where they stand,
+//! so what it throws is placed in its TypeScript. `console` goes to the node's logs and `fetch`
+//! through `host.fetch`.
 //!
 //! ```js
 //! export const spec = {
@@ -53,6 +55,7 @@
 mod output;
 mod runtime;
 mod sandbox;
+mod typescript;
 
 use std::sync::Arc;
 use std::time::Duration;
