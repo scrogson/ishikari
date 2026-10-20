@@ -14,6 +14,7 @@ use uuid::Uuid;
 use super::context::NodeContext;
 use super::executor::{skip_reason, NodeHandler};
 use super::interpolation::{InterpolationError, Interpolator};
+use super::module_job::ModuleJob;
 use super::node_job::{NodeJob, NodeRunner};
 use super::node_modules::{ModuleError, NodeModules};
 use super::storage::{ExecutionStorage, NodeRecord, RunDefinition};
@@ -101,7 +102,7 @@ impl NodeSpec {
 ///
 /// A node of a type not registered is looked up in the host's [`modules`](Self::modules), at
 /// the version uploaded last before its run was created. One of neither fails, and fails its
-/// run, without retrying.
+/// run, without retrying. A [`ModuleJob`] runs by the modules too.
 ///
 /// ```rust,no_run
 /// use ishikari::execution::{
@@ -300,6 +301,30 @@ impl NodeRunner for NodeTypes {
                 Err(Box::new(e))
             }
         }
+    }
+
+    async fn run_module(&self, job: &ModuleJob, ctx: Context) -> PerformResult {
+        let Some(modules) = &self.modules else {
+            let why = format!("this engine runs no modules, so not {}", job.module);
+            return Cancel::default().message(why).into();
+        };
+        let attempt = ctx.job();
+        let Some(handler) = modules.handler(&job.module, attempt.inserted_at).await? else {
+            let why = format!(
+                "no module {} was uploaded before the job was inserted",
+                job.module
+            );
+            return Cancel::default().message(why).into();
+        };
+        let Value::Object(args) = &job.args else {
+            return Cancel::default()
+                .message("its args aren't a JSON object")
+                .into();
+        };
+        let mut context = NodeContext::new(Uuid::nil(), format!("job:{}", attempt.id), &job.module);
+        context.inputs = args.clone().into_iter().collect();
+        let output = handler.execute(&context, &self.pool).await?;
+        ModuleJob::outcome(output.to_json())
     }
 }
 
