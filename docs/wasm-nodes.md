@@ -20,8 +20,15 @@ auth like the rest of the dashboard, and only exists when the host opts in.
   for a type that has no Rust handler; the admin (`AppState::with_node_modules`) asks it for the
   palette's catalog, the module list and uploads. ishikari doesn't depend on any runtime.
 - `ishikari-wasm`: `WasmModules`, the `NodeModules` of WebAssembly components. A separate crate
-  because wasmtime is large and needs a newer Rust (1.96) than the rest (1.83).
+  because wasmtime is large and needs a newer Rust (1.96) than the rest (1.83), and a workspace
+  of its own with its own lockfile: Cargo 1.83 can't even read the lockfile entries of
+  wasmtime's dependencies (edition 2024).
 - Schema v08: `ishikari_node_modules`, every uploaded version of every module.
+- The admin's Node types page: the registered types, the modules, and an upload form (the
+  module, its allowed hosts, timeout and memory limit; up to 32 MiB). It asks the modules to
+  `describe` an upload first, and refuses one named as a type registered in Rust, which would
+  run instead. The palette and the definition checks offer the registered types, then the
+  modules not named as one.
 
 ## The interface
 
@@ -71,7 +78,8 @@ any failure.
 
 ## Versions
 
-Every upload of a name is its next version; uploading the same bytes again is a no-op. A run
+Every upload of a name is its next version, with the grants given with it (a version's grants
+aren't carried over to the next); uploading the same bytes and grants again is a no-op. A run
 uses, for each wasm node type, the latest version uploaded before the run was created, so a run
 and its retries run the same code even while a new version lands, and a new run picks the new
 version up. Old versions are kept (a run in flight may need one); pruning them is left for
@@ -110,6 +118,8 @@ cron entry.
 ## Open questions
 
 - Pruning old versions no run or job can need.
+- Carrying a module's grants over to its next upload, or editing them without re-uploading.
+- Bounding the compiled-component cache (one entry per version an engine has run or described).
 - Secrets: a capability handing a module named secrets from the host, rather than putting them
   in node inputs.
 - Whether `fetch` should become `wasi:http`, so guests' own HTTP libraries work.

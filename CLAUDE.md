@@ -8,16 +8,19 @@ Tasks are [mise](https://mise.jdx.dev) file tasks in `.mise/tasks`:
 
 - `mise run dev` - format, lint, test
 - `mise run build`, `mise run check`, `mise run clippy`, `mise run fmt`, `mise run clean`
+  (each for `ishikari-wasm` too)
 - `mise run test [filter]` - all tests (`--watch` to re-run on change)
 - `mise run pg:start` / `pg:stop` - the local Postgres in `.postgres` (the `DATABASE_URL` in
   `mise.toml`); `mise run db:setup` creates the dev database
 - `mise run demo` - the admin demo (`ishikari-admin/examples/demo.rs`)
+- `mise run wasm:demo` - the admin with uploaded node types (`ishikari-wasm/examples/admin.rs`)
+- `mise run wasm:fixtures` - build ishikari-wasm's test modules (needs `wasm32-wasip2`)
 - `mise run version:patch|minor|major` - bump and sync the crates' versions
 - `mise run publish --dry-run` - check the crates package; `mise run publish` publishes them
 
 ### Tests
 
-Integration tests (`ishikari/tests`, `ishikari-admin/tests`) run against a real Postgres: each
+Integration tests (`ishikari/tests`, `ishikari-admin/tests`, `ishikari-wasm/tests`) run against a real Postgres: each
 test migrates a schema of its own (`ishikari_t_*`) and drops it at the end. They use
 `ISHIKARI_TEST_DATABASE_URL`, else `DATABASE_URL`; without either they fail loudly, and
 `ISHIKARI_SKIP_DB_TESTS=1` skips them. Helpers are in `ishikari/tests/common/mod.rs`
@@ -29,7 +32,7 @@ never `serde`, `typetag` or `async_trait`.
 
 ## Project Architecture
 
-A workspace of four crates:
+A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
 
 - `ishikari` - the library
 - `ishikari-macros` - `#[ishikari::job]` and `#[ishikari::worker]` (syn 2)
@@ -40,7 +43,13 @@ A workspace of four crates:
   `assets/admin-embed.css` (no themes, for a host's layout); both are committed. Its scripts
   are plain JS with no build step: `assets/admin.js` (graphs, tooltips...) and
   `assets/builder.js`, the definition editor's workflow builder (HTML nodes, SVG edges, a
-  `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`.
+  `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`. Its Node types
+  page uploads the host's node modules (`AppState::with_node_modules`).
+- `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
+  the `ishikari:node` world in `wit/node.wit`), each call in a sandbox with its module's
+  grants and limits. Its own workspace and lockfile: wasmtime needs Rust 1.96, the workspace's
+  MSRV is 1.83. Its tests upload `tests/fixtures/testkit-v*.wasm` (committed; rebuilt by
+  `mise run wasm:fixtures`).
 
 ### Core components (`ishikari/src`)
 
@@ -75,7 +84,9 @@ A workspace of four crates:
   - `Workflow::progress`.
 - **`dependencies/`**: dependency rows and the `DependencyResolver`, a safety-net sweep for
   workflows and sagas a job left behind (one rescued and discarded).
-- **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs).
+- **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs): `NodeTypes`
+  runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
+  the version uploaded last before the run was created).
 
 ### Job lifecycle
 

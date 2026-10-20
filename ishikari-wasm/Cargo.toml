@@ -7,8 +7,9 @@ rust-version = "1.96"
 description = "WebAssembly components as node types for ishikari's workflow definitions"
 license = "MIT"
 repository = "https://github.com/scrogson/ishikari"
+readme = "README.md"
 # Not the tests' fixtures.
-include = ["src", "wit"]
+include = ["src", "wit", "README.md"]
 
 [dependencies]
 ishikari = { version = "0.4.0", path = "../ishikari" }
