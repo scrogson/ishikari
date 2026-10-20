@@ -40,7 +40,11 @@ tracing = "0.1"
 ureq = "3"
 
 [dev-dependencies]
+axum = "0.8"
+ishikari-admin = { version = "0.4.0", path = "../ishikari-admin" }
 tokio = { version = "1.41", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 # Its own, with its own Cargo.lock: see rust-version.

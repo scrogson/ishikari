@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run the admin with node types uploaded as WebAssembly (ishikari-wasm/examples/admin.rs) on http://127.0.0.1:3001"
+#MISE depends=["_check-db-url"]
+set -e
+cargo run --manifest-path ishikari-wasm/Cargo.toml --example admin
