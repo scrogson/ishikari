@@ -1,0 +1,27 @@
+# A node module for ishikari-wasm's tests, built by `mise run wasm:fixtures` into the
+# `../*.wasm` the tests upload. Not a workspace member: it builds for wasm32-wasip2.
+[package]
+name = "testkit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# The second version the tests upload: `shout` says which version ran.
+v2 = []
+
+[dependencies]
+serde_json = "1"
+wit-bindgen = "0.51"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[workspace]

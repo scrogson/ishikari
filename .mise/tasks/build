@@ -9,3 +9,5 @@ if [ "${usage_release:-false}" = "true" ]; then
 fi
 
 cargo build "${args[@]}"
+# ishikari-wasm is a workspace of its own (it needs a newer Rust).
+cargo build --manifest-path ishikari-wasm/Cargo.toml "${args[@]}"

@@ -19,4 +19,6 @@ if [ "${usage_watch:-false}" = "true" ]; then
   cargo watch -x "test ${args[*]}"
 else
   cargo test --workspace "${args[@]}"
+  # ishikari-wasm is a workspace of its own (it needs a newer Rust).
+  cargo test --manifest-path ishikari-wasm/Cargo.toml "${args[@]}"
 fi

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Build ishikari-wasm's test module (tests/fixtures/testkit) into testkit-v1.wasm and testkit-v2.wasm"
+#MISE dir="ishikari-wasm/tests/fixtures/testkit"
+set -e
+# rustup's toolchain: it has the wasm32-wasip2 target (`rustup target add wasm32-wasip2`).
+toolchain="${WASM_TOOLCHAIN:-stable}"
+build() {
+  cargo "+$toolchain" build --release --target wasm32-wasip2 "$@"
+}
+build
+cp target/wasm32-wasip2/release/testkit.wasm ../testkit-v1.wasm
+build --features v2
+cp target/wasm32-wasip2/release/testkit.wasm ../testkit-v2.wasm
+ls -l ../*.wasm

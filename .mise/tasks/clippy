@@ -2,3 +2,5 @@
 #MISE description="Run clippy with warnings as errors"
 set -e
 cargo clippy -- -D warnings
+# ishikari-wasm is a workspace of its own (it needs a newer Rust).
+cargo clippy --manifest-path ishikari-wasm/Cargo.toml --all-targets -- -D warnings

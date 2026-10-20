@@ -1,0 +1,47 @@
+[package]
+name = "ishikari-wasm"
+version = "0.4.0"
+edition = "2021"
+# wasmtime's, which is why this crate isn't in the repository's workspace.
+rust-version = "1.96"
+description = "WebAssembly components as node types for ishikari's workflow definitions"
+license = "MIT"
+repository = "https://github.com/scrogson/ishikari"
+# Not the tests' fixtures.
+include = ["src", "wit"]
+
+[dependencies]
+ishikari = { version = "0.4.0", path = "../ishikari" }
+
+# The runtime: components, with WASI p2 for what guests' standard libraries import
+wasmtime = { version = "49", default-features = false, features = [
+  "component-model",
+  "cranelift",
+  "parallel-compilation",
+  "runtime",
+  "std",
+] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
+
+async-trait = "0.1"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8.6", default-features = false, features = [
+  "chrono",
+  "json",
+  "postgres",
+  "runtime-tokio",
+] }
+tokio = { version = "1.41", features = ["rt"] }
+tracing = "0.1"
+# `fetch`: blocking, like the guest's call it serves
+ureq = "3"
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Its own, with its own Cargo.lock: see rust-version.
+[workspace]
