@@ -9,6 +9,12 @@
         <h1 class="ik-title">Node types</h1>
         <p class="ik-subtitle">What the workflow builder offers: the types registered in Rust{% if modules.is_some() %}, then the modules uploaded here{% endif %}</p>
     </div>
+    {% if modules.is_some() %}
+    <a href="{{ base_path }}/node-types/script" class="ik-btn ik-btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New script
+    </a>
+    {% endif %}
 </header>
 
 {% if let Some(notice) = notice %}
@@ -33,14 +39,14 @@
     <div class="ik-card-header">
         <div>
             <h2 class="ik-card-title">Upload a module</h2>
-            <p class="ik-card-desc">A WebAssembly component of the <code class="ik-code-inline">ishikari:node</code> world. It reaches only the hosts you list, within its limits. Uploading a name again makes its next version; runs already started keep the version they started with.</p>
+            <p class="ik-card-desc">A WebAssembly component of the <code class="ik-code-inline">ishikari:node</code> world, or a script in TypeScript or JavaScript (or write one with <a class="ik-link" href="{{ base_path }}/node-types/script">New script</a>). It reaches only the hosts you list, within its limits. Uploading a name again makes its next version; runs already started keep the version they started with.</p>
         </div>
     </div>
     <form method="post" action="{{ base_path }}/node-types" enctype="multipart/form-data">
         <div class="ik-card-body grid gap-4 sm:grid-cols-2">
             <label class="ik-field sm:col-span-2">
                 <span class="ik-label">Module</span>
-                <input type="file" name="module" accept=".wasm,application/wasm" required class="ik-input">
+                <input type="file" name="module" accept=".wasm,.ts,.js,.mjs,application/wasm,text/javascript" required class="ik-input">
             </label>
             <label class="ik-field sm:col-span-2">
                 <span class="ik-label">Allowed hosts</span>
@@ -87,6 +93,7 @@
                     <th>Memory</th>
                     <th class="ik-num">Size</th>
                     <th>Uploaded</th>
+                    <th><span class="sr-only">Actions</span></th>
                 </tr>
             </thead>
             <tbody>
@@ -95,7 +102,7 @@
                     <td>
                         <span class="font-medium ik-mono">{{ m.name }}</span>
                         {% if m.shadowed %}<span class="ik-badge ik-badge-sm ik-tone-warning" title="A type registered in Rust has this name, and runs instead">shadowed</span>{% endif %}
-                        <div class="text-xs ik-muted">{{ m.category }}</div>
+                        <div class="text-xs ik-muted">{{ m.category }} · {% if m.edit.is_some() %}script{% else %}component{% endif %}</div>
                     </td>
                     <td><span class="ik-badge ik-badge-sm ik-tone-info" title="sha256 {{ m.sha256 }}…">v{{ m.version }}</span></td>
                     <td class="max-w-md ik-muted">{% if let Some(desc) = m.description %}{{ desc }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
@@ -106,6 +113,7 @@
                     <td class="whitespace-nowrap tabular-nums">{% if let Some(mb) = m.memory %}{{ mb }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>
                     <td class="ik-num whitespace-nowrap">{{ m.size }}</td>
                     <td class="whitespace-nowrap ik-muted tabular-nums">{{ m.uploaded_at.format("%Y-%m-%d %H:%M") }}</td>
+                    <td class="text-right">{% if let Some(edit) = m.edit %}<a href="{{ edit }}" class="ik-btn ik-btn-ghost ik-btn-xs">Edit</a>{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -11,7 +11,7 @@ use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
 use crate::routes::definitions::{DefinitionDetail, DefinitionInfo, WorkflowRunInfo};
 use crate::routes::dependencies::{DependencyInfo, DependencyStats, JobWithDependencies};
 use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo, Pager};
-use crate::routes::node_types::{ModuleInfo, UploadForm};
+use crate::routes::node_types::{ModuleInfo, ScriptForm, TestRunInfo, UploadForm};
 use crate::routes::queues::{QueueInfo, QueueJobInfo};
 use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
@@ -103,6 +103,7 @@ pages!(
     DefinitionRunTemplate,
     DefinitionEditTemplate,
     NodeTypesTemplate,
+    ScriptTemplate,
 );
 
 /// Dashboard page template.
@@ -369,6 +370,18 @@ pub struct NodeTypesTemplate {
     pub notice: Option<String>,
     pub error: Option<String>,
     pub form: UploadForm,
+}
+
+/// The script editor: a node type written as a script, tested and saved here.
+#[derive(Template)]
+#[template(path = "node_types/script.html", blocks = ["title", "content"])]
+pub struct ScriptTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub form: ScriptForm,
+    pub error: Option<String>,
+    /// The test run just made, if any.
+    pub run: Option<TestRunInfo>,
 }
 
 /// Workflow definition run form template.

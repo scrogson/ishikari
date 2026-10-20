@@ -43,7 +43,7 @@ pub use events::{EventSender, ExecutionEvent};
 pub use executor::{is_truthy, ExecutionError, NodeError, NodeHandler, WorkflowExecutor};
 pub use interpolation::{InterpolationError, Interpolator};
 pub use node_job::{NodeJob, NodeJobs, NodeRunner};
-pub use node_modules::{ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules};
+pub use node_modules::{ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules, TestRun};
 pub use node_types::{NodeSpec, NodeTypes};
 pub use storage::{ExecutionStorage, NodeExecutionRow, WorkflowRunRow};
 pub use types::*;

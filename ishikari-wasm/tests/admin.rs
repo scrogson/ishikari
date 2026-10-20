@@ -1,5 +1,5 @@
-//! Through the admin (`AppState::with_node_modules`), an operator uploads a component, which the
-//! builder then offers.
+//! Through the admin (`AppState::with_node_modules`), an operator uploads a component, or writes
+//! a script in the editor, which the builder then offers.
 
 mod common;
 
@@ -97,6 +97,109 @@ async fn an_operator_uploads_a_component_the_builder_offers() {
         types["node_types"][0]["input_schema"]["op"]["required"],
         true
     );
+
+    db.finish().await;
+}
+
+/// POST `fields` as the script editor's form.
+fn script(fields: &[(&str, &str)]) -> Request<Body> {
+    Request::post("/admin/node-types/script")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(serde_urlencoded::to_string(fields).unwrap()))
+        .unwrap()
+}
+
+/// What the page's textarea `name` holds, unescaped.
+fn textarea(page: &str, name: &str) -> String {
+    let start = page.find(&format!(r#"name="{name}""#)).unwrap();
+    let start = start + page[start..].find('>').unwrap() + 1;
+    let end = start + page[start..].find("</textarea>").unwrap();
+    page[start..end]
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+const SHOUT: &str = r#"export const spec = {
+  name: "test/shout",
+  category: "test",
+  input_schema: { text: { type: "string", required: true } },
+};
+
+interface Node {
+  inputs: { text: string };
+}
+
+export function run({ inputs }: Node): { text: string } {
+  console.log("shouting");
+  return { text: inputs.text.toUpperCase() };
+}
+"#;
+
+#[tokio::test]
+async fn an_operator_writes_a_script_in_the_editor() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = Arc::new(WasmModules::new(db.pool.clone()));
+    let state = AppState::new(db.pool.clone())
+        .with_base_path("/admin")
+        .with_node_modules(modules);
+    let app = Router::new().nest("/admin", ishikari_admin::app(state));
+
+    // The editor's example is a node type, which runs with the example's test inputs.
+    let (status, page, _) = send(&app, get("/admin/node-types/script")).await;
+    assert_eq!(status, StatusCode::OK);
+    let example = textarea(&page, "source");
+    let inputs = textarea(&page, "inputs");
+    let (status, page, _) = send(
+        &app,
+        script(&[
+            ("source", &example),
+            ("inputs", &inputs),
+            ("action", "test"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Output"), "{page}");
+    assert!(!page.contains("Failed"), "{page}");
+
+    let (status, page, _) = send(
+        &app,
+        script(&[
+            ("source", SHOUT),
+            ("inputs", r#"{"text": "hey"}"#),
+            ("action", "test"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Test run of test/shout"), "{page}");
+    assert!(page.contains("HEY"), "{page}");
+    assert!(page.contains("info: shouting"), "{page}");
+
+    let (status, _, location) = send(
+        &app,
+        script(&[
+            ("source", SHOUT),
+            ("allowed_hosts", "api.example.com"),
+            ("action", "save"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, page, _) = send(&app, get(&location.unwrap())).await;
+    assert!(page.contains("Uploaded test/shout v1"), "{page}");
+    let edit = "/admin/node-types/script?module=test%2Fshout";
+    assert!(page.contains(edit), "{page}");
+
+    let (status, page, _) = send(&app, get(edit)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(textarea(&page, "source"), SHOUT);
+    assert!(page.contains("api.example.com"), "{page}");
 
     db.finish().await;
 }

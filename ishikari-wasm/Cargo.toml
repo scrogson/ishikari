@@ -46,6 +46,7 @@ ureq = "3"
 [dev-dependencies]
 axum = "0.8"
 ishikari-admin = { version = "0.4.0", path = "../ishikari-admin" }
+serde_urlencoded = "0.7"
 tokio = { version = "1.41", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

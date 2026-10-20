@@ -8,6 +8,7 @@ use common::TestDb;
 use ishikari::execution::{
     ExecutionStorage, ModuleError, ModuleUpload, NodeContext, NodeData, NodeError, NodeHandler,
     NodeJob, NodeJobs, NodeModule, NodeModules, NodeRunner, NodeSpec, NodeTypes, SchemaField,
+    TestRun,
 };
 use ishikari::prelude::*;
 use ishikari::workflows::{Dag, Workflow};
@@ -611,6 +612,14 @@ impl NodeModules for Uploaded {
     }
 
     async fn upload(&self, _: ModuleUpload) -> Result<NodeModule, ModuleError> {
+        Err(ModuleError::Invalid("read-only".into()))
+    }
+
+    async fn test_run(
+        &self,
+        _: ModuleUpload,
+        _: HashMap<String, Value>,
+    ) -> Result<TestRun, ModuleError> {
         Err(ModuleError::Invalid("read-only".into()))
     }
 }

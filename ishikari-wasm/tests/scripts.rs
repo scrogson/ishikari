@@ -7,7 +7,8 @@ mod common;
 use common::{failure, pong, TestDb};
 use ishikari::execution::{ModuleError, ModuleGrants, ModuleUpload, NodeModules};
 use ishikari_wasm::WasmModules;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 const GREET: &str = r#"
@@ -397,6 +398,78 @@ async fn a_script_fetches_from_its_granted_hosts_only() {
         .await
         .unwrap();
     assert_eq!(output, json!({ "status": 200, "ok": true, "body": "pong" }));
+
+    db.finish().await;
+}
+
+/// A test run runs a script once as a node, within its grants, and keeps nothing: what its node
+/// returned or why it failed, with what it logged. A script that isn't a node type is refused,
+/// as its upload would be.
+#[tokio::test]
+async fn a_script_is_tested_without_being_kept() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let port = pong().await;
+    let modules = WasmModules::new(db.pool.clone());
+    let inputs = |inputs: Value| serde_json::from_value::<HashMap<String, Value>>(inputs).unwrap();
+
+    let run = modules
+        .test_run(
+            upload(GREET, ModuleGrants::default()),
+            inputs(json!({ "name": "Ada" })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(run.spec.name, "test/greet");
+    assert_eq!(
+        run.output,
+        Ok(json!({
+            "greeting": "hello Ada",
+            "node_type": "test/greet",
+            "workflow_inputs": {},
+        }))
+    );
+    assert_eq!(run.logs, ["info: greeting Ada"]);
+
+    let source = running(
+        r#"
+        console.warn(`fetching ${inputs.url}`);
+        return await (await fetch(inputs.url)).text();
+        "#,
+    );
+    let url = format!("http://127.0.0.1:{port}/ping");
+    let run = modules
+        .test_run(
+            upload(&source, ModuleGrants::default()),
+            inputs(json!({ "url": url })),
+        )
+        .await
+        .unwrap();
+    let error = run.output.unwrap_err();
+    assert!(error.contains("127.0.0.1 isn't a host"), "{error}");
+    assert_eq!(run.logs, [format!("warn: fetching {url}")]);
+    let grants = ModuleGrants {
+        allowed_hosts: vec![format!("127.0.0.1:{port}")],
+        ..ModuleGrants::default()
+    };
+    let run = modules
+        .test_run(upload(&source, grants), inputs(json!({ "url": url })))
+        .await
+        .unwrap();
+    assert_eq!(run.output, Ok(json!("pong")));
+
+    let refused = modules
+        .test_run(
+            upload("export const spec: = {};", ModuleGrants::default()),
+            HashMap::new(),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(ModuleError::Invalid(why)) if why.starts_with("the script isn't valid TypeScript")),
+        "{refused:?}"
+    );
+    assert!(modules.modules().await.unwrap().is_empty());
 
     db.finish().await;
 }

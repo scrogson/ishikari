@@ -1,17 +1,21 @@
 //! The Node types page: the types the host registered in Rust, and the modules its operators
-//! upload (`AppState::with_node_modules`).
+//! upload (`AppState::with_node_modules`) or write in its script editor.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::extract::multipart::{Multipart, MultipartRejection};
-use axum::extract::{Query, State};
+use axum::extract::rejection::FormRejection;
+use axum::extract::{Form, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::{DateTime, Utc};
-use ishikari::execution::{ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules};
+use ishikari::execution::{
+    ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules, NodeSpec, TestRun,
+};
 use serde::Deserialize;
 
-use crate::templates::NodeTypesTemplate;
+use crate::templates::{NodeTypesTemplate, ScriptTemplate};
 use crate::AppState;
 
 /// The largest upload the page takes, module and form together.
@@ -35,6 +39,8 @@ pub struct ModuleInfo {
     pub uploaded_at: DateTime<Utc>,
     /// Whether a type registered in Rust has its name, and so runs instead.
     pub shadowed: bool,
+    /// The editor of its script, for a module written as one.
+    pub edit: Option<String>,
 }
 
 /// What the upload form was given, to show again when it's refused.
@@ -242,12 +248,13 @@ fn info(state: &AppState, module: NodeModule) -> ModuleInfo {
         version,
         sha256,
         size,
-        source: _,
+        source,
         grants,
         uploaded_at,
     } = module;
     ModuleInfo {
         shadowed: state.node_types.iter().any(|t| t.name == spec.name),
+        edit: source.map(|_| editor_of(state, &spec.name)),
         name: spec.name,
         version,
         category: spec.category,
@@ -272,4 +279,220 @@ fn bytes(size: i64) -> String {
     } else {
         format!("{:.1} MiB", size / (KIB * KIB))
     }
+}
+
+/// The script a new one starts from.
+const EXAMPLE: &str = r#"// A node type: `spec` is what the workflow builder offers, and `run` what a node of it does.
+// `run` takes the node's `inputs` (with its `node_id`, `node_type` and `workflow_inputs`) and
+// returns its output, as JSON. `console` writes to the node's logs; `fetch` reaches the hosts
+// granted here, and no others.
+
+export const spec = {
+  name: "example/greet",
+  category: "example",
+  description: "Greets someone",
+  input_schema: {
+    name: { type: "string", required: true },
+  },
+  output_schema: {
+    greeting: { type: "string" },
+  },
+};
+
+interface Node {
+  inputs: { name: string };
+}
+
+export async function run({ inputs }: Node) {
+  console.log(`greeting ${inputs.name}`);
+  return { greeting: `Hello, ${inputs.name}!` };
+}
+"#;
+
+/// The test inputs of [`EXAMPLE`].
+const EXAMPLE_INPUTS: &str = "{\n  \"name\": \"Ada\"\n}";
+
+/// What the script editor holds: the script, its grants, and the inputs of its test runs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ScriptForm {
+    pub source: String,
+    /// The test run's inputs, a JSON object.
+    pub inputs: String,
+    /// The module being edited, if any.
+    pub module: String,
+    pub allowed_hosts: String,
+    pub timeout_seconds: String,
+    pub memory_limit_mb: String,
+    /// `test` or `save`: the button pressed.
+    pub action: String,
+}
+
+impl ScriptForm {
+    fn grants(&self) -> UploadForm {
+        UploadForm {
+            allowed_hosts: self.allowed_hosts.clone(),
+            timeout_seconds: self.timeout_seconds.clone(),
+            memory_limit_mb: self.memory_limit_mb.clone(),
+        }
+    }
+}
+
+/// A test run, as the editor shows it.
+#[derive(Debug, Clone)]
+pub struct TestRunInfo {
+    pub name: String,
+    /// Its output as pretty JSON, or why it failed.
+    pub output: Result<String, String>,
+    pub logs: Vec<String>,
+}
+
+/// Which module the editor opens.
+#[derive(Debug, Deserialize)]
+pub struct EditQuery {
+    pub module: Option<String>,
+}
+
+/// The script editor: a new script, from an example, or the latest version of the module
+/// `module`, when it's a script.
+pub async fn editor(State(state): State<AppState>, Query(query): Query<EditQuery>) -> Response {
+    let Some(modules) = state.node_modules.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(name) = query.module else {
+        let form = ScriptForm {
+            source: EXAMPLE.to_string(),
+            inputs: EXAMPLE_INPUTS.to_string(),
+            ..ScriptForm::default()
+        };
+        return script_page(&state, StatusCode::OK, form, None, None);
+    };
+    let module = match modules.modules().await {
+        Ok(modules) => modules.into_iter().find(|m| m.spec.name == name),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let Some((module, source)) = module.and_then(|m| m.source.clone().map(|s| (m, s))) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let grants = module.grants;
+    let form = ScriptForm {
+        source,
+        inputs: example_inputs(&module.spec),
+        module: name,
+        allowed_hosts: grants.allowed_hosts.join("\n"),
+        timeout_seconds: grants
+            .timeout
+            .map(|t| t.as_secs_f64().to_string())
+            .unwrap_or_default(),
+        memory_limit_mb: grants
+            .memory_limit_mb
+            .map(|mb| mb.to_string())
+            .unwrap_or_default(),
+        action: String::new(),
+    };
+    script_page(&state, StatusCode::OK, form, None, None)
+}
+
+/// Test or save the editor's script, an `application/x-www-form-urlencoded` [`ScriptForm`]: a
+/// test run shows what its node returned and logged, keeping nothing; saving uploads it.
+pub async fn script(
+    State(state): State<AppState>,
+    form: Result<Form<ScriptForm>, FormRejection>,
+) -> Response {
+    let Some(modules) = state.node_modules.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut form = match form {
+        Ok(Form(form)) => form,
+        Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
+    };
+    // A textarea's lines end `\r\n`, which would make each save from the editor new bytes.
+    form.source = form.source.replace("\r\n", "\n");
+    match form.action.as_str() {
+        "test" => match test(modules.as_ref(), &form).await {
+            Ok(run) => script_page(&state, StatusCode::OK, form, None, Some(run)),
+            Err((status, error)) => script_page(&state, status, form, Some(error), None),
+        },
+        "save" => match save(&state, modules.as_ref(), &form).await {
+            Ok(location) => Redirect::to(&location).into_response(),
+            Err((status, error)) => script_page(&state, status, form, Some(error), None),
+        },
+        _ => {
+            let error = "Test or save the script".to_string();
+            script_page(&state, StatusCode::BAD_REQUEST, form, Some(error), None)
+        }
+    }
+}
+
+async fn test(modules: &dyn NodeModules, form: &ScriptForm) -> Result<TestRunInfo, Refused> {
+    let bad = |why: &str| (StatusCode::BAD_REQUEST, why.to_string());
+    if form.source.trim().is_empty() {
+        return Err(bad("Write a script to test"));
+    }
+    let inputs = match form.inputs.trim() {
+        "" => HashMap::new(),
+        inputs => serde_json::from_str(inputs)
+            .map_err(|_| bad("The test inputs must be a JSON object"))?,
+    };
+    let grants = grants(&form.grants()).map_err(bad)?;
+    let upload = ModuleUpload {
+        bytes: form.source.clone().into_bytes(),
+        grants,
+    };
+    let TestRun { spec, output, logs } = modules.test_run(upload, inputs).await.map_err(refused)?;
+    let output = output
+        .map(|output| serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()));
+    Ok(TestRunInfo {
+        name: spec.name,
+        output,
+        logs,
+    })
+}
+
+async fn save(
+    state: &AppState,
+    modules: &dyn NodeModules,
+    form: &ScriptForm,
+) -> Result<String, Refused> {
+    if form.source.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Write a script to upload".to_string(),
+        ));
+    }
+    let bytes = form.source.clone().into_bytes();
+    uploaded(state, modules, Some(bytes), &form.grants()).await
+}
+
+/// Test inputs for a node of `spec`: each of its inputs, unset.
+fn example_inputs(spec: &NodeSpec) -> String {
+    let inputs: serde_json::Map<String, serde_json::Value> = spec
+        .input_schema
+        .keys()
+        .map(|name| (name.clone(), serde_json::Value::Null))
+        .collect();
+    serde_json::to_string_pretty(&inputs).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Where the editor of the module `name` is.
+fn editor_of(state: &AppState, name: &str) -> String {
+    let query = serde_urlencoded::to_string([("module", name)]).unwrap_or_default();
+    format!("{}/node-types/script?{query}", state.base_path)
+}
+
+fn script_page(
+    state: &AppState,
+    status: StatusCode,
+    form: ScriptForm,
+    error: Option<String>,
+    run: Option<TestRunInfo>,
+) -> Response {
+    let template = ScriptTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        form,
+        error,
+        run,
+    };
+    (status, template).into_response()
 }

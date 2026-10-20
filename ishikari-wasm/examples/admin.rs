@@ -1,10 +1,11 @@
-//! The admin with node types uploaded as WebAssembly components, and an engine running the
-//! definitions' nodes of them.
+//! The admin with node types uploaded as WebAssembly components or scripts, and an engine
+//! running the definitions' nodes of them.
 //!
 //!   DATABASE_URL=postgres://... cargo run --example admin   (or `mise run wasm:demo`)
 //!
 //! Then upload `tests/fixtures/testkit-v1.wasm` on http://127.0.0.1:3001/node-types, make a
-//! definition with a `test/kit` node (inputs `op: shout`, `text: hi`), and run it.
+//! definition with a `test/kit` node (inputs `op: shout`, `text: hi`), and run it. Or write a
+//! script with New script, test it there, and save it.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

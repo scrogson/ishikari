@@ -1630,6 +1630,7 @@ dependencies = [
  "ishikari",
  "ishikari-admin",
  "serde_json",
+ "serde_urlencoded",
  "sha2",
  "sqlx",
  "swc_common",
