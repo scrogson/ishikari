@@ -46,6 +46,10 @@ impl Guest for Testkit {
                     n = std::hint::black_box(n.wrapping_add(1));
                 }
             }
+            "sleep" => {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                json!({ "slept": true })
+            }
             "hog" => {
                 let mut chunks = Vec::new();
                 for _ in 0..1024 {

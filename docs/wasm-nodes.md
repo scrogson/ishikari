@@ -69,8 +69,10 @@ What a module can reach is what the operator grants it on upload, nothing by def
 Per module, with defaults on `WasmModules`:
 
 - **Timeout** (30s): wall clock for the whole call. CPU is cut off by epoch interruption (a
-  ticker advances the engine's epoch every 10ms, the store traps past its deadline); a `fetch`
-  gets what's left of the budget as its own timeout.
+  ticker advances the engine's epoch every 10ms, the store traps past its deadline). Waiting in
+  the host can't be interrupted, so it's held to what's left: a `fetch` gets it as its own
+  timeout, and a sleep (`wasi:clocks/monotonic-clock` subscriptions) ends by the deadline. A
+  call that returns after its deadline fails all the same.
 - **Memory** (64 MiB): the store's limiter refuses growth past it, and the guest traps.
 
 A module that breaks a limit fails the node with what it broke, and the node is retried like

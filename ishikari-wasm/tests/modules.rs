@@ -228,6 +228,32 @@ async fn a_node_is_stopped_at_its_timeout() {
     db.finish().await;
 }
 
+/// A node waiting in WASI (a guest's sleep) is stopped at its timeout too, though the engine
+/// can't interrupt it there.
+#[tokio::test]
+async fn a_node_sleeping_is_stopped_at_its_timeout() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = WasmModules::new(db.pool.clone());
+    let grants = ModuleGrants {
+        timeout: Some(Duration::from_millis(200)),
+        ..ModuleGrants::default()
+    };
+    modules.upload(upload(V1, grants)).await.unwrap();
+
+    let start = Instant::now();
+    let error = failure(run_node(&modules, &db.pool, json!({ "op": "sleep" })).await);
+    assert_eq!(error, "ran longer than its 200ms timeout");
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+
+    db.finish().await;
+}
+
 /// A node that grows its memory past its module's limit fails.
 #[tokio::test]
 async fn a_node_is_held_to_its_memory_limit() {
