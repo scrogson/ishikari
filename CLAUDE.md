@@ -15,6 +15,7 @@ Tasks are [mise](https://mise.jdx.dev) file tasks in `.mise/tasks`:
 - `mise run demo` - the admin demo (`ishikari-admin/examples/demo.rs`)
 - `mise run wasm:demo` - the admin with uploaded node types (`ishikari-wasm/examples/admin.rs`)
 - `mise run wasm:fixtures` - build ishikari-wasm's test modules (needs `wasm32-wasip2`)
+- `mise run wasm:js-runtime` - build ishikari-wasm's JavaScript runtime (`js-runtime.wasm`)
 - `mise run version:patch|minor|major` - bump and sync the crates' versions
 - `mise run publish --dry-run` - check the crates package; `mise run publish` publishes them
 
@@ -44,12 +45,15 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   are plain JS with no build step: `assets/admin.js` (graphs, tooltips...) and
   `assets/builder.js`, the definition editor's workflow builder (HTML nodes, SVG edges, a
   `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`. Its Node types
-  page uploads the host's node modules (`AppState::with_node_modules`).
+  page uploads the host's node modules (`AppState::with_node_modules`), and its script editor
+  (`/node-types/script`) writes, test-runs and saves scripts.
 - `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
-  the `ishikari:node` world in `wit/node.wit`), each call in a sandbox with its module's
-  grants and limits. Its own workspace and lockfile: wasmtime needs Rust 1.96, the workspace's
-  MSRV is 1.83. Its tests upload `tests/fixtures/testkit-v*.wasm` (committed; rebuilt by
-  `mise run wasm:fixtures`).
+  the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
+  in a sandbox with its module's grants and limits. A script's types are stripped by swc
+  (`src/typescript.rs`), and it runs on `js-runtime.wasm`, a Boa component (`script-node`
+  world) built from `js-runtime/` by `mise run wasm:js-runtime` and committed. Its own
+  workspace and lockfile: wasmtime needs Rust 1.96, the workspace's MSRV is 1.83. Its tests
+  upload `tests/fixtures/testkit-v*.wasm` (committed; rebuilt by `mise run wasm:fixtures`).
 
 ### Core components (`ishikari/src`)
 
@@ -86,7 +90,8 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   workflows and sagas a job left behind (one rescued and discarded).
 - **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs): `NodeTypes`
   runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
-  the version uploaded last before the run was created).
+  the version uploaded last before the run was created). `ModuleJob` runs a module as a plain
+  job, through `NodeJobs`.
 
 ### Job lifecycle
 

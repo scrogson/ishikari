@@ -264,11 +264,12 @@ nor uploaded fails its run without retrying.
 
 To run nodes some other way, implement `NodeRunner` and give it to `NodeJobs` instead.
 
-### Node types uploaded as WebAssembly
+### Node types uploaded as WebAssembly or scripts
 
-With [`ishikari-wasm`](ishikari-wasm/README.md), your operators also upload node types while the
-app runs: WebAssembly components, from any language that targets the component model, run in a
-sandbox. Give its `WasmModules` to your `NodeTypes` and to the dashboard:
+With [`ishikari-wasm`](ishikari-wasm/README.md), your operators also add node types while the
+app runs: WebAssembly components, from any language that targets the component model, or
+scripts in TypeScript or JavaScript, written in the dashboard. Each runs in a sandbox. Give its
+`WasmModules` to your `NodeTypes` and to the dashboard:
 
 ```rust
 use ishikari_wasm::WasmModules;
@@ -281,9 +282,14 @@ let state = ishikari_admin::AppState::new(pool.clone())
 ```
 
 The Node types page uploads a module with the hosts it may reach and its timeout and memory
-limit, and the palette offers it after your registered types. Uploading a name again makes its
-next version; a run uses the version uploaded last before it was created. See
-[docs/wasm-nodes.md](docs/wasm-nodes.md) for the design.
+limit, or writes a script in its editor, test-running it before saving it. The palette offers
+the modules after your registered types. Uploading a name again makes its next version; a run
+uses the version uploaded last before it was created.
+
+A module also runs as a plain job, `ModuleJob::new("send-invoice", json!({ .. }))`, its args the
+module's inputs, in the `modules` queue of an engine whose state is the `NodeJobs` of those node
+types. What it returns completes the job, `{"snooze": seconds}` snoozes it and
+`{"cancel": "why"}` cancels it. See [docs/wasm-nodes.md](docs/wasm-nodes.md) for the design.
 
 ### Theming
 
@@ -335,7 +341,7 @@ cargo test --manifest-path ishikari-wasm/Cargo.toml
 - `ishikari-macros`: `#[ishikari::job]` and `#[ishikari::worker]`.
 - `ishikari-cli`: `ishikari generate migration` and `ishikari generate version`.
 - `ishikari-admin`: the dashboard.
-- `ishikari-wasm`: node types uploaded as WebAssembly components.
+- `ishikari-wasm`: node types uploaded as WebAssembly components or written as scripts.
 
 ## License
 

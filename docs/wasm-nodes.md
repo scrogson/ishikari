@@ -1,7 +1,7 @@
 # WebAssembly node types
 
-Status: phase 1 (prebuilt components uploaded through the admin) is built; phases 2 and 3 are
-designs.
+Status: built: components uploaded through the admin (phase 1), scripts written in it (phase
+2) and modules run as jobs (phase 3).
 
 A host registers node types in Rust (`NodeTypes::register`). This adds node types its operators
 upload while it runs: WebAssembly components, built from any language that targets the
@@ -37,7 +37,7 @@ auth like the rest of the dashboard, and only exists when the host opts in.
 ```wit
 world node {
     import host;
-    export spec: func() -> string;                          // a NodeSpec, as JSON
+    export spec: func() -> result<string, string>;          // a NodeSpec, as JSON
     export run: func(input: string) -> result<string, string>;
 }
 ```
@@ -94,16 +94,24 @@ leave a module half-broken for the next one. Compiling a component is the expens
 compiled components are cached by their sha256 and a node only loads a module's bytes the first
 time an engine sees that version. The call runs on a blocking thread.
 
-## Phase 2: TypeScript in the browser
+## Phase 2: scripts
 
-An editor in the admin, without compiling each script to wasm:
+TypeScript or JavaScript written in the admin, without compiling each script to wasm:
 
-- ishikari ships one component, a JavaScript runtime (QuickJS built for `wasm32-wasip2`, the
-  way Javy does), that exports the same `node` world and evaluates a script it's given.
-- The editor strips TypeScript's types in the browser (TypeScript's own transpiler or
-  `amaro`/swc's wasm build) and saves the JavaScript as the module's source.
-- A JS module runs the shared runtime with its source: same sandbox, same limits, saved in
-  milliseconds, no toolchain on the server.
+- A script is an ES module exporting `spec` (an object) and `run` (input to output, or a
+  promise of it). It's stored as its source, a module like any other: same versions, grants
+  and limits.
+- `ishikari-wasm` ships one component, `js-runtime.wasm`, a JavaScript runtime built from
+  `js-runtime/` with Boa. It exports the `script-node` world: `node`, plus an import
+  `script.source` through which the host hands it the script. Its globals are the web APIs a
+  node needs (`console` to the logs, `fetch` through `host.fetch`, `URL`, text encoding,
+  base64, `structuredClone`, timers, `AbortController`).
+- TypeScript's types are stripped on the server, by swc's type stripper, when a script is
+  described and when it runs. Stripping keeps every position, so an error points into the
+  TypeScript as written; a script using `enum` or `namespace` is transformed instead.
+- The editor (Node types, New script or Edit) posts the script, test inputs and grants: Test
+  run runs it once as a node (`NodeModules::test_run`, which keeps nothing) and shows its
+  output or error and logs; Save uploads it as the next version.
 
 Rust written in the browser isn't planned: compiling it needs rustc and the wasm target on the
 server, takes seconds to minutes, and runs untrusted build scripts and proc macros outside any
@@ -111,14 +119,21 @@ sandbox. Rust nodes are built locally (`cargo build --target wasm32-wasip2`) and
 
 ## Phase 3: jobs
 
-One Rust worker, `WasmJob { module, version, args }`, whose `perform` runs the module's
-`perform(args)` (a second world, `ishikari:job`, returning complete, snooze, cancel or an
-error). Queues, retries, unique jobs and cron work unchanged; the job pins its module's version
-when inserted. Inserted from Rust (`WasmJob::new("send-invoice", json!({..}))`), the admin, or a
-cron entry.
+One worker in ishikari, `ModuleJob { module, args }`, in the queue `modules`: it runs the
+module's node with its args as the inputs and `job:<id>` as the node's id, through the
+`NodeRunner` of the engine's `NodeJobs` (`NodeTypes` runs it by its `NodeModules`). It needs no
+second world: what the node returns completes the job, `{"snooze": seconds}` snoozes it and
+`{"cancel": "why"}` cancels it (each only as the output's sole key), and a node that fails
+fails the attempt. The version is the one uploaded last before the job was inserted, so retries
+run the same code. A missing module, or args that aren't an object, cancel it. Queues, retries,
+unique jobs and cron work unchanged: `ModuleJob::new("send-invoice", json!({..}))` is inserted
+from Rust or by a `Cron` entry.
 
 ## Open questions
 
+- Inserting module jobs from the admin.
+- Whether outcomes by output convention (`snooze`, `cancel`) are enough, or a job world with
+  its own result type is worth it.
 - Pruning old versions no run or job can need.
 - Carrying a module's grants over to its next upload, or editing them without re-uploading.
 - Bounding the compiled-component cache (one entry per version an engine has run or described).
