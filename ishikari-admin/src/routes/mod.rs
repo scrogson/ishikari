@@ -9,6 +9,7 @@ pub mod dashboard;
 pub mod definitions;
 pub mod dependencies;
 pub mod jobs;
+pub mod node_types;
 pub mod queues;
 pub mod resolver;
 pub mod sagas;

@@ -11,6 +11,7 @@ use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
 use crate::routes::definitions::{DefinitionDetail, DefinitionInfo, WorkflowRunInfo};
 use crate::routes::dependencies::{DependencyInfo, DependencyStats, JobWithDependencies};
 use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo, Pager};
+use crate::routes::node_types::{ModuleInfo, UploadForm};
 use crate::routes::queues::{QueueInfo, QueueJobInfo};
 use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
@@ -101,6 +102,7 @@ pages!(
     DefinitionImportTemplate,
     DefinitionRunTemplate,
     DefinitionEditTemplate,
+    NodeTypesTemplate,
 );
 
 /// Dashboard page template.
@@ -353,6 +355,20 @@ pub struct DefinitionImportTemplate {
     pub nav_items: Vec<NavItem>,
     pub error: Option<String>,
     pub yaml: String,
+}
+
+/// The Node types page: the types registered in Rust, and the uploaded modules (`None` when
+/// the host has none to upload).
+#[derive(Template)]
+#[template(path = "node_types/list.html", blocks = ["title", "content"])]
+pub struct NodeTypesTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub registered: Vec<ishikari::execution::NodeSpec>,
+    pub modules: Option<Vec<ModuleInfo>>,
+    pub notice: Option<String>,
+    pub error: Option<String>,
+    pub form: UploadForm,
 }
 
 /// Workflow definition run form template.

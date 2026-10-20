@@ -17,7 +17,7 @@ embed-frontend = []
 ishikari = { version = "0.4.0", path = "../ishikari" }
 
 # Web framework
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 
@@ -35,6 +35,7 @@ askama_web = { version = "0.14", features = ["axum-0.8"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"
+serde_urlencoded = "0.7"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
