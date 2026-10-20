@@ -5,10 +5,10 @@
 mod common;
 
 use chrono::Utc;
-use common::TestDb;
+use common::{failure, pong, TestDb};
 use ishikari::execution::{
-    ModuleError, ModuleGrants, ModuleUpload, NodeContext, NodeError, NodeJob, NodeJobs, NodeModule,
-    NodeModules, NodeTypes,
+    ModuleError, ModuleGrants, ModuleUpload, NodeError, NodeJob, NodeJobs, NodeModule, NodeModules,
+    NodeTypes,
 };
 use ishikari::workflows::Dag;
 use ishikari::{Engine, Postgres, Queue};
@@ -31,24 +31,7 @@ fn upload(bytes: &[u8], grants: ModuleGrants) -> ModuleUpload {
 
 /// The output of a node of the module's latest version run with `inputs`.
 async fn run_node(modules: &WasmModules, pool: &PgPool, inputs: Value) -> Result<Value, NodeError> {
-    let handler = modules
-        .handler(KIT, Utc::now())
-        .await
-        .unwrap()
-        .expect("the module");
-    let mut ctx = NodeContext::new(uuid::Uuid::new_v4(), "kit", KIT);
-    ctx.inputs = serde_json::from_value(inputs).unwrap();
-    handler
-        .execute(&ctx, pool)
-        .await
-        .map(|output| output.to_json())
-}
-
-fn failure(result: Result<Value, NodeError>) -> String {
-    match result {
-        Err(NodeError::ExecutionFailed(error)) => error,
-        other => panic!("expected the node to fail, got {other:?}"),
-    }
+    common::run(modules, pool, KIT, inputs).await
 }
 
 /// An upload is described by its spec. The same bytes and grants again change nothing; new
@@ -124,16 +107,16 @@ async fn uploads_that_arent_node_modules_are_refused() {
         Err(ModuleError::Invalid(why)) => why,
         other => panic!("expected the upload to be refused, got {other:?}"),
     };
-    match modules.describe(b"not wasm").await {
-        Err(ModuleError::Invalid(why)) => assert!(why.starts_with("not a WebAssembly"), "{why}"),
+    // Neither a component nor text (which would be a script).
+    let junk = &[0xff, 0xfe, 0x00, 0x01];
+    match modules.describe(junk).await {
+        Err(ModuleError::Invalid(why)) => {
+            assert!(why.starts_with("neither a WebAssembly"), "{why}")
+        }
         other => panic!("expected the bytes to be refused, got {other:?}"),
     }
-    let why = invalid(
-        modules
-            .upload(upload(b"not wasm", ModuleGrants::default()))
-            .await,
-    );
-    assert!(why.starts_with("not a WebAssembly component"), "{why}");
+    let why = invalid(modules.upload(upload(junk, ModuleGrants::default())).await);
+    assert!(why.starts_with("neither a WebAssembly component"), "{why}");
     // An empty core module: WebAssembly, but not a component.
     let core = b"\0asm\x01\0\0\0";
     let why = invalid(modules.upload(upload(core, ModuleGrants::default())).await);
@@ -187,7 +170,7 @@ async fn a_node_runs_its_modules_code() {
         .unwrap();
     assert_eq!(output["text"], "HI");
     assert_eq!(output["version"], 1);
-    assert_eq!(output["input"]["node_id"], "kit");
+    assert_eq!(output["input"]["node_id"], "node");
     assert_eq!(output["input"]["node_type"], KIT);
     assert_eq!(output["input"]["inputs"]["text"], "hi");
 
@@ -301,28 +284,6 @@ async fn a_node_reaches_nothing_by_wasi() {
     );
 
     db.finish().await;
-}
-
-/// A server on a local port answering every request with `pong`.
-async fn pong() -> u16 {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        loop {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            tokio::spawn(async move {
-                let mut request = [0u8; 4096];
-                let _ = socket.read(&mut request).await;
-                let _ = socket
-                    .write_all(
-                        b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\npong",
-                    )
-                    .await;
-            });
-        }
-    });
-    port
 }
 
 /// `fetch` reaches the hosts the module was granted, and no others.

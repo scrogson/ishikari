@@ -242,6 +242,7 @@ fn info(state: &AppState, module: NodeModule) -> ModuleInfo {
         version,
         sha256,
         size,
+        source: _,
         grants,
         uploaded_at,
     } = module;

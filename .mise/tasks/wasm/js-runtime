@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Build the runtime of script modules (ishikari-wasm/js-runtime) into ishikari-wasm/js-runtime.wasm"
+#MISE dir="ishikari-wasm/js-runtime"
+set -e
+# rustup's toolchain: it has the wasm32-wasip2 target (`rustup target add wasm32-wasip2`).
+toolchain="${WASM_TOOLCHAIN:-stable}"
+cargo "+$toolchain" build --release --target wasm32-wasip2
+cp target/wasm32-wasip2/release/ishikari_js_runtime.wasm ../js-runtime.wasm
+ls -l ../js-runtime.wasm

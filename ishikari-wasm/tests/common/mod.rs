@@ -1,7 +1,12 @@
-//! A schema of the test's own in a real Postgres, as ishikari's tests have (`ishikari/tests/common`).
+//! A schema of the test's own in a real Postgres, as ishikari's tests have (`ishikari/tests/common`),
+//! and running a node of an uploaded type.
 
 #![allow(dead_code)]
 
+use chrono::Utc;
+use ishikari::execution::{NodeContext, NodeError, NodeModules};
+use ishikari_wasm::WasmModules;
+use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Executor, PgPool};
 
@@ -69,4 +74,54 @@ impl TestDb {
             }
         }
     }
+}
+
+/// The output of a node of `node_type`'s latest version run with `inputs`.
+pub async fn run(
+    modules: &WasmModules,
+    pool: &PgPool,
+    node_type: &str,
+    inputs: Value,
+) -> Result<Value, NodeError> {
+    let handler = modules
+        .handler(node_type, Utc::now())
+        .await
+        .unwrap()
+        .expect("the module");
+    let mut ctx = NodeContext::new(uuid::Uuid::new_v4(), "node", node_type);
+    ctx.inputs = serde_json::from_value(inputs).unwrap();
+    handler
+        .execute(&ctx, pool)
+        .await
+        .map(|output| output.to_json())
+}
+
+/// Why the node failed.
+pub fn failure(result: Result<Value, NodeError>) -> String {
+    match result {
+        Err(NodeError::ExecutionFailed(error)) => error,
+        other => panic!("expected the node to fail, got {other:?}"),
+    }
+}
+
+/// A server on a local port answering every request with `pong`.
+pub async fn pong() -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\npong",
+                    )
+                    .await;
+            });
+        }
+    });
+    port
 }

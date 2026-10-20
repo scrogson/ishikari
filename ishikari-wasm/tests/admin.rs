@@ -75,7 +75,8 @@ async fn an_operator_uploads_a_component_the_builder_offers() {
         .with_node_modules(modules);
     let app = Router::new().nest("/admin", ishikari_admin::app(state));
 
-    let (status, page, _) = send(&app, upload(b"not a component", "")).await;
+    // A core module: WebAssembly, but not a component.
+    let (status, page, _) = send(&app, upload(b"\0asm\x01\0\0\0", "")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(page.contains("not a WebAssembly component"), "{page}");
 

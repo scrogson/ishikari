@@ -1,9 +1,10 @@
-//! Compiling and calling components: a wasmtime engine whose epoch a ticker advances, a linker
-//! with WASI (nothing to reach, and sleeps that end at the call's deadline) and the `host`
-//! interface, and compiled components cached by their sha256.
+//! Loading and calling modules: a wasmtime engine whose epoch a ticker advances, a linker with
+//! WASI (nothing to reach, and sleeps that end at the call's deadline), `host` and `script`, and
+//! loaded modules cached by their sha256. A component is compiled; a script is run by the
+//! JavaScript runtime (`js-runtime.wasm`, built from `js-runtime/`), compiled once.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use ishikari::execution::NodeSpec;
@@ -18,10 +19,15 @@ use crate::output::Output;
 use crate::sandbox::Sandbox;
 
 pub(crate) mod bindings {
-    wasmtime::component::bindgen!({ path: "wit", world: "node" });
+    // The world of the runtime of scripts, which is a node's and `script`: a component of the
+    // `node` world is instantiated through its linker just the same.
+    wasmtime::component::bindgen!({ path: "wit", world: "script-node" });
 }
 
-pub(crate) use bindings::{Node, NodePre};
+use bindings::{ScriptNode as Node, ScriptNodePre as NodePre};
+
+/// The runtime of scripts: a component of the `script-node` world.
+const JS_RUNTIME: &[u8] = include_bytes!("../js-runtime.wasm");
 
 /// How often the engine's epoch advances: the granularity of a call's timeout.
 const TICK: Duration = Duration::from_millis(10);
@@ -42,14 +48,52 @@ pub(crate) struct Call<R> {
     pub logs: Vec<String>,
 }
 
+/// A module ready to call: a component, or a script with the runtime that runs it.
+#[derive(Clone)]
+pub(crate) struct Guest {
+    pre: NodePre<State>,
+    script: Option<Arc<str>>,
+}
+
+/// What a module's bytes are.
+pub(crate) enum Kind<'a> {
+    Component,
+    Script(&'a str),
+}
+
+impl<'a> Kind<'a> {
+    pub fn of(bytes: &'a [u8]) -> Result<Self, String> {
+        if bytes.starts_with(b"\0asm") {
+            return Ok(Kind::Component);
+        }
+        std::str::from_utf8(bytes)
+            .map(Kind::Script)
+            .map_err(|_| "neither a WebAssembly component nor a script (UTF-8 text)".into())
+    }
+}
+
 pub(crate) struct Runtime {
     engine: Engine,
     linker: Linker<State>,
-    compiled: Mutex<HashMap<String, NodePre<State>>>,
+    loaded: Mutex<HashMap<String, Guest>>,
+    js_runtime: OnceLock<Result<NodePre<State>, String>>,
 }
 
 impl Runtime {
-    pub fn new() -> wasmtime::Result<Self> {
+    /// The process's runtime: one engine, and one compile of each module (and of the runtime of
+    /// scripts), for every `WasmModules`.
+    ///
+    /// # Panics
+    ///
+    /// When the engine can't be set up (the platform has no compiler for it).
+    pub fn shared() -> Arc<Runtime> {
+        static SHARED: OnceLock<Arc<Runtime>> = OnceLock::new();
+        SHARED
+            .get_or_init(|| Arc::new(Runtime::new().expect("set up the WebAssembly engine")))
+            .clone()
+    }
+
+    fn new() -> wasmtime::Result<Self> {
         let mut config = Config::new();
         config.epoch_interruption(true);
         let engine = Engine::new(&config)?;
@@ -81,39 +125,62 @@ impl Runtime {
         Ok(Self {
             engine,
             linker,
-            compiled: Mutex::new(HashMap::new()),
+            loaded: Mutex::new(HashMap::new()),
+            js_runtime: OnceLock::new(),
         })
     }
 
-    /// The component of `sha256`, if it's been compiled here.
-    pub fn cached(&self, sha256: &str) -> Option<NodePre<State>> {
-        self.compiled.lock().unwrap().get(sha256).cloned()
+    /// The module of `sha256`, if it's been loaded here.
+    pub fn cached(&self, sha256: &str) -> Option<Guest> {
+        self.loaded.lock().unwrap().get(sha256).cloned()
     }
 
-    /// `bytes` (whose sha256 is `sha256`) compiled, and checked to be a `node` this runtime can
-    /// run: one importing nothing beyond WASI and `host`, and exporting `spec` and `run`.
-    pub fn compile(&self, sha256: &str, bytes: &[u8]) -> Result<NodePre<State>, String> {
-        if let Some(pre) = self.cached(sha256) {
-            return Ok(pre);
+    /// The module of `bytes` (whose sha256 is `sha256`), ready to call: a component compiled,
+    /// and checked to be a `node` this runtime can run (importing nothing beyond WASI and
+    /// `host`, exporting `spec` and `run`), or a script.
+    pub fn load(&self, sha256: &str, bytes: &[u8]) -> Result<Guest, String> {
+        if let Some(guest) = self.cached(sha256) {
+            return Ok(guest);
         }
-        let component = wasmtime::component::Component::new(&self.engine, bytes)
-            .map_err(|e| format!("not a WebAssembly component: {e:#}"))?;
-        let pre = self
-            .linker
-            .instantiate_pre(&component)
-            .and_then(NodePre::new)
-            .map_err(|e| format!("not an ishikari:node component: {e:#}"))?;
-        self.compiled
+        let guest = match Kind::of(bytes)? {
+            Kind::Component => Guest {
+                pre: self.compile(bytes)?,
+                script: None,
+            },
+            Kind::Script(source) => Guest {
+                pre: self.js_runtime()?,
+                script: Some(source.into()),
+            },
+        };
+        self.loaded
             .lock()
             .unwrap()
-            .insert(sha256.to_string(), pre.clone());
-        Ok(pre)
+            .insert(sha256.to_string(), guest.clone());
+        Ok(guest)
     }
 
-    /// The node type the component describes itself as.
-    pub fn spec(&self, pre: &NodePre<State>, limits: Limits) -> Call<NodeSpec> {
-        let call = self.call(pre, Sandbox::new(Vec::new()), limits, |node, store| {
-            node.call_spec(store).map(Ok)
+    fn compile(&self, bytes: &[u8]) -> Result<NodePre<State>, String> {
+        let component = wasmtime::component::Component::new(&self.engine, bytes)
+            .map_err(|e| format!("not a WebAssembly component: {e:#}"))?;
+        self.linker
+            .instantiate_pre(&component)
+            .and_then(NodePre::new)
+            .map_err(|e| format!("not an ishikari:node component: {e:#}"))
+    }
+
+    fn js_runtime(&self) -> Result<NodePre<State>, String> {
+        self.js_runtime
+            .get_or_init(|| {
+                self.compile(JS_RUNTIME)
+                    .map_err(|e| format!("the runtime of scripts: {e}"))
+            })
+            .clone()
+    }
+
+    /// The node type the module describes itself as.
+    pub fn spec(&self, guest: &Guest, limits: Limits) -> Call<NodeSpec> {
+        let call = self.call(guest, Sandbox::new(Vec::new()), limits, |node, store| {
+            node.call_spec(store)
         });
         Call {
             result: call.result.and_then(|json| {
@@ -123,24 +190,24 @@ impl Runtime {
         }
     }
 
-    /// Run a node: `input` is the JSON the component's `run` takes.
+    /// Run a node: `input` is the JSON the module's `run` takes.
     pub fn run(
         &self,
-        pre: &NodePre<State>,
+        guest: &Guest,
         sandbox: Sandbox,
         limits: Limits,
         input: &str,
     ) -> Call<String> {
-        self.call(pre, sandbox, limits, |node, store| {
+        self.call(guest, sandbox, limits, |node, store| {
             node.call_run(store, input)
         })
     }
 
-    /// Call `f` on a fresh instance of `pre`, which may reach what `sandbox` grants within
+    /// Call `f` on a fresh instance of `guest`, which may reach what `sandbox` grants within
     /// `limits`.
     fn call<R>(
         &self,
-        pre: &NodePre<State>,
+        guest: &Guest,
         mut sandbox: Sandbox,
         limits: Limits,
         f: impl FnOnce(&Node, &mut Store<State>) -> wasmtime::Result<Result<R, String>>,
@@ -148,6 +215,7 @@ impl Runtime {
         let stdout = Output::default();
         let stderr = Output::default();
         sandbox.deadline = Some(Instant::now() + limits.timeout);
+        sandbox.script = guest.script.clone();
         let state = State {
             wasi: WasiCtx::builder()
                 .stdout(stdout.clone())
@@ -163,7 +231,8 @@ impl Runtime {
         store.set_epoch_deadline(limits.timeout.div_duration_f64(TICK).ceil().max(1.0) as u64);
         store.epoch_deadline_trap();
 
-        let result = pre
+        let result = guest
+            .pre
             .instantiate(&mut store)
             .and_then(|node| f(&node, &mut store));
 

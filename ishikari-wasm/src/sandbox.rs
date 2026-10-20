@@ -1,9 +1,11 @@
 //! What a guest can reach through `host`: its node's logs, and HTTP to the hosts its module was
-//! granted.
+//! granted; and through `script`, the script the runtime of scripts runs.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::runtime::bindings::ishikari::node::host::{Host, Level, Request, Response};
+use crate::runtime::bindings::ishikari::node::script;
 
 /// The most lines a guest may log; the rest are dropped.
 const MAX_LOG_LINES: usize = 1000;
@@ -17,6 +19,8 @@ pub(crate) struct Sandbox {
     /// When the call runs out of time; `fetch` gets what's left as its own timeout.
     pub deadline: Option<Instant>,
     pub logs: Vec<String>,
+    /// The script, when the guest is the runtime of scripts.
+    pub script: Option<Arc<str>>,
 }
 
 impl Sandbox {
@@ -25,6 +29,7 @@ impl Sandbox {
             allowed_hosts,
             deadline: None,
             logs: Vec::new(),
+            script: None,
         }
     }
 
@@ -105,6 +110,12 @@ impl Host for Sandbox {
             headers,
             body,
         })
+    }
+}
+
+impl script::Host for Sandbox {
+    fn source(&mut self) -> String {
+        self.script.as_deref().unwrap_or_default().to_string()
     }
 }
 

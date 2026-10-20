@@ -11,8 +11,8 @@ const VERSION: u32 = if cfg!(feature = "v2") { 2 } else { 1 };
 struct Testkit;
 
 impl Guest for Testkit {
-    fn spec() -> String {
-        json!({
+    fn spec() -> Result<String, String> {
+        Ok(json!({
             "name": "test/kit",
             "category": "test",
             "description": format!("ishikari-wasm's test module, v{VERSION}"),
@@ -26,7 +26,7 @@ impl Guest for Testkit {
                 "version": { "type": "number" }
             }
         })
-        .to_string()
+        .to_string())
     }
 
     fn run(input: String) -> Result<String, String> {

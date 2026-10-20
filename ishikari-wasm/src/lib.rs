@@ -1,5 +1,5 @@
-//! WebAssembly components as node types for ishikari's workflow definitions, uploaded by the
-//! host's operators through the admin and run in a sandbox.
+//! Node types for ishikari's workflow definitions uploaded by the host's operators through the
+//! admin, as WebAssembly components or as scripts, and run in a sandbox.
 //!
 //! [`WasmModules`] keeps the modules in Postgres (`ishikari_node_modules`, schema v08) and is
 //! the host's [`NodeModules`]: give it to [`NodeTypes::modules`] to run the admin's runs' nodes
@@ -29,6 +29,24 @@
 //! linked for guests' standard libraries, with no files, environment, arguments or sockets;
 //! stdout and stderr go to the node's logs with `host.log`.
 //!
+//! Or a module is a script, uploaded as text: an ES module exporting `spec` (the node type, as
+//! an object) and `run` (from the node's input to its output, or a promise of it), run by the
+//! JavaScript runtime this crate ships (a component of the `script-node` world, with Boa) in the
+//! same sandbox. `console` goes to the node's logs and `fetch` through `host.fetch`.
+//!
+//! ```js
+//! export const spec = {
+//!   name: "greet",
+//!   category: "text",
+//!   input_schema: { name: { type: "string", required: true } },
+//!   output_schema: { greeting: { type: "string" } },
+//! };
+//!
+//! export async function run({ inputs }) {
+//!   return { greeting: `hello ${inputs.name}` };
+//! }
+//! ```
+//!
 //! [`NodeModules`]: ishikari::execution::NodeModules
 //! [`NodeTypes::modules`]: ishikari::execution::NodeTypes::modules
 
@@ -48,7 +66,7 @@ use sha2::{Digest, Sha256};
 use sqlx::types::Json;
 use sqlx::PgPool;
 
-use runtime::{Limits, NodePre, Runtime, State};
+use runtime::{Guest, Kind, Limits, Runtime};
 use sandbox::Sandbox;
 
 /// The `ishikari:node` world a module implements.
@@ -60,7 +78,8 @@ const SPEC_TIMEOUT: Duration = Duration::from_secs(5);
 /// The lines of a failed node's logs its error keeps.
 const LOG_LINES_IN_ERRORS: usize = 20;
 
-/// WebAssembly components uploaded as node types, kept in `ishikari_node_modules`.
+/// Modules (WebAssembly components and scripts) uploaded as node types, kept in
+/// `ishikari_node_modules`.
 #[derive(Clone)]
 pub struct WasmModules {
     pool: PgPool,
@@ -72,7 +91,8 @@ pub struct WasmModules {
 
 impl WasmModules {
     /// Modules kept in `pool`'s search path; a node may run for 30s and use 64 MiB unless its
-    /// module was granted otherwise.
+    /// module was granted otherwise. Every `WasmModules` of the process shares one engine, and
+    /// what it has compiled.
     ///
     /// # Panics
     ///
@@ -81,7 +101,7 @@ impl WasmModules {
         Self {
             pool,
             schema: None,
-            runtime: Arc::new(Runtime::new().expect("set up the WebAssembly engine")),
+            runtime: Runtime::shared(),
             timeout: Duration::from_secs(30),
             memory_limit_mb: 64,
         }
@@ -121,12 +141,12 @@ impl WasmModules {
         }
     }
 
-    /// `bytes` compiled, on a blocking thread.
-    async fn compile(&self, sha256: String, bytes: Vec<u8>) -> Result<NodePre<State>, String> {
+    /// The module of `bytes` loaded, on a blocking thread.
+    async fn load(&self, sha256: String, bytes: Vec<u8>) -> Result<Guest, String> {
         let runtime = self.runtime.clone();
-        tokio::task::spawn_blocking(move || runtime.compile(&sha256, &bytes))
+        tokio::task::spawn_blocking(move || runtime.load(&sha256, &bytes))
             .await
-            .map_err(|e| format!("compiling the module failed: {e}"))?
+            .map_err(|e| format!("loading the module failed: {e}"))?
     }
 
     /// The spec of the module of `bytes`, called within `grants`' memory limit.
@@ -136,8 +156,8 @@ impl WasmModules {
         bytes: &[u8],
         grants: &ModuleGrants,
     ) -> Result<NodeSpec, ModuleError> {
-        let pre = self
-            .compile(sha256, bytes.to_vec())
+        let guest = self
+            .load(sha256, bytes.to_vec())
             .await
             .map_err(ModuleError::Invalid)?;
         let runtime = self.runtime.clone();
@@ -145,7 +165,7 @@ impl WasmModules {
             timeout: SPEC_TIMEOUT,
             ..self.limits(grants)
         };
-        let spec = tokio::task::spawn_blocking(move || runtime.spec(&pre, limits))
+        let spec = tokio::task::spawn_blocking(move || runtime.spec(&guest, limits))
             .await
             .map_err(|e| ModuleError::Runtime(format!("calling the module's spec failed: {e}")))?
             .result
@@ -156,8 +176,12 @@ impl WasmModules {
         Ok(spec)
     }
 
+    /// A row's columns, with its bytes as `source` when they're a script (not a component's
+    /// `\0asm`).
     const COLUMNS: &'static str =
         "id, name, version, sha256, spec, octet_length(bytes)::bigint AS size, \
+        CASE WHEN substring(bytes FROM 1 FOR 4) = decode('0061736d', 'hex') THEN NULL \
+        ELSE convert_from(bytes, 'UTF8') END AS source, \
         allowed_hosts, timeout_ms, memory_limit_mb, created_at";
 }
 
@@ -185,8 +209,8 @@ impl NodeModules for WasmModules {
         let id = row.id;
         let module = NodeModule::from(row);
 
-        let pre = match self.runtime.cached(&module.sha256) {
-            Some(pre) => pre,
+        let guest = match self.runtime.cached(&module.sha256) {
+            Some(guest) => guest,
             None => {
                 let bytes: Vec<u8> = sqlx::query_scalar(&format!(
                     "SELECT bytes FROM {} WHERE id = $1",
@@ -195,19 +219,17 @@ impl NodeModules for WasmModules {
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await?;
-                self.compile(module.sha256.clone(), bytes)
-                    .await
-                    .map_err(|e| {
-                        ModuleError::Runtime(format!(
-                            "module {} v{}: {e}",
-                            module.spec.name, module.version
-                        ))
-                    })?
+                self.load(module.sha256.clone(), bytes).await.map_err(|e| {
+                    ModuleError::Runtime(format!(
+                        "module {} v{}: {e}",
+                        module.spec.name, module.version
+                    ))
+                })?
             }
         };
         Ok(Some(Arc::new(WasmNode {
             runtime: self.runtime.clone(),
-            pre,
+            guest,
             limits: self.limits(&module.grants),
             module,
         })))
@@ -233,6 +255,10 @@ impl NodeModules for WasmModules {
         let grants = checked(grants)?;
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
         let size = bytes.len() as i64;
+        let source = match Kind::of(&bytes) {
+            Ok(Kind::Script(source)) => Some(source.to_string()),
+            _ => None,
+        };
 
         let spec = self.spec(sha256.clone(), &bytes, &grants).await?;
 
@@ -281,6 +307,7 @@ impl NodeModules for WasmModules {
             version,
             sha256,
             size,
+            source,
             grants,
             uploaded_at,
         })
@@ -329,6 +356,7 @@ struct ModuleRow {
     sha256: String,
     spec: Json<NodeSpec>,
     size: i64,
+    source: Option<String>,
     allowed_hosts: Vec<String>,
     timeout_ms: Option<i32>,
     memory_limit_mb: Option<i32>,
@@ -344,6 +372,7 @@ impl From<ModuleRow> for NodeModule {
             version: row.version,
             sha256: row.sha256,
             size: row.size,
+            source: row.source,
             grants: ModuleGrants {
                 allowed_hosts: row.allowed_hosts,
                 timeout: row
@@ -359,7 +388,7 @@ impl From<ModuleRow> for NodeModule {
 /// A version of a module, running nodes of its type.
 struct WasmNode {
     runtime: Arc<Runtime>,
-    pre: NodePre<State>,
+    guest: Guest,
     module: NodeModule,
     limits: Limits,
 }
@@ -381,12 +410,15 @@ impl NodeHandler for WasmNode {
         .to_string();
 
         let runtime = self.runtime.clone();
-        let pre = self.pre.clone();
+        let guest = self.guest.clone();
         let sandbox = Sandbox::new(self.module.grants.allowed_hosts.clone());
         let limits = self.limits;
-        let call = tokio::task::spawn_blocking(move || runtime.run(&pre, sandbox, limits, &input))
-            .await
-            .map_err(|e| NodeError::ExecutionFailed(format!("the module's call failed: {e}")))?;
+        let call =
+            tokio::task::spawn_blocking(move || runtime.run(&guest, sandbox, limits, &input))
+                .await
+                .map_err(|e| {
+                    NodeError::ExecutionFailed(format!("the module's call failed: {e}"))
+                })?;
 
         for line in &call.logs {
             tracing::info!(

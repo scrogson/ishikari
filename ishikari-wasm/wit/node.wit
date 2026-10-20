@@ -38,11 +38,25 @@ world node {
 
     /// The node type, as the workflow builder offers it: an `ishikari::execution::NodeSpec` as
     /// JSON (`name`, `category`, `description`, `input_schema`, `output_schema`). Its name is
-    /// the module's.
-    export spec: func() -> string;
+    /// the module's. An error refuses the module's upload.
+    export spec: func() -> result<string, string>;
 
     /// Run a node. `input` is a JSON object: `node_id`, `node_type`, `inputs` (resolved against
     /// the run) and `workflow_inputs`. The result is the node's output as JSON, or why it
     /// failed.
     export run: func(input: string) -> result<string, string>;
+}
+
+/// What the runtime of script modules runs.
+interface script {
+    /// The module's script: JavaScript, an ES module exporting `spec` (the node type, as an
+    /// object) and `run` (a function from the node's input to its output, or a promise of it).
+    source: func() -> string;
+}
+
+/// The runtime of script modules (node types written in TypeScript or JavaScript): a node
+/// running the script it's given. ishikari-wasm ships it (`js-runtime/`).
+world script-node {
+    include node;
+    import script;
 }

@@ -1,0 +1,29 @@
+# The runtime of script modules (node types written in TypeScript or JavaScript), built by
+# `mise run wasm:js-runtime` into `../js-runtime.wasm`, which ishikari-wasm embeds. Not a
+# workspace member: it builds for wasm32-wasip2.
+[package]
+name = "ishikari-js-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+boa_engine = { version = "0.22", default-features = false }
+# Trace and Finalize derive into it
+boa_gc = "0.22"
+boa_runtime = { version = "0.22", default-features = false, features = ["fetch", "url"] }
+http = "1"
+serde_json = "1"
+wit-bindgen = "0.51"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[workspace]
