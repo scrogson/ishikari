@@ -44,6 +44,14 @@
         </div>
         {% endmatch %}
         <div>
+            <p class="ik-label mb-1.5">Secrets read</p>
+            {% if run.secrets.is_empty() %}
+            <p class="text-sm ik-none">None</p>
+            {% else %}
+            <p class="flex flex-wrap gap-1.5">{% for name in run.secrets %}<span class="ik-badge ik-badge-sm ik-mono">{{ name }}</span>{% endfor %}</p>
+            {% endif %}
+        </div>
+        <div>
             <p class="ik-label mb-1.5">Logs</p>
             {% if run.logs.is_empty() %}
             <p class="text-sm ik-none">Nothing logged</p>
@@ -96,6 +104,11 @@
                     <span class="ik-label">Allowed hosts</span>
                     <textarea name="allowed_hosts" rows="3" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="api.example.com&#10;*.internal.example.com">{{ form.allowed_hosts }}</textarea>
                     <span class="ik-hint">One per line: a host (on any port), <code class="ik-code-inline">host:port</code>, or <code class="ik-code-inline">*.domain</code>. None by default.</span>
+                </label>
+                <label class="ik-field">
+                    <span class="ik-label">Secrets</span>
+                    <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
+                    <span class="ik-hint">One per line: the host's secrets <code class="ik-code-inline">secret(name)</code> may read. Their values are redacted from what it returns and logs.</span>
                 </label>
                 <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                     <label class="ik-field">

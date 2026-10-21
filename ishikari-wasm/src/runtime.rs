@@ -44,10 +44,11 @@ pub(crate) struct Limits {
     pub memory_bytes: usize,
 }
 
-/// How a call ended, with what the guest logged and printed.
+/// How a call ended, with what the guest logged and printed, and the secrets it read.
 pub(crate) struct Call<R> {
     pub result: Result<R, String>,
     pub logs: Vec<String>,
+    pub secrets: Vec<String>,
 }
 
 /// A module ready to call: a component, or a script with the runtime that runs it.
@@ -181,7 +182,7 @@ impl Runtime {
 
     /// The node type the module describes itself as.
     pub fn spec(&self, guest: &Guest, limits: Limits) -> Call<NodeSpec> {
-        let call = self.call(guest, Sandbox::new(Vec::new()), limits, |node, store| {
+        let call = self.call(guest, Sandbox::default(), limits, |node, store| {
             node.call_spec(store)
         });
         Call {
@@ -189,6 +190,7 @@ impl Runtime {
                 serde_json::from_str(&json).map_err(|e| format!("its spec isn't a node spec: {e}"))
             }),
             logs: call.logs,
+            secrets: call.secrets,
         }
     }
 
@@ -258,7 +260,11 @@ impl Runtime {
             }
             Err(e) => Err(format!("{e:#}")),
         };
-        Call { result, logs }
+        Call {
+            result,
+            logs,
+            secrets: state.sandbox.read,
+        }
     }
 }
 

@@ -39,7 +39,7 @@
     <div class="ik-card-header">
         <div>
             <h2 class="ik-card-title">Upload a module</h2>
-            <p class="ik-card-desc">A WebAssembly component of the <code class="ik-code-inline">ishikari:node</code> world, or a script in TypeScript or JavaScript (or write one with <a class="ik-link" href="{{ base_path }}/node-types/script">New script</a>). It reaches only the hosts you list, within its limits. Uploading a name again makes its next version; runs already started keep the version they started with.</p>
+            <p class="ik-card-desc">A WebAssembly component of the <code class="ik-code-inline">ishikari:node</code> world, or a script in TypeScript or JavaScript (or write one with <a class="ik-link" href="{{ base_path }}/node-types/script">New script</a>). It reaches only the hosts and the secrets you list, within its limits. Uploading a name again makes its next version; runs already started keep the version they started with.</p>
         </div>
     </div>
     <form method="post" action="{{ base_path }}/node-types" enctype="multipart/form-data">
@@ -52,6 +52,11 @@
                 <span class="ik-label">Allowed hosts</span>
                 <textarea name="allowed_hosts" rows="3" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="api.example.com&#10;*.internal.example.com&#10;127.0.0.1:8080">{{ form.allowed_hosts }}</textarea>
                 <span class="ik-hint">One per line: a host (on any port), <code class="ik-code-inline">host:port</code>, or <code class="ik-code-inline">*.domain</code> for its subdomains. None by default.</span>
+            </label>
+            <label class="ik-field sm:col-span-2">
+                <span class="ik-label">Secrets</span>
+                <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
+                <span class="ik-hint">One per line: the names of the host's secrets it may read, with <code class="ik-code-inline">secret(name)</code> in a script or <code class="ik-code-inline">host.secret</code> in a component. Their values are redacted from what it returns and logs. None by default.</span>
             </label>
             <label class="ik-field">
                 <span class="ik-label">Timeout (seconds)</span>
@@ -89,6 +94,7 @@
                     <th>Version</th>
                     <th>Description</th>
                     <th>Allowed hosts</th>
+                    <th>Secrets</th>
                     <th>Timeout</th>
                     <th>Memory</th>
                     <th class="ik-num">Size</th>
@@ -108,6 +114,9 @@
                     <td class="max-w-md ik-muted">{% if let Some(desc) = m.description %}{{ desc }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
                     <td class="ik-mono text-xs">
                         {% for host in m.allowed_hosts %}<div>{{ host }}</div>{% else %}<span class="ik-none">none</span>{% endfor %}
+                    </td>
+                    <td class="ik-mono text-xs">
+                        {% for name in m.secrets %}<div>{{ name }}</div>{% else %}<span class="ik-none">none</span>{% endfor %}
                     </td>
                     <td class="whitespace-nowrap tabular-nums">{% if let Some(t) = m.timeout %}{{ t }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>
                     <td class="whitespace-nowrap tabular-nums">{% if let Some(mb) = m.memory %}{{ mb }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>

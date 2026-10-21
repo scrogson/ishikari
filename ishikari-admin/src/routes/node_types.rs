@@ -31,6 +31,8 @@ pub struct ModuleInfo {
     pub category: String,
     pub description: Option<String>,
     pub allowed_hosts: Vec<String>,
+    /// The names of the secrets it may read.
+    pub secrets: Vec<String>,
     /// Its timeout, or `None` for the runtime's.
     pub timeout: Option<String>,
     /// Its memory limit, or `None` for the runtime's.
@@ -53,6 +55,7 @@ pub struct UploadForm {
     pub allowed_hosts: String,
     pub timeout_seconds: String,
     pub memory_limit_mb: String,
+    pub secrets: String,
 }
 
 /// What the page says after an upload.
@@ -75,9 +78,9 @@ pub async fn list(State(state): State<AppState>, Query(query): Query<UploadedQue
     page(&state, StatusCode::OK, notice, None, UploadForm::default()).await
 }
 
-/// Upload a module, a `multipart/form-data` form of `module` (its bytes), `allowed_hosts` (one
-/// per line or comma-separated), `timeout_seconds` and `memory_limit_mb` (blank for the
-/// runtime's defaults).
+/// Upload a module, a `multipart/form-data` form of `module` (its bytes), `allowed_hosts` and
+/// `secrets` (the names of those it may read; each one per line or comma-separated),
+/// `timeout_seconds` and `memory_limit_mb` (blank for the runtime's defaults).
 pub async fn upload(
     State(state): State<AppState>,
     multipart: Result<Multipart, MultipartRejection>,
@@ -127,6 +130,7 @@ async fn read(
             "allowed_hosts" => form.allowed_hosts = text,
             "timeout_seconds" => form.timeout_seconds = text,
             "memory_limit_mb" => form.memory_limit_mb = text,
+            "secrets" => form.secrets = text,
             _ => {}
         }
     }
@@ -181,13 +185,14 @@ fn refused(error: ModuleError) -> Refused {
 
 /// The grants the form gives, or why they can't be.
 fn grants(form: &UploadForm) -> Result<ModuleGrants, &'static str> {
-    let allowed_hosts = form
-        .allowed_hosts
-        .split(['\n', ','])
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-        .map(str::to_string)
-        .collect();
+    let listed = |field: &str| -> Vec<String> {
+        field
+            .split(['\n', ','])
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
     let timeout = match form.timeout_seconds.trim() {
         "" => None,
         seconds => Some(
@@ -209,9 +214,10 @@ fn grants(form: &UploadForm) -> Result<ModuleGrants, &'static str> {
         ),
     };
     Ok(ModuleGrants {
-        allowed_hosts,
+        allowed_hosts: listed(&form.allowed_hosts),
         timeout,
         memory_limit_mb,
+        secrets: listed(&form.secrets),
     })
 }
 
@@ -265,6 +271,7 @@ fn info(state: &AppState, module: NodeModule) -> ModuleInfo {
         category: spec.category,
         description: spec.description,
         allowed_hosts: grants.allowed_hosts,
+        secrets: grants.secrets,
         timeout: grants.timeout.map(|t| format!("{}s", t.as_secs_f64())),
         memory: grants.memory_limit_mb.map(|mb| format!("{mb} MiB")),
         size: bytes(size),
@@ -290,7 +297,7 @@ fn bytes(size: i64) -> String {
 const EXAMPLE: &str = r#"// A node type: `spec` is what the workflow builder offers, and `run` what a node of it does.
 // `run` takes the node's `inputs` (with its `node_id`, `node_type` and `workflow_inputs`) and
 // returns its output, as JSON. `console` writes to the node's logs; `fetch` reaches the hosts
-// granted here, and no others.
+// granted here, and no others; `secret(name)` reads the host's secrets granted here.
 
 export const spec = {
   name: "example/greet",
@@ -329,6 +336,8 @@ pub struct ScriptForm {
     pub allowed_hosts: String,
     pub timeout_seconds: String,
     pub memory_limit_mb: String,
+    /// The names of the secrets it may read, one per line.
+    pub secrets: String,
     /// `test` or `save`: the button pressed.
     pub action: String,
 }
@@ -339,6 +348,7 @@ impl ScriptForm {
             allowed_hosts: self.allowed_hosts.clone(),
             timeout_seconds: self.timeout_seconds.clone(),
             memory_limit_mb: self.memory_limit_mb.clone(),
+            secrets: self.secrets.clone(),
         }
     }
 }
@@ -350,6 +360,8 @@ pub struct TestRunInfo {
     /// Its output as pretty JSON, or why it failed.
     pub output: Result<String, String>,
     pub logs: Vec<String>,
+    /// The names of the secrets it read.
+    pub secrets: Vec<String>,
 }
 
 /// Which module the editor opens.
@@ -393,6 +405,7 @@ pub async fn editor(State(state): State<AppState>, Query(query): Query<EditQuery
             .memory_limit_mb
             .map(|mb| mb.to_string())
             .unwrap_or_default(),
+        secrets: grants.secrets.join("\n"),
         action: String::new(),
     };
     script_page(&state, StatusCode::OK, form, None, None)
@@ -444,13 +457,19 @@ async fn test(modules: &dyn NodeModules, form: &ScriptForm) -> Result<TestRunInf
         bytes: form.source.clone().into_bytes(),
         grants,
     };
-    let TestRun { spec, output, logs } = modules.test_run(upload, inputs).await.map_err(refused)?;
+    let TestRun {
+        spec,
+        output,
+        logs,
+        secrets,
+    } = modules.test_run(upload, inputs).await.map_err(refused)?;
     let output = output
         .map(|output| serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()));
     Ok(TestRunInfo {
         name: spec.name,
         output,
         logs,
+        secrets,
     })
 }
 

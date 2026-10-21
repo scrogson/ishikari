@@ -73,6 +73,7 @@ async fn uploads_are_versioned_by_name() {
         allowed_hosts: vec![" api.example.com ".into(), "".into()],
         timeout: Some(Duration::from_secs(2)),
         memory_limit_mb: Some(32),
+        secrets: vec!["api/key".into()],
     };
     let regranted = modules.upload(upload(V1, granted)).await.unwrap();
     assert_eq!(regranted.version, 2);
@@ -80,6 +81,7 @@ async fn uploads_are_versioned_by_name() {
     assert_eq!(regranted.grants.allowed_hosts, ["api.example.com"]);
     assert_eq!(regranted.grants.timeout, Some(Duration::from_secs(2)));
     assert_eq!(regranted.grants.memory_limit_mb, Some(32));
+    assert_eq!(regranted.grants.secrets, ["api/key"]);
 
     let second = modules
         .upload(upload(V2, ModuleGrants::default()))

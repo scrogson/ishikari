@@ -21,7 +21,7 @@
 use sqlx::{PgExecutor, PgPool};
 
 /// The newest schema version.
-pub const CURRENT_VERSION: i32 = 8;
+pub const CURRENT_VERSION: i32 = 9;
 
 /// The schema used when none is given.
 pub const DEFAULT_SCHEMA: &str = "public";
@@ -35,6 +35,7 @@ const VERSIONS: [&str; CURRENT_VERSION as usize] = [
     include_str!("../migrations/v06.sql"),
     include_str!("../migrations/v07.sql"),
     include_str!("../migrations/v08.sql"),
+    include_str!("../migrations/v09.sql"),
 ];
 
 /// The SQL that takes `schema` from version `from` (0 for a fresh install) to version `to`,

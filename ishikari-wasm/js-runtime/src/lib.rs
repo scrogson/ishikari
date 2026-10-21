@@ -7,7 +7,8 @@
 //! (or an async one) from the node's input to its output. It can't import other modules. Beyond
 //! the language it has boa_runtime's web APIs: `console` (the node's logs), `fetch` (through
 //! `host.fetch`), `URL`, `TextEncoder` and `TextDecoder`, `atob` and `btoa`, `structuredClone`,
-//! `queueMicrotask`, `setTimeout` and `setInterval`, and `AbortController`.
+//! `queueMicrotask`, `setTimeout` and `setInterval`, and `AbortController`; and `secret(name)`,
+//! the host's secret of that name (`host.secret`), which throws when the module may read none.
 
 mod executor;
 
@@ -20,7 +21,7 @@ use boa_engine::builtins::promise::PromiseState;
 use boa_engine::context::ContextBuilder;
 use boa_engine::{
     js_error, js_string, Context, Finalize, JsData, JsError, JsObject, JsResult, JsString, JsValue,
-    Module, Source, Trace,
+    Module, NativeFunction, Source, Trace,
 };
 use boa_runtime::extensions::{ConsoleExtension, FetchExtension};
 use boa_runtime::fetch::request::JsRequest;
@@ -81,6 +82,13 @@ impl Script {
             &mut context,
         )
         .map_err(|e| e.to_string())?;
+        context
+            .register_global_builtin_callable(
+                js_string!("secret"),
+                1,
+                NativeFunction::from_fn_ptr(secret),
+            )
+            .map_err(|e| e.to_string())?;
 
         let source = script::source();
         let source = Source::from_bytes(source.as_bytes()).with_path(Path::new("script"));
@@ -192,6 +200,15 @@ impl Logger for HostLogger {
         host::log(Level::Error, &msg);
         Ok(())
     }
+}
+
+/// `secret(name)`, through `host.secret`: the host's secret `name`, if the module was granted
+/// it.
+fn secret(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let name = args.first().cloned().unwrap_or_default();
+    let name = name.to_string(context)?.to_std_string_escaped();
+    let value = host::secret(&name).map_err(|e| js_error!(Error: "{}", e))?;
+    Ok(JsString::from(value.as_str()).into())
 }
 
 /// `fetch`, through `host.fetch`: only to the hosts the module was granted.

@@ -1,7 +1,10 @@
-//! What a guest can reach through `host`: its node's logs, and HTTP to the hosts its module was
-//! granted; and through `script`, the script the runtime of scripts runs.
+//! What a guest can reach through `host`: its node's logs, and HTTP to the hosts and the secrets
+//! its module was granted; and through `script`, the script the runtime of scripts runs.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use ishikari::secrets::Secret;
 use std::time::{Duration, Instant};
 
 use crate::runtime::bindings::ishikari::node::host::{Host, Level, Request, Response};
@@ -14,22 +17,35 @@ const MAX_LOG_LINES: usize = 1000;
 const MAX_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// A call's view of the host.
+#[derive(Default)]
 pub(crate) struct Sandbox {
     allowed_hosts: Vec<String>,
+    /// The names of the secrets the module was granted.
+    granted: Vec<String>,
+    /// The host's secrets of those names there are; `None` when the host keeps none.
+    secrets: Option<HashMap<String, Secret>>,
     /// When the call runs out of time; `fetch` gets what's left as its own timeout.
     pub deadline: Option<Instant>,
     pub logs: Vec<String>,
+    /// The names of the granted secrets the guest read, in the order it first read them.
+    pub read: Vec<String>,
     /// The script, when the guest is the runtime of scripts.
     pub script: Option<Arc<str>>,
 }
 
 impl Sandbox {
-    pub fn new(allowed_hosts: Vec<String>) -> Self {
+    /// A sandbox reaching `allowed_hosts`, and the secrets `granted`, of which `secrets` are
+    /// the host's.
+    pub fn new(
+        allowed_hosts: Vec<String>,
+        granted: Vec<String>,
+        secrets: Option<HashMap<String, Secret>>,
+    ) -> Self {
         Self {
             allowed_hosts,
-            deadline: None,
-            logs: Vec::new(),
-            script: None,
+            granted,
+            secrets,
+            ..Self::default()
         }
     }
 
@@ -110,6 +126,20 @@ impl Host for Sandbox {
             headers,
             body,
         })
+    }
+
+    fn secret(&mut self, name: String) -> Result<String, String> {
+        if !self.granted.contains(&name) {
+            return Err(format!("{name} isn't a secret this module was granted"));
+        }
+        if !self.read.contains(&name) {
+            self.read.push(name.clone());
+        }
+        let secrets = self.secrets.as_ref().ok_or("this host keeps no secrets")?;
+        match secrets.get(&name) {
+            Some(secret) => Ok(secret.expose().to_string()),
+            None => Err(format!("no secret {name}")),
+        }
     }
 }
 

@@ -30,6 +30,10 @@ interface host {
     /// Send an HTTP request to a host the module may reach, within what's left of the node's
     /// time. A redirect is returned, not followed.
     fetch: func(request: request) -> result<response, string>;
+
+    /// The host's secret `name`, if the module was granted it. Its value is redacted from what
+    /// the node returns, fails with and logs.
+    secret: func(name: string) -> result<string, string>;
 }
 
 /// A node type.
