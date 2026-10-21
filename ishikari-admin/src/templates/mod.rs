@@ -17,6 +17,7 @@ use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
 };
 use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
+use crate::routes::secrets::SecretRow;
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
 use crate::NavItem;
 
@@ -105,6 +106,7 @@ pages!(
     NodeTypesTemplate,
     ScriptTemplate,
     ModuleJobTemplate,
+    SecretsTemplate,
 );
 
 /// Dashboard page template.
@@ -394,6 +396,21 @@ pub struct ModuleJobTemplate {
     pub module: ModuleInfo,
     pub form: JobForm,
     pub error: Option<String>,
+}
+
+/// The Secrets page: the host's secrets by name, and the form to set one.
+#[derive(Template)]
+#[template(path = "secrets.html", blocks = ["title", "content"])]
+pub struct SecretsTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub secrets: Vec<SecretRow>,
+    /// Whether the host has modules, which are granted secrets.
+    pub modules: bool,
+    pub notice: Option<String>,
+    pub error: Option<String>,
+    /// The name the form was given, to show again when it's refused; never its value.
+    pub name: String,
 }
 
 /// Workflow definition run form template.

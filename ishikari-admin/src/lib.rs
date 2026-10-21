@@ -41,6 +41,7 @@ use axum::{
     Router,
 };
 use ishikari::execution::{ModuleError, NodeModules, NodeSpec};
+use ishikari::secrets::SecretStore;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
@@ -91,6 +92,7 @@ pub struct AppState {
     pub nav_items: Arc<Vec<NavItem>>,
     pub node_types: Arc<Vec<NodeSpec>>,
     pub node_modules: Option<Arc<dyn NodeModules>>,
+    pub secrets: Option<Arc<dyn SecretStore>>,
 }
 
 impl AppState {
@@ -103,6 +105,7 @@ impl AppState {
             nav_items: Arc::new(Self::default_nav_items("")),
             node_types: Arc::new(Vec::new()),
             node_modules: None,
+            secrets: None,
         }
     }
 
@@ -146,6 +149,27 @@ impl AppState {
     pub fn with_node_modules(mut self, modules: Arc<dyn NodeModules>) -> Self {
         self.node_modules = Some(modules);
         self.nav_items = Arc::new(Self::with_node_types_item(
+            self.nav_items.to_vec(),
+            &self.base_path,
+        ));
+        self
+    }
+
+    /// The host's secrets, which the Secrets page sets and deletes by name (never showing a
+    /// value), with the modules granted each: `ishikari::secrets::PostgresSecrets`, which you
+    /// give your modules too so they read them.
+    ///
+    /// ```rust,ignore
+    /// let key = SecretKey::from_base64("2026-10", &std::env::var("ISHIKARI_SECRET_KEY")?)?;
+    /// let secrets = Arc::new(PostgresSecrets::new(pool.clone(), key));
+    /// let modules = Arc::new(WasmModules::new(pool.clone()).secrets(secrets.clone()));
+    /// let state = AppState::new(pool)
+    ///     .with_node_modules(modules)
+    ///     .with_secrets(secrets);
+    /// ```
+    pub fn with_secrets(mut self, secrets: Arc<dyn SecretStore>) -> Self {
+        self.secrets = Some(secrets);
+        self.nav_items = Arc::new(Self::with_secrets_item(
             self.nav_items.to_vec(),
             &self.base_path,
         ));
@@ -207,30 +231,44 @@ impl AppState {
         &self.nav_items
     }
 
-    /// The default navigation at `base`, with Node types when there are modules to upload.
+    /// The default navigation at `base`, with Node types when there are modules to upload and
+    /// Secrets when there are secrets to set.
     fn nav_items_at(&self, base: &str) -> Vec<NavItem> {
-        let items = Self::default_nav_items(base);
-        match self.node_modules {
-            Some(_) => Self::with_node_types_item(items, base),
-            None => items,
+        let mut items = Self::default_nav_items(base);
+        if self.node_modules.is_some() {
+            items = Self::with_node_types_item(items, base);
         }
+        if self.secrets.is_some() {
+            items = Self::with_secrets_item(items, base);
+        }
+        items
     }
 
     /// `items` with Node types after Definitions (or last).
-    fn with_node_types_item(mut items: Vec<NavItem>, base: &str) -> Vec<NavItem> {
-        let href = format!("{base}/node-types");
-        if items.iter().any(|item| item.href == href) {
+    fn with_node_types_item(items: Vec<NavItem>, base: &str) -> Vec<NavItem> {
+        let item = NavItem::new("Node types", format!("{base}/node-types")).icon(
+            "M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9",
+        );
+        Self::with_item(items, item, &[format!("{base}/definitions")])
+    }
+
+    /// `items` with Secrets after Node types, or Definitions (or last).
+    fn with_secrets_item(items: Vec<NavItem>, base: &str) -> Vec<NavItem> {
+        let item = NavItem::new("Secrets", format!("{base}/secrets")).icon("M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z");
+        let after = [format!("{base}/node-types"), format!("{base}/definitions")];
+        Self::with_item(items, item, &after)
+    }
+
+    /// `items` with `item` after the first of `after` there is (or last), unless they have it.
+    fn with_item(mut items: Vec<NavItem>, item: NavItem, after: &[String]) -> Vec<NavItem> {
+        if items.iter().any(|i| i.href == item.href) {
             return items;
         }
-        let definitions = format!("{base}/definitions");
-        let at = items
+        let at = after
             .iter()
-            .position(|item| item.href == definitions)
+            .find_map(|href| items.iter().position(|i| i.href == *href))
             .map_or(items.len(), |i| i + 1);
-        items.insert(
-            at,
-            NavItem::new("Node types", href).icon("M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"),
-        );
+        items.insert(at, item);
         items
     }
 
@@ -377,6 +415,12 @@ fn routes() -> Router<AppState> {
             "/node-types/job",
             get(routes::node_types::job_form).post(routes::node_types::insert_job),
         )
+        // Secrets: the host's, set and deleted by name
+        .route(
+            "/secrets",
+            get(routes::secrets::list).post(routes::secrets::set),
+        )
+        .route("/secrets/delete", post(routes::secrets::delete))
         // API endpoints for htmx
         .route("/api/jobs", get(routes::api::enhanced_jobs_table))
         .route("/api/stats", get(routes::api::stats_or_counts))

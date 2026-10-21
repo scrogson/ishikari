@@ -1,5 +1,6 @@
 //! Through the admin (`AppState::with_node_modules`), an operator uploads a component, or writes
-//! a script in the editor, which the builder then offers.
+//! a script in the editor, which the builder then offers; and sets the secrets modules read
+//! (`AppState::with_secrets`).
 
 mod common;
 
@@ -7,6 +8,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::Router;
 use common::TestDb;
+use ishikari::secrets::{PostgresSecrets, SecretKey};
 use ishikari_admin::AppState;
 use ishikari_wasm::WasmModules;
 use serde_json::Value;
@@ -200,6 +202,82 @@ async fn an_operator_writes_a_script_in_the_editor() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(textarea(&page, "source"), SHOUT);
     assert!(page.contains("api.example.com"), "{page}");
+
+    db.finish().await;
+}
+
+const PAYS: &str = r#"export const spec = { name: "test/pays", category: "test" };
+
+export function run() {
+  const key = secret("stripe/api-key");
+  console.log(`paying with ${key}`);
+  return { key, length: key.length };
+}
+"#;
+
+/// An operator sets a secret on the Secrets page, which a script granted it reads, its value
+/// redacted from what the test run shows; the page lists the module as granted it.
+#[tokio::test]
+async fn an_operator_sets_a_secret_a_script_reads() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let secrets = Arc::new(PostgresSecrets::new(
+        db.pool.clone(),
+        SecretKey::new("test", [7; 32]),
+    ));
+    let modules = Arc::new(WasmModules::new(db.pool.clone()).secrets(secrets.clone()));
+    let state = AppState::new(db.pool.clone())
+        .with_base_path("/admin")
+        .with_node_modules(modules)
+        .with_secrets(secrets);
+    let app = Router::new().nest("/admin", ishikari_admin::app(state));
+
+    let set = Request::post("/admin/secrets")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("name=stripe%2Fapi-key&value=sk_live_0123456789"))
+        .unwrap();
+    let (status, _, location) = send(&app, set).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        location.as_deref(),
+        Some("/admin/secrets?set=stripe%2Fapi-key")
+    );
+
+    let (status, page, _) = send(
+        &app,
+        script(&[
+            ("source", PAYS),
+            ("secrets", "stripe/api-key"),
+            ("action", "test"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for text in [
+        "[redacted]",
+        "info: paying with [redacted]",
+        "Secrets read",
+        "stripe/api-key",
+    ] {
+        assert!(page.contains(text), "the test run shows {text:?}: {page}");
+    }
+    assert!(!page.contains("0123456789"), "{page}");
+
+    let (status, _, _) = send(
+        &app,
+        script(&[
+            ("source", PAYS),
+            ("secrets", "stripe/api-key"),
+            ("action", "save"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, page, _) = send(&app, get("/admin/secrets")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("test/pays"), "{page}");
+    assert!(!page.contains("0123456789"), "{page}");
 
     db.finish().await;
 }
