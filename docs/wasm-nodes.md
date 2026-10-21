@@ -23,9 +23,10 @@ auth like the rest of the dashboard, and only exists when the host opts in.
   because wasmtime is large and needs a newer Rust (1.96) than the rest (1.83), and a workspace
   of its own with its own lockfile: Cargo 1.83 can't even read the lockfile entries of
   wasmtime's dependencies (edition 2024).
-- Schema v08: `ishikari_node_modules`, every uploaded version of every module.
+- Schema v08: `ishikari_node_modules`, every uploaded version of every module; v09 adds
+  the secrets each was granted.
 - The admin's Node types page: the registered types, the modules, and an upload form (the
-  module, its allowed hosts, timeout and memory limit; up to 32 MiB). It asks the modules to
+  module, its allowed hosts, secrets, timeout and memory limit; up to 32 MiB). It asks the modules to
   `describe` an upload first, and refuses one named as a type registered in Rust, which would
   run instead. The palette and the definition checks offer the registered types, then the
   modules not named as one.
@@ -47,7 +48,8 @@ world node {
 - `run` takes a JSON object (`node_id`, `node_type`, `inputs` resolved, `workflow_inputs`) and
   returns the node's output as JSON, or an error that fails the node (and is retried like any
   node's).
-- `host` has `log(level, message)` and `fetch(request) -> result<response, string>`.
+- `host` has `log(level, message)`, `fetch(request) -> result<response, string>` and
+  `secret(name) -> result<string, string>`.
 
 JSON strings rather than WIT records for inputs and outputs: a node's inputs are whatever its
 spec says, and every guest language has JSON.
@@ -62,6 +64,15 @@ What a module can reach is what the operator grants it on upload, nothing by def
 - **WASI**: components built for `wasm32-wasip2` import WASI. They get no preopened directories,
   no environment, no arguments, no sockets and no name lookup. Clocks and randomness are
   allowed. stdout and stderr are captured, with `log`, into the node's logs.
+- **Secrets**: `secret(name)` gives the host's secret of a name the module was granted. Secrets
+  come from a backend the host picks (`ishikari::secrets::Secrets`, given to
+  `WasmModules::secrets`; the same one its Rust nodes read through `NodeContext::secret`):
+  `PostgresSecrets` (schema v09, set on the admin's Secrets page), `EnvSecrets`, or Vault,
+  OpenBao and the like as implementations of the trait. The granted ones are read before each
+  call, so `secret` stays synchronous and the call's deadline isn't spent on the backend; one
+  that fails fails the node before it runs. Their values are replaced with `[redacted]` in what
+  the node returns, fails with and logs (and so in what's stored and shown), longest first.
+  A test run says which it read.
 - No database access. A node that needs one is written in Rust.
 
 ## Limits
@@ -137,8 +148,8 @@ queue, attempts and delay).
 - Pruning old versions no run or job can need.
 - Carrying a module's grants over to its next upload, or editing them without re-uploading.
 - Bounding the compiled-component cache (one entry per version an engine has run or described).
-- Secrets: a capability handing a module named secrets from the host, rather than putting them
-  in node inputs.
+- A caching wrapper of `Secrets`, for backends that are slow or rate-limited (secrets are read
+  before every call), and `ishikari-vault` for Vault and OpenBao.
 - Whether `fetch` should become `wasi:http`, so guests' own HTTP libraries work.
 - An admin running in a different process than the engines sees uploads (they're in Postgres),
   but each engine compiles a module itself the first time it runs one.

@@ -47,7 +47,8 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`. Its Node types
   page uploads the host's node modules (`AppState::with_node_modules`), its script editor
   (`/node-types/script`) writes, test-runs and saves scripts, and its job form
-  (`/node-types/job`) inserts a module's `ModuleJob`.
+  (`/node-types/job`) inserts a module's `ModuleJob`. Its Secrets page sets and deletes the
+  host's secrets (`AppState::with_secrets`), never showing a value.
 - `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
   the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
   in a sandbox with its module's grants and limits. A script's types are stripped by swc
@@ -93,6 +94,10 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
   the version uploaded last before the run was created). `ModuleJob` runs a module as a plain
   job, through `NodeJobs`.
+- **`secrets/`**: the host's secrets, read by name from a backend it picks (`Secrets`;
+  `SecretStore` for one the admin writes to): `PostgresSecrets` (encrypted with the host's key,
+  `ishikari_secrets`), `EnvSecrets`, `MemorySecrets`. Rust nodes read them from their context;
+  modules only those granted (`ModuleGrants::secrets`), redacted from what they return and log.
 
 ### Job lifecycle
 
@@ -123,6 +128,7 @@ it creates.
 - v06: notify when jobs become available (insert or update), the staging index, saga step indexes
 - v07: saga rollbacks in progress moved off dependency chains (data only)
 - v08: node modules (node types uploaded through the admin)
+- v09: secrets (kept encrypted, and those modules are granted)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

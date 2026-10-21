@@ -9,7 +9,7 @@ the admin's editor. Each runs in a sandbox, as a node or as a job.
 use ishikari::execution::{NodeJob, NodeJobs, NodeTypes};
 use ishikari_wasm::WasmModules;
 
-let modules = Arc::new(WasmModules::new(pool.clone()));
+let modules = Arc::new(WasmModules::new(pool.clone())); // and .secrets(secrets)
 let types = NodeTypes::new(pool.clone()).modules(modules.clone()); // and .register(...)
 let state = ishikari_admin::AppState::new(pool.clone())
     .with_node_types(types.catalog())
@@ -20,7 +20,8 @@ let engine = Engine::builder("definitions")
     .start(Postgres::new(pool.clone()));
 ```
 
-Modules are kept in `ishikari_node_modules` (schema v08). Needs Rust 1.96, wasmtime's.
+Modules are kept in `ishikari_node_modules` (schema v08, and v09 for their secrets). Needs Rust
+1.96, wasmtime's.
 
 ## A module
 
@@ -32,8 +33,8 @@ A component of the `ishikari:node` world ([`wit/node.wit`](wit/node.wit)):
 - `run(input: string) -> result<string, string>`: a node. `input` is JSON with `node_id`,
   `node_type`, `inputs` (resolved against the run) and `workflow_inputs`; the result is the
   node's output as JSON, or why it failed.
-- It may call `host.log(level, message)`, and `host.fetch(request)` for HTTP to the hosts it was
-  granted.
+- It may call `host.log(level, message)`, `host.fetch(request)` for HTTP to the hosts it was
+  granted, and `host.secret(name)` for the host's secrets it was granted.
 
 In Rust, with [wit-bindgen](https://crates.io/crates/wit-bindgen) and `crate-type = ["cdylib"]`:
 
@@ -91,12 +92,13 @@ Its types are stripped where they stand (swc's type stripper), so what it throws
 its TypeScript: `Error: no text (script:12:11)`; an `enum` or `namespace` is transformed
 instead. It runs on the JavaScript runtime this crate ships, a component built from
 [`js-runtime/`](js-runtime) with [Boa](https://boajs.dev), in the same sandbox as a component:
-`console` goes to the node's logs, `fetch` through `host.fetch`, and it has `URL`,
-`TextEncoder`/`TextDecoder`, `atob`/`btoa`, `structuredClone`, timers and `AbortController`. It
-can't import other modules.
+`console` goes to the node's logs, `fetch` through `host.fetch`, `secret(name)` (which throws when
+there's none it may read) is `host.secret`, and it has `URL`, `TextEncoder`/`TextDecoder`,
+`atob`/`btoa`, `structuredClone`, timers and `AbortController`. It can't import other modules.
 
 The editor's Test run runs the script once as a node, with test inputs and the grants in the
-form, and shows its output or error and its logs, keeping nothing (`NodeModules::test_run`);
+form, and shows its output or error, the secrets it read and its logs, keeping nothing
+(`NodeModules::test_run`);
 Save uploads it as the next version. An uploaded script is edited from the module list.
 
 ## As a job
@@ -132,6 +134,10 @@ Each call gets a fresh instance. A module reaches only what its upload granted:
 
 - HTTP through `host.fetch` to its allowed hosts: `api.example.com` (any port),
   `127.0.0.1:8080` (that port), `*.example.com` (its subdomains). Redirects aren't followed.
+- The host's secrets it was granted, by name, through `host.secret`, from the backend given to
+  `WasmModules::secrets` (an `ishikari::secrets::Secrets`: `PostgresSecrets`, `EnvSecrets` or
+  your own). They're read before each call, and their values are redacted (`[redacted]`) from
+  its output, error and logs.
 - WASI without files, environment, arguments or sockets. stdout and stderr go to the node's
   logs, and the last lines of them to a failed node's error.
 - Its timeout and memory limit, by default 30s and 64 MiB (`WasmModules::timeout`,

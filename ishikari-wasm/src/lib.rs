@@ -1,10 +1,10 @@
 //! Node types for ishikari's workflow definitions uploaded by the host's operators through the
 //! admin, as WebAssembly components or as scripts, and run in a sandbox.
 //!
-//! [`WasmModules`] keeps the modules in Postgres (`ishikari_node_modules`, schema v08) and is
-//! the host's [`NodeModules`]: give it to [`NodeTypes::modules`] to run the admin's runs' nodes
-//! of uploaded types, and to `ishikari_admin::AppState::with_node_modules` to upload them and
-//! offer them in the builder.
+//! [`WasmModules`] keeps the modules in Postgres (`ishikari_node_modules`, schemas v08 and v09)
+//! and is the host's [`NodeModules`]: give it to [`NodeTypes::modules`] to run the admin's runs'
+//! nodes of uploaded types, and to `ishikari_admin::AppState::with_node_modules` to upload them
+//! and offer them in the builder.
 //!
 //! ```rust,no_run
 //! use ishikari::execution::{NodeJob, NodeJobs, NodeTypes};

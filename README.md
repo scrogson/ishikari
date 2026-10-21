@@ -291,6 +291,36 @@ module's inputs, in the `modules` queue of an engine whose state is the `NodeJob
 types; operators insert one from the Node types page too (Run as job). What it returns completes the job, `{"snooze": seconds}` snoozes it and
 `{"cancel": "why"}` cancels it. See [docs/wasm-nodes.md](docs/wasm-nodes.md) for the design.
 
+### Secrets
+
+Nodes read your secrets (API keys, tokens) by name rather than in their inputs, which are stored
+with their runs and jobs. The backend is yours to pick, an `ishikari::secrets::Secrets`:
+`PostgresSecrets` keeps them beside your jobs (schema v09), each value encrypted with your key
+(XChaCha20-Poly1305), which isn't stored; `EnvSecrets` reads environment variables; Vault,
+OpenBao or a cloud's secret manager is an implementation of the trait.
+
+```rust
+use ishikari::secrets::{PostgresSecrets, SecretKey};
+
+// 32 bytes as base64 (`openssl rand -base64 32`); the id is kept with each secret.
+let key = SecretKey::from_base64("2026-10", &std::env::var("ISHIKARI_SECRET_KEY")?)?;
+let secrets = Arc::new(PostgresSecrets::new(pool.clone(), key));
+let modules = Arc::new(WasmModules::new(pool.clone()).secrets(secrets.clone()));
+let types = NodeTypes::new(pool.clone())
+    .modules(modules.clone())
+    .secrets(secrets.clone());
+let state = ishikari_admin::AppState::new(pool.clone())
+    .with_node_types(types.catalog())
+    .with_node_modules(modules)
+    .with_secrets(secrets);
+```
+
+A node registered in Rust reads any of them, `ctx.secret("stripe/api-key").await?`. A module
+reads only those it was granted on upload, and their values are redacted from what it returns,
+fails with and logs. The dashboard's Secrets page sets and deletes them, never showing a value,
+with the modules granted each. To change keys, give the new key and the old one
+(`.old_key(old)`), then `secrets.rotate().await?`.
+
 ### Theming
 
 The dashboard takes its colors from your CSS variables, so it matches your app without setup.
