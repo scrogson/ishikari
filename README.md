@@ -259,10 +259,67 @@ the run's inputs, where a declared input left out takes its `default`, and the o
 nodes before it. A node whose `when` is falsy (false, null, 0, `""`, `"false"`, `"0"`) or doesn't
 resolve is skipped, and the nodes after it run. It records each node's inputs, output and
 duration, completes the run with the definition's outputs once every node has completed or been
-skipped, and fails it when a node fails its last attempt. A node of an unregistered type fails
-its run without retrying.
+skipped, and fails it when a node fails its last attempt. A node of a type neither registered
+nor uploaded fails its run without retrying.
 
 To run nodes some other way, implement `NodeRunner` and give it to `NodeJobs` instead.
+
+### Node types uploaded as WebAssembly or scripts
+
+With [`ishikari-wasm`](ishikari-wasm/README.md), your operators also add node types while the
+app runs: WebAssembly components, from any language that targets the component model, or
+scripts in TypeScript or JavaScript, written in the dashboard. Each runs in a sandbox. Give its
+`WasmModules` to your `NodeTypes` and to the dashboard:
+
+```rust
+use ishikari_wasm::WasmModules;
+
+let modules = Arc::new(WasmModules::new(pool.clone()));
+let types = NodeTypes::new(pool.clone()).modules(modules.clone()); // and .register(...)
+let state = ishikari_admin::AppState::new(pool.clone())
+    .with_node_types(types.catalog())
+    .with_node_modules(modules);
+```
+
+The Node types page uploads a module with the hosts it may reach and its timeout and memory
+limit, or writes a script in its editor, test-running it before saving it. The palette offers
+the modules after your registered types. Uploading a name again makes its next version; a run
+uses the version uploaded last before it was created.
+
+A module also runs as a plain job, `ModuleJob::new("send-invoice", json!({ .. }))`, its args the
+module's inputs, in the `modules` queue of an engine whose state is the `NodeJobs` of those node
+types; operators insert one from the Node types page too (Run as job). What it returns completes the job, `{"snooze": seconds}` snoozes it and
+`{"cancel": "why"}` cancels it. See [docs/wasm-nodes.md](docs/wasm-nodes.md) for the design.
+
+### Secrets
+
+Nodes read your secrets (API keys, tokens) by name rather than in their inputs, which are stored
+with their runs and jobs. The backend is yours to pick, an `ishikari::secrets::Secrets`:
+`PostgresSecrets` keeps them beside your jobs (schema v09), each value encrypted with your key
+(XChaCha20-Poly1305), which isn't stored; `EnvSecrets` reads environment variables; Vault,
+OpenBao or a cloud's secret manager is an implementation of the trait.
+
+```rust
+use ishikari::secrets::{PostgresSecrets, SecretKey};
+
+// 32 bytes as base64 (`openssl rand -base64 32`); the id is kept with each secret.
+let key = SecretKey::from_base64("2026-10", &std::env::var("ISHIKARI_SECRET_KEY")?)?;
+let secrets = Arc::new(PostgresSecrets::new(pool.clone(), key));
+let modules = Arc::new(WasmModules::new(pool.clone()).secrets(secrets.clone()));
+let types = NodeTypes::new(pool.clone())
+    .modules(modules.clone())
+    .secrets(secrets.clone());
+let state = ishikari_admin::AppState::new(pool.clone())
+    .with_node_types(types.catalog())
+    .with_node_modules(modules)
+    .with_secrets(secrets);
+```
+
+A node registered in Rust reads any of them, `ctx.secret("stripe/api-key").await?`. A module
+reads only those it was granted on upload, and their values are redacted from what it returns,
+fails with and logs. The dashboard's Secrets page sets and deletes them, never showing a value,
+with the modules granted each. To change keys, give the new key and the old one
+(`.old_key(old)`), then `secrets.rotate().await?`.
 
 ### Theming
 
@@ -302,7 +359,11 @@ cargo test --workspace
 ```
 
 Without a database URL the database tests fail loudly; set `ISHIKARI_SKIP_DB_TESTS=1` to
-skip them.
+skip them. `ishikari-wasm` is a workspace of its own (wasmtime needs Rust 1.96):
+
+```bash
+cargo test --manifest-path ishikari-wasm/Cargo.toml
+```
 
 ## Crates
 
@@ -310,6 +371,7 @@ skip them.
 - `ishikari-macros`: `#[ishikari::job]` and `#[ishikari::worker]`.
 - `ishikari-cli`: `ishikari generate migration` and `ishikari generate version`.
 - `ishikari-admin`: the dashboard.
+- `ishikari-wasm`: node types uploaded as WebAssembly components or written as scripts.
 
 ## License
 

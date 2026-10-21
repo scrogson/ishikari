@@ -6,6 +6,9 @@ members = [
   "ishikari-admin",
   "tests/only-ishikari"
 ]
+# A workspace of its own: wasmtime needs a newer Rust than this workspace's, down to the
+# dependencies its lockfile has.
+exclude = ["ishikari-wasm"]
 resolver = "2"
 
 [workspace.package]

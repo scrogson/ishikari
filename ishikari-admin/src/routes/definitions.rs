@@ -499,8 +499,9 @@ pub async fn import_yaml(
     axum::Form(form): axum::Form<ImportForm>,
 ) -> Result<Redirect, Response> {
     // Parse the YAML
+    let catalog = state.catalog().await.map_err(|e| e.to_string());
     let def = WorkflowDefinition::from_yaml(&form.yaml)
-        .and_then(|def| def.validate_for(&state.node_types).map(|()| def))
+        .and_then(|def| def.validate_for(&catalog.clone()?).map(|()| def))
         .map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,

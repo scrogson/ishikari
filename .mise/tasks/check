@@ -2,3 +2,5 @@
 #MISE description="Run cargo check"
 set -e
 cargo check
+# ishikari-wasm is a workspace of its own (it needs a newer Rust).
+cargo check --manifest-path ishikari-wasm/Cargo.toml

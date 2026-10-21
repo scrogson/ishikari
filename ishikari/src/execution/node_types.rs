@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -13,9 +14,12 @@ use uuid::Uuid;
 use super::context::NodeContext;
 use super::executor::{skip_reason, NodeHandler};
 use super::interpolation::{InterpolationError, Interpolator};
+use super::module_job::ModuleJob;
 use super::node_job::{NodeJob, NodeRunner};
+use super::node_modules::{ModuleError, NodeModules};
 use super::storage::{ExecutionStorage, NodeRecord, RunDefinition};
 use super::types::{NodeData, NodeStatus, SchemaField};
+use crate::secrets::Secrets;
 use crate::{Cancel, Complete, Context, PerformResult};
 
 /// A node type as the workflow builder offers it: its name (a node's `type`), the category its
@@ -97,7 +101,9 @@ impl NodeSpec {
 /// - completes the run with the definition's outputs once every node has completed or been
 ///   skipped, and fails it when a node fails its last attempt.
 ///
-/// A node of a type not registered fails, and fails its run, without retrying.
+/// A node of a type not registered is looked up in the host's [`modules`](Self::modules), at
+/// the version uploaded last before its run was created. One of neither fails, and fails its
+/// run, without retrying. A [`ModuleJob`] runs by the modules too.
 ///
 /// ```rust,no_run
 /// use ishikari::execution::{
@@ -141,6 +147,8 @@ pub struct NodeTypes {
     pool: PgPool,
     schema: Option<String>,
     types: Vec<(NodeSpec, Arc<dyn NodeHandler>)>,
+    modules: Option<Arc<dyn NodeModules>>,
+    secrets: Option<Arc<dyn Secrets>>,
 }
 
 impl NodeTypes {
@@ -150,6 +158,8 @@ impl NodeTypes {
             pool,
             schema: None,
             types: Vec::new(),
+            modules: None,
+            secrets: None,
         }
     }
 
@@ -169,16 +179,41 @@ impl NodeTypes {
         self
     }
 
-    /// The node types, in the order they were registered.
+    /// Look up node types not registered here in `modules`: those the host's operators upload
+    /// through the admin (`ishikari-wasm`'s `WasmModules`). A type registered here wins over a
+    /// module of the same name.
+    pub fn modules(mut self, modules: Arc<dyn NodeModules>) -> Self {
+        self.modules = Some(modules);
+        self
+    }
+
+    /// Give the nodes of the types registered here `secrets`, which they read from their
+    /// context ([`NodeContext::secret`]). Modules read theirs from their runtime
+    /// (`ishikari-wasm`'s `WasmModules::secrets`), and only those they were granted.
+    pub fn secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
+        self.secrets = Some(secrets);
+        self
+    }
+
+    /// The node types registered here, in the order they were registered.
     pub fn catalog(&self) -> Vec<NodeSpec> {
         self.types.iter().map(|(spec, _)| spec.clone()).collect()
     }
 
-    fn handler(&self, name: &str) -> Option<&Arc<dyn NodeHandler>> {
-        self.types
-            .iter()
-            .find(|(spec, _)| spec.name == name)
-            .map(|(_, handler)| handler)
+    /// The handler of the type `name`: the one registered here, else its module's version for a
+    /// run created at `as_of`.
+    async fn handler(
+        &self,
+        name: &str,
+        as_of: DateTime<Utc>,
+    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
+        if let Some((_, handler)) = self.types.iter().find(|(spec, _)| spec.name == name) {
+            return Ok(Some(handler.clone()));
+        }
+        match &self.modules {
+            Some(modules) => modules.handler(name, as_of).await,
+            None => Ok(None),
+        }
     }
 
     fn storage(&self) -> ExecutionStorage {
@@ -201,17 +236,24 @@ impl NodeRunner for NodeTypes {
             last_attempt: attempt.attempt >= attempt.max_attempts,
         };
 
-        let Some(handler) = self.handler(&job.node_type) else {
-            let error = format!("Unknown node type '{}'", job.node_type);
-            node.failed(&error, None, None, true).await?;
-            return Cancel::default().message(error).into();
-        };
-
         let run = node
             .storage
             .run_definition(job.workflow_run_id)
             .await?
             .ok_or_else(|| format!("no workflow run {}", job.workflow_run_id))?;
+        let handler = match self.handler(&job.node_type, run.created_at).await {
+            Ok(Some(handler)) => handler,
+            Ok(None) => {
+                let error = format!("Unknown node type '{}'", job.node_type);
+                node.failed(&error, None, None, true).await?;
+                return Cancel::default().message(error).into();
+            }
+            Err(e) => {
+                let error = e.to_string();
+                node.failed(&error, None, None, node.last_attempt).await?;
+                return Err(error.into());
+            }
+        };
         let inputs = run_inputs(&run);
         let outputs = node
             .storage
@@ -241,7 +283,8 @@ impl NodeRunner for NodeTypes {
             run.execution_id.unwrap_or_else(Uuid::nil),
             &job.node_id,
             &job.node_type,
-        );
+        )
+        .with_secrets(self.secrets.clone());
         context.inputs = resolved;
         context.workflow_inputs = inputs.clone();
         context.dependency_outputs = outputs.clone();
@@ -270,6 +313,31 @@ impl NodeRunner for NodeTypes {
                 Err(Box::new(e))
             }
         }
+    }
+
+    async fn run_module(&self, job: &ModuleJob, ctx: Context) -> PerformResult {
+        let Some(modules) = &self.modules else {
+            let why = format!("this engine runs no modules, so not {}", job.module);
+            return Cancel::default().message(why).into();
+        };
+        let attempt = ctx.job();
+        let Some(handler) = modules.handler(&job.module, attempt.inserted_at).await? else {
+            let why = format!(
+                "no module {} was uploaded before the job was inserted",
+                job.module
+            );
+            return Cancel::default().message(why).into();
+        };
+        let Value::Object(args) = &job.args else {
+            return Cancel::default()
+                .message("its args aren't a JSON object")
+                .into();
+        };
+        let mut context = NodeContext::new(Uuid::nil(), format!("job:{}", attempt.id), &job.module)
+            .with_secrets(self.secrets.clone());
+        context.inputs = args.clone().into_iter().collect();
+        let output = handler.execute(&context, &self.pool).await?;
+        ModuleJob::outcome(output.to_json())
     }
 }
 
@@ -485,6 +553,7 @@ mod tests {
     fn a_declared_input_left_out_takes_its_default() {
         let run = RunDefinition {
             execution_id: None,
+            created_at: Utc::now(),
             inputs: json!({ "name": "ada" }),
             input_schema: json!({
                 "name": { "type": "string" },

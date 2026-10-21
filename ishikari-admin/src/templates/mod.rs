@@ -11,11 +11,13 @@ use crate::routes::dashboard::{JobStats, RecentFailure, WorkflowStats};
 use crate::routes::definitions::{DefinitionDetail, DefinitionInfo, WorkflowRunInfo};
 use crate::routes::dependencies::{DependencyInfo, DependencyStats, JobWithDependencies};
 use crate::routes::jobs::{EnhancedJobDetail, EnhancedJobInfo, Pager};
+use crate::routes::node_types::{JobForm, ModuleInfo, ScriptForm, TestRunInfo, UploadForm};
 use crate::routes::queues::{QueueInfo, QueueJobInfo};
 use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
 };
 use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
+use crate::routes::secrets::SecretRow;
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
 use crate::NavItem;
 
@@ -101,6 +103,10 @@ pages!(
     DefinitionImportTemplate,
     DefinitionRunTemplate,
     DefinitionEditTemplate,
+    NodeTypesTemplate,
+    ScriptTemplate,
+    ModuleJobTemplate,
+    SecretsTemplate,
 );
 
 /// Dashboard page template.
@@ -353,6 +359,58 @@ pub struct DefinitionImportTemplate {
     pub nav_items: Vec<NavItem>,
     pub error: Option<String>,
     pub yaml: String,
+}
+
+/// The Node types page: the types registered in Rust, and the uploaded modules (`None` when
+/// the host has none to upload).
+#[derive(Template)]
+#[template(path = "node_types/list.html", blocks = ["title", "content"])]
+pub struct NodeTypesTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub registered: Vec<ishikari::execution::NodeSpec>,
+    pub modules: Option<Vec<ModuleInfo>>,
+    pub notice: Option<String>,
+    pub error: Option<String>,
+    pub form: UploadForm,
+}
+
+/// The script editor: a node type written as a script, tested and saved here.
+#[derive(Template)]
+#[template(path = "node_types/script.html", blocks = ["title", "content"])]
+pub struct ScriptTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub form: ScriptForm,
+    pub error: Option<String>,
+    /// The test run just made, if any.
+    pub run: Option<TestRunInfo>,
+}
+
+/// A module's job form: a `ModuleJob` of it, inserted here.
+#[derive(Template)]
+#[template(path = "node_types/job.html", blocks = ["title", "content"])]
+pub struct ModuleJobTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub module: ModuleInfo,
+    pub form: JobForm,
+    pub error: Option<String>,
+}
+
+/// The Secrets page: the host's secrets by name, and the form to set one.
+#[derive(Template)]
+#[template(path = "secrets.html", blocks = ["title", "content"])]
+pub struct SecretsTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub secrets: Vec<SecretRow>,
+    /// Whether the host has modules, which are granted secrets.
+    pub modules: bool,
+    pub notice: Option<String>,
+    pub error: Option<String>,
+    /// The name the form was given, to show again when it's refused; never its value.
+    pub name: String,
 }
 
 /// Workflow definition run form template.

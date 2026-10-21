@@ -7,7 +7,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Context, PerformResult, Worker};
+use super::module_job::ModuleJob;
+use crate::{Cancel, Context, PerformResult, Worker};
 
 /// One node of a workflow definition's run. The admin's Run inserts one per node as the steps
 /// of a [`Dag`](crate::workflows::Dag), each named by its node: the roots available, the rest
@@ -54,6 +55,14 @@ impl NodeJob {
 #[async_trait::async_trait]
 pub trait NodeRunner: Send + Sync + 'static {
     async fn run(&self, job: &NodeJob, ctx: Context) -> PerformResult;
+
+    /// Run a [`ModuleJob`] by the host's modules. By default there are none, and the job is
+    /// cancelled.
+    async fn run_module(&self, job: &ModuleJob, ctx: Context) -> PerformResult {
+        let _ = ctx;
+        let why = format!("this engine runs no modules, so not {}", job.module);
+        Cancel::default().message(why).into()
+    }
 }
 
 /// The engine state [`NodeJob`]s need: the host's [`NodeRunner`]. An engine has one state, so
@@ -94,6 +103,10 @@ impl NodeJobs {
             runner: Arc::new(runner),
         }
     }
+
+    pub(crate) fn runner(&self) -> &dyn NodeRunner {
+        self.runner.as_ref()
+    }
 }
 
 #[typetag::serde(name = "ishikari::execution::NodeJob")]
@@ -119,6 +132,6 @@ impl Worker for NodeJob {
         let jobs = ctx
             .state::<NodeJobs>()
             .map_err(|_| "a NodeJob runs in an engine whose state is a NodeJobs")?;
-        jobs.runner.run(self, ctx).await
+        jobs.runner().run(self, ctx).await
     }
 }

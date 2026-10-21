@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
+
+{% block title %}Node Types{% endblock %}
+
+{% block content %}
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Node types</h1>
+        <p class="ik-subtitle">What the workflow builder offers: the types registered in Rust{% if modules.is_some() %}, then the modules uploaded here{% endif %}</p>
+    </div>
+    {% if modules.is_some() %}
+    <a href="{{ base_path }}/node-types/script" class="ik-btn ik-btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New script
+    </a>
+    {% endif %}
+</header>
+
+{% if let Some(notice) = notice %}
+<div role="status" class="ik-alert">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+    <p>{{ notice }}</p>
+</div>
+{% endif %}
+
+{% if let Some(e) = error %}
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Upload refused</p>
+        <p class="break-words whitespace-pre-line">{{ e }}</p>
+    </div>
+</div>
+{% endif %}
+
+{% if let Some(modules) = modules %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Upload a module</h2>
+            <p class="ik-card-desc">A WebAssembly component of the <code class="ik-code-inline">ishikari:node</code> world, or a script in TypeScript or JavaScript (or write one with <a class="ik-link" href="{{ base_path }}/node-types/script">New script</a>). It reaches only the hosts and the secrets you list, within its limits. Uploading a name again makes its next version; runs already started keep the version they started with.</p>
+        </div>
+    </div>
+    <form method="post" action="{{ base_path }}/node-types" enctype="multipart/form-data">
+        <div class="ik-card-body grid gap-4 sm:grid-cols-2">
+            <label class="ik-field sm:col-span-2">
+                <span class="ik-label">Module</span>
+                <input type="file" name="module" accept=".wasm,.ts,.js,.mjs,application/wasm,text/javascript" required class="ik-input">
+            </label>
+            <label class="ik-field sm:col-span-2">
+                <span class="ik-label">Allowed hosts</span>
+                <textarea name="allowed_hosts" rows="3" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="api.example.com&#10;*.internal.example.com&#10;127.0.0.1:8080">{{ form.allowed_hosts }}</textarea>
+                <span class="ik-hint">One per line: a host (on any port), <code class="ik-code-inline">host:port</code>, or <code class="ik-code-inline">*.domain</code> for its subdomains. None by default.</span>
+            </label>
+            <label class="ik-field sm:col-span-2">
+                <span class="ik-label">Secrets</span>
+                <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
+                <span class="ik-hint">One per line: the names of the host's secrets it may read, with <code class="ik-code-inline">secret(name)</code> in a script or <code class="ik-code-inline">host.secret</code> in a component. Their values are redacted from what it returns and logs. None by default.</span>
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Timeout (seconds)</span>
+                <input type="number" name="timeout_seconds" min="0" step="any" class="ik-input" placeholder="The runtime's default" value="{{ form.timeout_seconds }}">
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Memory limit (MiB)</span>
+                <input type="number" name="memory_limit_mb" min="1" step="1" class="ik-input" placeholder="The runtime's default" value="{{ form.memory_limit_mb }}">
+            </label>
+        </div>
+        <div class="ik-card-footer flex justify-end">
+            <button type="submit" class="ik-btn ik-btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+                Upload module
+            </button>
+        </div>
+    </form>
+</section>
+
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Uploaded modules</h2>
+            <p class="ik-card-desc">The latest version of each</p>
+        </div>
+    </div>
+    {% if modules.is_empty() %}
+    {% call ui::empty("No modules uploaded") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Version</th>
+                    <th>Description</th>
+                    <th>Allowed hosts</th>
+                    <th>Secrets</th>
+                    <th>Timeout</th>
+                    <th>Memory</th>
+                    <th class="ik-num">Size</th>
+                    <th>Uploaded</th>
+                    <th><span class="sr-only">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in modules %}
+                <tr>
+                    <td>
+                        <span class="font-medium ik-mono">{{ m.name }}</span>
+                        {% if m.shadowed %}<span class="ik-badge ik-badge-sm ik-tone-warning" title="A type registered in Rust has this name, and runs instead">shadowed</span>{% endif %}
+                        <div class="text-xs ik-muted">{{ m.category }} · {% if m.edit.is_some() %}script{% else %}component{% endif %}</div>
+                    </td>
+                    <td><span class="ik-badge ik-badge-sm ik-tone-info" title="sha256 {{ m.sha256 }}…">v{{ m.version }}</span></td>
+                    <td class="max-w-md ik-muted">{% if let Some(desc) = m.description %}{{ desc }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
+                    <td class="ik-mono text-xs">
+                        {% for host in m.allowed_hosts %}<div>{{ host }}</div>{% else %}<span class="ik-none">none</span>{% endfor %}
+                    </td>
+                    <td class="ik-mono text-xs">
+                        {% for name in m.secrets %}<div>{{ name }}</div>{% else %}<span class="ik-none">none</span>{% endfor %}
+                    </td>
+                    <td class="whitespace-nowrap tabular-nums">{% if let Some(t) = m.timeout %}{{ t }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>
+                    <td class="whitespace-nowrap tabular-nums">{% if let Some(mb) = m.memory %}{{ mb }}{% else %}<span class="ik-muted">default</span>{% endif %}</td>
+                    <td class="ik-num whitespace-nowrap">{{ m.size }}</td>
+                    <td class="whitespace-nowrap ik-muted tabular-nums">{{ m.uploaded_at.format("%Y-%m-%d %H:%M") }}</td>
+                    <td class="text-right whitespace-nowrap"><a href="{{ m.run }}" class="ik-btn ik-btn-ghost ik-btn-xs">Run as job</a>{% if let Some(edit) = m.edit %}<a href="{{ edit }}" class="ik-btn ik-btn-ghost ik-btn-xs">Edit</a>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Registered in Rust</h2>
+            <p class="ik-card-desc">The types the host registers with <code class="ik-code-inline">AppState::with_node_types</code></p>
+        </div>
+    </div>
+    {% if registered.is_empty() %}
+    {% call ui::empty("No node types registered") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th>Inputs</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in registered %}
+                <tr>
+                    <td class="font-medium ik-mono">{{ t.name }}</td>
+                    <td class="ik-muted">{{ t.category }}</td>
+                    <td class="max-w-md ik-muted">{% if let Some(desc) = t.description %}{{ desc }}{% else %}<span class="ik-none">—</span>{% endif %}</td>
+                    <td class="ik-mono text-xs">{% for (name, _) in t.input_schema %}{% if !loop.first %}, {% endif %}{{ name }}{% else %}<span class="ik-none">—</span>{% endfor %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

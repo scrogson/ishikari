@@ -448,3 +448,23 @@
         document.addEventListener("htmx:afterSettle", scan);
     }
 })();
+
+// In a code textarea ([data-ik-code]), Tab indents by two spaces; after Escape, Tab moves
+// focus on as usual.
+(function () {
+    if (window.__ishikariCode) return;
+    window.__ishikariCode = true;
+    let escaped = false;
+    document.addEventListener("keydown", function (e) {
+        const area = e.target.closest && e.target.closest("textarea[data-ik-code]");
+        if (!area) return;
+        if (e.key === "Escape") { escaped = true; return; }
+        if (e.key !== "Tab" || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || escaped) {
+            escaped = false;
+            return;
+        }
+        e.preventDefault();
+        // execCommand keeps the edit on the textarea's undo stack.
+        if (!document.execCommand("insertText", false, "  ")) area.setRangeText("  ", area.selectionStart, area.selectionEnd, "end");
+    });
+})();

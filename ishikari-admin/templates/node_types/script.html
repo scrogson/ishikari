@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
+
+{% block title %}{% if form.module.is_empty() %}New Script{% else %}Edit {{ form.module }}{% endif %}{% endblock %}
+
+{% block content %}
+<header class="ik-page-header">
+    <div>
+        <nav class="ik-crumbs" aria-label="Breadcrumb"><a href="{{ base_path }}/node-types">Node types</a><span aria-hidden="true">/</span><span>{% if form.module.is_empty() %}New script{% else %}{{ form.module }}{% endif %}</span></nav>
+        <h1 class="ik-title">{% if form.module.is_empty() %}New script{% else %}Edit {{ form.module }}{% endif %}</h1>
+        <p class="ik-subtitle">A node type in TypeScript or JavaScript: test it here, then save it as its next version</p>
+    </div>
+</header>
+
+{% if let Some(e) = error %}
+<div role="alert" id="result" class="ik-alert ik-alert-error scroll-mt-20">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Refused</p>
+        <p class="break-words whitespace-pre-line">{{ e }}</p>
+    </div>
+</div>
+{% endif %}
+
+{% if let Some(run) = run %}
+<section class="ik-card scroll-mt-20" id="result">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Test run of {{ run.name }}</h2>
+            <p class="ik-card-desc">Nothing was saved</p>
+        </div>
+    </div>
+    <div class="ik-card-body grid gap-4">
+        {% match run.output %}
+        {% when Ok with (output) %}
+        <div>
+            <p class="ik-label mb-1.5">Output</p>
+            <pre class="ik-code ik-code-toned ik-tone-success">{{ output|highlight_json }}</pre>
+        </div>
+        {% when Err with (why) %}
+        <div>
+            <p class="ik-label mb-1.5">Failed</p>
+            <pre class="ik-code ik-code-toned ik-tone-danger whitespace-pre-wrap">{{ why }}</pre>
+        </div>
+        {% endmatch %}
+        <div>
+            <p class="ik-label mb-1.5">Secrets read</p>
+            {% if run.secrets.is_empty() %}
+            <p class="text-sm ik-none">None</p>
+            {% else %}
+            <p class="flex flex-wrap gap-1.5">{% for name in run.secrets %}<span class="ik-badge ik-badge-sm ik-mono">{{ name }}</span>{% endfor %}</p>
+            {% endif %}
+        </div>
+        <div>
+            <p class="ik-label mb-1.5">Logs</p>
+            {% if run.logs.is_empty() %}
+            <p class="text-sm ik-none">Nothing logged</p>
+            {% else %}
+            <pre class="ik-code whitespace-pre-wrap">{% for line in run.logs %}{{ line }}
+{% endfor %}</pre>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{# Back at the result after posting, not where the button was. #}
+<form method="post" action="{{ base_path }}/node-types/script#result" class="grid gap-6 lg:grid-cols-3">
+    <input type="hidden" name="module" value="{{ form.module }}">
+    <section class="ik-card lg:col-span-2">
+        <div class="ik-card-header">
+            <div>
+                <h2 class="ik-card-title">Script</h2>
+                <p class="ik-card-desc">An ES module exporting <code class="ik-code-inline">spec</code>, the node type, and <code class="ik-code-inline">run</code>, from a node's input to its output</p>
+            </div>
+        </div>
+        <div class="ik-card-body">
+            <textarea name="source" aria-label="Script" data-ik-code wrap="off" class="ik-textarea ik-mono text-xs min-h-[540px]" spellcheck="false" autocapitalize="off" autocomplete="off">{{ form.source }}</textarea>
+        </div>
+    </section>
+
+    <div class="grid content-start gap-6">
+        <section class="ik-card">
+            <div class="ik-card-header">
+                <div>
+                    <h2 class="ik-card-title">Test inputs</h2>
+                    <p class="ik-card-desc">The node's <code class="ik-code-inline">inputs</code>, a JSON object</p>
+                </div>
+            </div>
+            <div class="ik-card-body">
+                <textarea name="inputs" aria-label="Test inputs" data-ik-code rows="6" class="ik-textarea ik-mono text-xs" spellcheck="false">{{ form.inputs }}</textarea>
+            </div>
+        </section>
+
+        <section class="ik-card">
+            <div class="ik-card-header">
+                <div>
+                    <h2 class="ik-card-title">Grants</h2>
+                    <p class="ik-card-desc">What it may do, in test runs and once saved</p>
+                </div>
+            </div>
+            <div class="ik-card-body grid gap-4">
+                <label class="ik-field">
+                    <span class="ik-label">Allowed hosts</span>
+                    <textarea name="allowed_hosts" rows="3" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="api.example.com&#10;*.internal.example.com">{{ form.allowed_hosts }}</textarea>
+                    <span class="ik-hint">One per line: a host (on any port), <code class="ik-code-inline">host:port</code>, or <code class="ik-code-inline">*.domain</code>. None by default.</span>
+                </label>
+                <label class="ik-field">
+                    <span class="ik-label">Secrets</span>
+                    <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
+                    <span class="ik-hint">One per line: the host's secrets <code class="ik-code-inline">secret(name)</code> may read. Their values are redacted from what it returns and logs.</span>
+                </label>
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                    <label class="ik-field">
+                        <span class="ik-label">Timeout (seconds)</span>
+                        <input type="number" name="timeout_seconds" min="0" step="any" class="ik-input" placeholder="Default" value="{{ form.timeout_seconds }}">
+                    </label>
+                    <label class="ik-field">
+                        <span class="ik-label">Memory limit (MiB)</span>
+                        <input type="number" name="memory_limit_mb" min="1" step="1" class="ik-input" placeholder="Default" value="{{ form.memory_limit_mb }}">
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <div class="flex flex-wrap justify-end gap-2">
+            <a href="{{ base_path }}/node-types" class="ik-btn ik-btn-ghost">Cancel</a>
+            <button type="submit" name="action" value="test" class="ik-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18l15-9Z"/></svg>
+                Test run
+            </button>
+            <button type="submit" name="action" value="save" class="ik-btn ik-btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+                Save
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}

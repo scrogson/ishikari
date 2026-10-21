@@ -2,3 +2,5 @@
 #MISE description="Clean build artifacts"
 set -e
 cargo clean
+# ishikari-wasm is a workspace of its own (it needs a newer Rust).
+cargo clean --manifest-path ishikari-wasm/Cargo.toml

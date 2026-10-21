@@ -1,0 +1,56 @@
+[package]
+name = "ishikari-wasm"
+version = "0.4.0"
+edition = "2021"
+# wasmtime's, which is why this crate isn't in the repository's workspace.
+rust-version = "1.96"
+description = "Node types for ishikari's workflow definitions uploaded as WebAssembly components or scripts"
+license = "MIT"
+repository = "https://github.com/scrogson/ishikari"
+readme = "README.md"
+# Not the tests' fixtures, nor the runtime of scripts' source (its own package): what it's built into.
+include = ["src", "wit", "js-runtime.wasm", "README.md"]
+
+[dependencies]
+ishikari = { version = "0.4.0", path = "../ishikari" }
+
+# The runtime: components, with WASI p2 for what guests' standard libraries import
+wasmtime = { version = "49", default-features = false, features = [
+  "component-model",
+  "cranelift",
+  "parallel-compilation",
+  "runtime",
+  "std",
+] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
+
+async-trait = "0.1"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+sha2 = "0.10"
+# Scripts' TypeScript: types stripped where they stand, keeping lines and columns
+swc_common = "26"
+swc_ts_fast_strip = "59"
+sqlx = { version = "0.8.6", default-features = false, features = [
+  "chrono",
+  "json",
+  "postgres",
+  "runtime-tokio",
+] }
+tokio = { version = "1.41", features = ["rt"] }
+tracing = "0.1"
+# `fetch`: blocking, like the guest's call it serves
+ureq = "3"
+
+[dev-dependencies]
+axum = "0.8"
+ishikari-admin = { version = "0.4.0", path = "../ishikari-admin" }
+serde_urlencoded = "0.7"
+tokio = { version = "1.41", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Its own, with its own Cargo.lock: see rust-version.
+[workspace]

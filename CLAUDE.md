@@ -8,16 +8,20 @@ Tasks are [mise](https://mise.jdx.dev) file tasks in `.mise/tasks`:
 
 - `mise run dev` - format, lint, test
 - `mise run build`, `mise run check`, `mise run clippy`, `mise run fmt`, `mise run clean`
+  (each for `ishikari-wasm` too)
 - `mise run test [filter]` - all tests (`--watch` to re-run on change)
 - `mise run pg:start` / `pg:stop` - the local Postgres in `.postgres` (the `DATABASE_URL` in
   `mise.toml`); `mise run db:setup` creates the dev database
 - `mise run demo` - the admin demo (`ishikari-admin/examples/demo.rs`)
+- `mise run wasm:demo` - the admin with uploaded node types (`ishikari-wasm/examples/admin.rs`)
+- `mise run wasm:fixtures` - build ishikari-wasm's test modules (needs `wasm32-wasip2`)
+- `mise run wasm:js-runtime` - build ishikari-wasm's JavaScript runtime (`js-runtime.wasm`)
 - `mise run version:patch|minor|major` - bump and sync the crates' versions
 - `mise run publish --dry-run` - check the crates package; `mise run publish` publishes them
 
 ### Tests
 
-Integration tests (`ishikari/tests`, `ishikari-admin/tests`) run against a real Postgres: each
+Integration tests (`ishikari/tests`, `ishikari-admin/tests`, `ishikari-wasm/tests`) run against a real Postgres: each
 test migrates a schema of its own (`ishikari_t_*`) and drops it at the end. They use
 `ISHIKARI_TEST_DATABASE_URL`, else `DATABASE_URL`; without either they fail loudly, and
 `ISHIKARI_SKIP_DB_TESTS=1` skips them. Helpers are in `ishikari/tests/common/mod.rs`
@@ -29,7 +33,7 @@ never `serde`, `typetag` or `async_trait`.
 
 ## Project Architecture
 
-A workspace of four crates:
+A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
 
 - `ishikari` - the library
 - `ishikari-macros` - `#[ishikari::job]` and `#[ishikari::worker]` (syn 2)
@@ -40,7 +44,18 @@ A workspace of four crates:
   `assets/admin-embed.css` (no themes, for a host's layout); both are committed. Its scripts
   are plain JS with no build step: `assets/admin.js` (graphs, tooltips...) and
   `assets/builder.js`, the definition editor's workflow builder (HTML nodes, SVG edges, a
-  `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`.
+  `<canvas>` minimap), which lays nodes out with admin.js's `window.ikGraph`. Its Node types
+  page uploads the host's node modules (`AppState::with_node_modules`), its script editor
+  (`/node-types/script`) writes, test-runs and saves scripts, and its job form
+  (`/node-types/job`) inserts a module's `ModuleJob`. Its Secrets page sets and deletes the
+  host's secrets (`AppState::with_secrets`), never showing a value.
+- `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
+  the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
+  in a sandbox with its module's grants and limits. A script's types are stripped by swc
+  (`src/typescript.rs`), and it runs on `js-runtime.wasm`, a Boa component (`script-node`
+  world) built from `js-runtime/` by `mise run wasm:js-runtime` and committed. Its own
+  workspace and lockfile: wasmtime needs Rust 1.96, the workspace's MSRV is 1.83. Its tests
+  upload `tests/fixtures/testkit-v*.wasm` (committed; rebuilt by `mise run wasm:fixtures`).
 
 ### Core components (`ishikari/src`)
 
@@ -75,7 +90,14 @@ A workspace of four crates:
   - `Workflow::progress`.
 - **`dependencies/`**: dependency rows and the `DependencyResolver`, a safety-net sweep for
   workflows and sagas a job left behind (one rescued and discarded).
-- **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs).
+- **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs): `NodeTypes`
+  runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
+  the version uploaded last before the run was created). `ModuleJob` runs a module as a plain
+  job, through `NodeJobs`.
+- **`secrets/`**: the host's secrets, read by name from a backend it picks (`Secrets`;
+  `SecretStore` for one the admin writes to): `PostgresSecrets` (encrypted with the host's key,
+  `ishikari_secrets`), `EnvSecrets`, `MemorySecrets`. Rust nodes read them from their context;
+  modules only those granted (`ModuleGrants::secrets`), redacted from what they return and log.
 
 ### Job lifecycle
 
@@ -105,6 +127,8 @@ it creates.
 - v05: nodes, unique keys, error records, the `pending` state
 - v06: notify when jobs become available (insert or update), the staging index, saga step indexes
 - v07: saga rollbacks in progress moved off dependency chains (data only)
+- v08: node modules (node types uploaded through the admin)
+- v09: secrets (kept encrypted, and those modules are granted)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

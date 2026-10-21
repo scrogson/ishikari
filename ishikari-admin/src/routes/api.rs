@@ -702,10 +702,23 @@ pub struct NodeTypesResponse {
     pub node_types: Vec<NodeSpec>,
 }
 
-/// The node types the host registered (`AppState::with_node_types`), for the builder's palette.
-pub async fn node_types(State(state): State<AppState>) -> Json<NodeTypesResponse> {
-    Json(NodeTypesResponse {
-        node_types: state.node_types.to_vec(),
+/// The node types the host registered (`AppState::with_node_types`), then its uploaded
+/// modules (`AppState::with_node_modules`), for the builder's palette.
+pub async fn node_types(
+    State(state): State<AppState>,
+) -> Result<Json<NodeTypesResponse>, (StatusCode, String)> {
+    Ok(Json(NodeTypesResponse {
+        node_types: catalog(&state).await?,
+    }))
+}
+
+/// The node types a definition may use ([`AppState::catalog`]).
+async fn catalog(state: &AppState) -> Result<Vec<NodeSpec>, (StatusCode, String)> {
+    state.catalog().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Couldn't list the node types: {e}"),
+        )
     })
 }
 
@@ -757,7 +770,7 @@ pub async fn update_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate_for(&state.node_types)
+    def.validate_for(&catalog(&state).await?)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Update in database
@@ -774,7 +787,7 @@ pub async fn create_definition(
     Json(def): Json<WorkflowDefinition>,
 ) -> Result<Json<DefinitionDetailResponse>, (StatusCode, String)> {
     // Validate the definition
-    def.validate_for(&state.node_types)
+    def.validate_for(&catalog(&state).await?)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Save to database
@@ -805,7 +818,11 @@ pub async fn validate_definition(
     State(state): State<AppState>,
     Json(def): Json<WorkflowDefinition>,
 ) -> Json<ValidationResponse> {
-    match def.validate_for(&state.node_types) {
+    let checked = match catalog(&state).await {
+        Ok(catalog) => def.validate_for(&catalog),
+        Err((_, e)) => Err(e),
+    };
+    match checked {
         Ok(()) => Json(ValidationResponse {
             valid: true,
             errors: vec![],

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Publish the crates to crates.io (macros, ishikari, CLI, admin, in dependency order)"
+#MISE description="Publish the crates to crates.io (macros, ishikari, CLI, admin, then wasm, in dependency order)"
 #USAGE flag "-n --dry-run" help="Package and verify without publishing"
 set -e
 
@@ -9,3 +9,11 @@ if [ "${usage_dry_run:-false}" = "true" ]; then
 fi
 
 cargo publish "${args[@]}"
+
+# ishikari-wasm, a workspace of its own, after the ishikari it depends on. A dry run lists what
+# it would package: it can't be verified until crates.io has that ishikari.
+if [ "${usage_dry_run:-false}" = "true" ]; then
+  cargo package --manifest-path ishikari-wasm/Cargo.toml --list --allow-dirty
+else
+  cargo publish --manifest-path ishikari-wasm/Cargo.toml
+fi

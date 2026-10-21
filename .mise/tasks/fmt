@@ -9,3 +9,5 @@ if [ "${usage_check:-false}" = "true" ]; then
 fi
 
 cargo fmt "${args[@]}"
+# ishikari-wasm is a workspace of its own (it needs a newer Rust).
+cargo fmt --manifest-path ishikari-wasm/Cargo.toml "${args[@]}"

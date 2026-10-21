@@ -3,9 +3,11 @@
 //! Provides input data and utilities to node execution handlers.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::types::NodeData;
+use crate::secrets::{Secret, SecretError, Secrets};
 
 /// Context passed to node execution handlers.
 #[derive(Debug, Clone)]
@@ -22,6 +24,8 @@ pub struct NodeContext {
     pub workflow_inputs: HashMap<String, NodeData>,
     /// Outputs from dependency nodes (keyed by node ID)
     pub dependency_outputs: HashMap<String, NodeData>,
+    /// The host's secrets, if it has any.
+    secrets: Option<Arc<dyn Secrets>>,
 }
 
 impl NodeContext {
@@ -38,7 +42,26 @@ impl NodeContext {
             inputs: HashMap::new(),
             workflow_inputs: HashMap::new(),
             dependency_outputs: HashMap::new(),
+            secrets: None,
         }
+    }
+
+    /// This context, its node given `secrets`.
+    pub fn with_secrets(mut self, secrets: Option<Arc<dyn Secrets>>) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
+    /// The host's secret `name` ([`NodeTypes::secrets`](super::NodeTypes::secrets)), or
+    /// [`SecretError::Missing`] when it has none of that name.
+    pub async fn secret(&self, name: &str) -> Result<Secret, SecretError> {
+        let Some(secrets) = &self.secrets else {
+            return Err(SecretError::Backend("this host keeps no secrets".into()));
+        };
+        secrets
+            .get(name)
+            .await?
+            .ok_or_else(|| SecretError::Missing(name.to_string()))
     }
 
     /// Get an input value by name.

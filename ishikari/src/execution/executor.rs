@@ -50,6 +50,12 @@ pub enum NodeError {
     ConditionError(String),
 }
 
+impl From<crate::secrets::SecretError> for NodeError {
+    fn from(error: crate::secrets::SecretError) -> Self {
+        NodeError::ExecutionFailed(error.to_string())
+    }
+}
+
 /// Workflow execution error.
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutionError {
