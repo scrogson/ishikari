@@ -2,9 +2,9 @@
 //! the host picks, rather than in their inputs, which are stored with their runs and jobs.
 //!
 //! A backend is a [`Secrets`]; one the admin can also write to is a [`SecretStore`]. ishikari
-//! has [`EnvSecrets`], the process's environment variables, and [`MemorySecrets`], for tests.
-//! Another backend (Vault, OpenBao, a cloud's secret manager) is an implementation of
-//! [`Secrets`].
+//! has [`PostgresSecrets`], kept encrypted with the host's key beside its jobs, [`EnvSecrets`],
+//! the process's environment variables, and [`MemorySecrets`], for tests. Another backend
+//! (Vault, OpenBao, a cloud's secret manager) is an implementation of [`Secrets`].
 //!
 //! A node registered in Rust reads them from its context ([`NodeContext::secret`]) once its
 //! [`NodeTypes`] has them ([`NodeTypes::secrets`]). A module (`ishikari-wasm`) reads only those
@@ -28,6 +28,7 @@
 
 mod env;
 mod memory;
+mod postgres;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -36,6 +37,7 @@ use chrono::{DateTime, Utc};
 
 pub use env::EnvSecrets;
 pub use memory::MemorySecrets;
+pub use postgres::{PostgresSecrets, SecretKey};
 
 /// The longest name a secret may have.
 pub const MAX_NAME_LENGTH: usize = 200;

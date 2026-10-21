@@ -12,6 +12,8 @@ authors = ["Sonny Scroggin <sonny@scrogg.in>"]
 anyhow = "1.0.75"
 async-trait = "0.1.74"
 base64 = "0.22"
+# Secrets kept in Postgres: XChaCha20-Poly1305
+chacha20poly1305 = "0.10"
 chrono = { version = "0.4.31", features = ["serde"] }
 chrono-tz = "0.10"
 croner = "4"
