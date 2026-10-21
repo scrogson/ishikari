@@ -19,6 +19,7 @@ use super::node_job::{NodeJob, NodeRunner};
 use super::node_modules::{ModuleError, NodeModules};
 use super::storage::{ExecutionStorage, NodeRecord, RunDefinition};
 use super::types::{NodeData, NodeStatus, SchemaField};
+use crate::secrets::Secrets;
 use crate::{Cancel, Complete, Context, PerformResult};
 
 /// A node type as the workflow builder offers it: its name (a node's `type`), the category its
@@ -147,6 +148,7 @@ pub struct NodeTypes {
     schema: Option<String>,
     types: Vec<(NodeSpec, Arc<dyn NodeHandler>)>,
     modules: Option<Arc<dyn NodeModules>>,
+    secrets: Option<Arc<dyn Secrets>>,
 }
 
 impl NodeTypes {
@@ -157,6 +159,7 @@ impl NodeTypes {
             schema: None,
             types: Vec::new(),
             modules: None,
+            secrets: None,
         }
     }
 
@@ -181,6 +184,14 @@ impl NodeTypes {
     /// module of the same name.
     pub fn modules(mut self, modules: Arc<dyn NodeModules>) -> Self {
         self.modules = Some(modules);
+        self
+    }
+
+    /// Give the nodes of the types registered here `secrets`, which they read from their
+    /// context ([`NodeContext::secret`]). Modules read theirs from their runtime
+    /// (`ishikari-wasm`'s `WasmModules::secrets`), and only those they were granted.
+    pub fn secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
+        self.secrets = Some(secrets);
         self
     }
 
@@ -272,7 +283,8 @@ impl NodeRunner for NodeTypes {
             run.execution_id.unwrap_or_else(Uuid::nil),
             &job.node_id,
             &job.node_type,
-        );
+        )
+        .with_secrets(self.secrets.clone());
         context.inputs = resolved;
         context.workflow_inputs = inputs.clone();
         context.dependency_outputs = outputs.clone();
@@ -321,7 +333,8 @@ impl NodeRunner for NodeTypes {
                 .message("its args aren't a JSON object")
                 .into();
         };
-        let mut context = NodeContext::new(Uuid::nil(), format!("job:{}", attempt.id), &job.module);
+        let mut context = NodeContext::new(Uuid::nil(), format!("job:{}", attempt.id), &job.module)
+            .with_secrets(self.secrets.clone());
         context.inputs = args.clone().into_iter().collect();
         let output = handler.execute(&context, &self.pool).await?;
         ModuleJob::outcome(output.to_json())

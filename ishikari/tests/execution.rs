@@ -11,6 +11,7 @@ use ishikari::execution::{
     TestRun,
 };
 use ishikari::prelude::*;
+use ishikari::secrets::MemorySecrets;
 use ishikari::workflows::{Dag, Workflow};
 use ishikari::{Engine, Postgres, Queue};
 use serde_json::{json, Value};
@@ -491,6 +492,67 @@ async fn a_falsy_when_skips_the_node() {
     let (status, _, output, _, reason, _) = recorded(&db.pool, None, run, "maybe").await;
     assert_eq!((status.as_str(), output), ("skipped", None));
     assert!(reason.unwrap().contains("{{nodes.check.off}}"));
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// Reads the secret its input `name` names: whether it's `s3cret`.
+struct ReadsSecret;
+
+#[async_trait::async_trait]
+impl NodeHandler for ReadsSecret {
+    async fn execute(&self, ctx: &NodeContext, _pool: &PgPool) -> Result<NodeData, NodeError> {
+        let name = ctx.get_input_str("name").unwrap_or_default();
+        let secret = ctx.secret(name).await?;
+        let matched = if secret.expose() == "s3cret" {
+            "yes"
+        } else {
+            "no"
+        };
+        Ok(NodeData::json(json!({ "matched": matched })))
+    }
+}
+
+/// A node registered in Rust reads the host's secrets (`NodeTypes::secrets`) from its context;
+/// one there's none of fails it.
+#[tokio::test]
+async fn a_rust_node_reads_the_hosts_secrets() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({
+            "nodes": {
+                "found": { "type": "secret", "inputs": { "name": "api/key" } },
+                "missing": {
+                    "type": "secret",
+                    "depends_on": ["found"],
+                    "inputs": { "name": "api/other" }
+                }
+            }
+        }),
+        &["found", "missing"],
+        json!({}),
+    )
+    .await;
+
+    let secrets = Arc::new(MemorySecrets::new().with("api/key", "s3cret"));
+    let types = NodeTypes::new(db.pool.clone())
+        .secrets(secrets)
+        .register(NodeSpec::new("secret"), ReadsSecret);
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, _, _) = finished(&db.pool, None, run).await;
+    assert_eq!(status, "failed");
+    let (_, _, output, ..) = recorded(&db.pool, None, run, "found").await;
+    assert_eq!(output, Some(json!({ "matched": "yes" })));
+    let (status, _, _, error, _, _) = recorded(&db.pool, None, run, "missing").await;
+    assert_eq!(status, "failed");
+    let error = error.unwrap();
+    assert!(error.contains("no secret api/other"), "{error}");
 
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;

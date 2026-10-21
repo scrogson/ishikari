@@ -179,6 +179,9 @@ pub mod dependencies;
 // advanced workflow execution
 pub mod execution;
 
+// the host's secrets, for its nodes
+pub mod secrets;
+
 pub use ishikari_macros::{job, worker};
 
 pub use cron::{Cron, CronError};
