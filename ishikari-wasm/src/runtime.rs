@@ -34,8 +34,11 @@ const JS_RUNTIME: &[u8] = include_bytes!("../js-runtime.wasm");
 /// How often the engine's epoch advances: the granularity of a call's timeout.
 const TICK: Duration = Duration::from_millis(10);
 
-/// The most a table may grow to, in elements.
+/// The most elements a guest's tables may hold together.
 const MAX_TABLE_ELEMENTS: usize = 1 << 20;
+
+/// The most memories a guest may have (each reserves address space).
+const MAX_MEMORIES: usize = 100;
 
 /// What a call may use.
 #[derive(Debug, Clone, Copy)]
@@ -207,6 +210,35 @@ impl Runtime {
         })
     }
 
+    /// A store for a call in `sandbox` within `limits`, its guest's stdout and stderr kept in
+    /// `stdout` and `stderr`.
+    fn store(
+        &self,
+        mut sandbox: Sandbox,
+        limits: Limits,
+        stdout: &Output,
+        stderr: &Output,
+    ) -> Store<State> {
+        sandbox.deadline = Some(Instant::now() + limits.timeout);
+        let state = State {
+            wasi: WasiCtx::builder()
+                .stdout(stdout.clone())
+                .stderr(stderr.clone())
+                .build(),
+            table: ResourceTable::new(),
+            sandbox,
+            memory_bytes: limits.memory_bytes,
+            memory_used: 0,
+            table_elements: 0,
+            refused_memory: false,
+        };
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|state| state);
+        store.set_epoch_deadline(limits.timeout.div_duration_f64(TICK).ceil().max(1.0) as u64);
+        store.epoch_deadline_trap();
+        store
+    }
+
     /// Call `f` on a fresh instance of `guest`, which may reach what `sandbox` grants within
     /// `limits`.
     fn call<R>(
@@ -218,22 +250,8 @@ impl Runtime {
     ) -> Call<R> {
         let stdout = Output::default();
         let stderr = Output::default();
-        sandbox.deadline = Some(Instant::now() + limits.timeout);
         sandbox.script = guest.script.clone();
-        let state = State {
-            wasi: WasiCtx::builder()
-                .stdout(stdout.clone())
-                .stderr(stderr.clone())
-                .build(),
-            table: ResourceTable::new(),
-            sandbox,
-            memory_bytes: limits.memory_bytes,
-            refused_memory: false,
-        };
-        let mut store = Store::new(&self.engine, state);
-        store.limiter(|state| state);
-        store.set_epoch_deadline(limits.timeout.div_duration_f64(TICK).ceil().max(1.0) as u64);
-        store.epoch_deadline_trap();
+        let mut store = self.store(sandbox, limits, &stdout, &stderr);
 
         let result = guest
             .pre
@@ -315,7 +333,11 @@ pub(crate) struct State {
     wasi: WasiCtx,
     table: ResourceTable,
     sandbox: Sandbox,
+    /// The most the guest's memories may hold together, and what they do.
     memory_bytes: usize,
+    memory_used: usize,
+    /// The elements the guest's tables hold together.
+    table_elements: usize,
     /// Whether the limiter refused the guest memory, which it fails for.
     refused_memory: bool,
 }
@@ -330,23 +352,71 @@ impl WasiView for State {
 }
 
 impl ResourceLimiter for State {
+    // Called for a memory's or table's initial size too, from 0.
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        let allowed = desired <= self.memory_bytes;
+        let used = self
+            .memory_used
+            .saturating_add(desired.saturating_sub(current));
+        let allowed = used <= self.memory_bytes;
+        if allowed {
+            self.memory_used = used;
+        }
         self.refused_memory |= !allowed;
         Ok(allowed)
     }
 
     fn table_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        Ok(desired <= MAX_TABLE_ELEMENTS)
+        let elements = self
+            .table_elements
+            .saturating_add(desired.saturating_sub(current));
+        let allowed = elements <= MAX_TABLE_ELEMENTS;
+        if allowed {
+            self.table_elements = elements;
+        }
+        Ok(allowed)
+    }
+
+    fn memories(&self) -> usize {
+        MAX_MEMORIES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Limits, Output, Runtime, Sandbox};
+    use std::time::Duration;
+
+    /// A call's memory limit is on its guest's memories together.
+    #[test]
+    fn the_memory_limit_is_on_all_memories() {
+        let runtime = Runtime::new().unwrap();
+        let limits = Limits {
+            timeout: Duration::from_secs(5),
+            memory_bytes: 64 * 1024 * 1024,
+        };
+        // A core module of two memories, each of `pages` (LEB128) pages of 64 KiB.
+        let instantiate = |pages: [u8; 2]| {
+            let memory = [0, pages[0], pages[1]];
+            let bytes = [b"\0asm\x01\0\0\0".as_slice(), &[5, 7, 2], &memory, &memory].concat();
+            let module = wasmtime::Module::new(&runtime.engine, bytes).unwrap();
+            let output = Output::default();
+            let mut store = runtime.store(Sandbox::default(), limits, &output, &output);
+            wasmtime::Instance::new(&mut store, &module, &[]).map(|_| ())
+        };
+
+        // 400 pages (25 MiB) each.
+        instantiate([0x90, 0x03]).unwrap();
+        // 600 pages (37.5 MiB) each.
+        assert!(instantiate([0xd8, 0x04]).is_err());
     }
 }
