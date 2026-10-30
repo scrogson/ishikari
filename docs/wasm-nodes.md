@@ -60,7 +60,8 @@ What a module can reach is what the operator grants it on upload, nothing by def
 
 - **HTTP**: `fetch` to hosts on the module's allow-list (`api.example.com`, `127.0.0.1:8080`,
   `*.example.com`). Redirects aren't followed, so one can't leave the list; a guest that wants
-  to follows them with another `fetch`, checked again.
+  to follows them with another `fetch`, checked again. The `Host` header is the URL's, not the
+  guest's. The list is of names: whatever they resolve to is reached, private addresses too.
 - **WASI**: components built for `wasm32-wasip2` import WASI. They get no preopened directories,
   no environment, no arguments, no sockets and no name lookup. Clocks and randomness are
   allowed. stdout and stderr are captured, with `log`, into the node's logs.
@@ -71,8 +72,12 @@ What a module can reach is what the operator grants it on upload, nothing by def
   OpenBao and the like as implementations of the trait. The granted ones are read before each
   call, so `secret` stays synchronous and the call's deadline isn't spent on the backend; one
   that fails fails the node before it runs. Their values are replaced with `[redacted]` in what
-  the node returns, fails with and logs (and so in what's stored and shown), longest first.
-  A test run says which it read.
+  the node returns, fails with and logs (and so in what's stored and shown), longest first; a
+  stream's output is redacted whole, so a value of several lines (a PEM key) goes too. A test
+  run says which it read. Redaction catches a value as it is, not encoded or split: it guards
+  against a module logging one by mistake, not one that means to leak it (which can also
+  `fetch` it to a host it may reach). So whoever can upload modules can read every secret they
+  can name.
 - No database access. A node that needs one is written in Rust.
 
 ## Limits
@@ -84,7 +89,9 @@ Per module, with defaults on `WasmModules`:
   the host can't be interrupted, so it's held to what's left: a `fetch` gets it as its own
   timeout, and a sleep (`wasi:clocks/monotonic-clock` subscriptions) ends by the deadline. A
   call that returns after its deadline fails all the same.
-- **Memory** (64 MiB): the store's limiter refuses growth past it, and the guest traps.
+- **Memory** (64 MiB): what all the guest's memories hold together (a component may have one
+  per core module, at most 100); the store's limiter refuses growth past it, and the guest
+  traps.
 
 A module that breaks a limit fails the node with what it broke, and the node is retried like
 any failure.
@@ -147,6 +154,8 @@ queue, attempts and delay).
   its own result type is worth it.
 - Pruning old versions no run or job can need.
 - Carrying a module's grants over to its next upload, or editing them without re-uploading.
+- A host's policy for which secrets a module may be granted, and caps on the timeout and memory
+  an operator may grant (a test run runs in the admin's process, to its module's timeout).
 - Bounding the compiled-component cache (one entry per version an engine has run or described).
 - A caching wrapper of `Secrets`, for backends that are slow or rate-limited (secrets are read
   before every call), and `ishikari-vault` for Vault and OpenBao.

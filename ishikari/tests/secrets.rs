@@ -17,18 +17,33 @@ fn a_secret_hides_its_value() {
     assert!(!format!("{secret:?}").contains("s3cret"));
 }
 
-/// A secret's name is up to 200 letters, digits and `_ - . /`; a backend refuses any other.
+/// A secret's name is up to 200 letters, digits and `_ - . /`, in segments split by `/` that
+/// aren't empty, `.` or `..` (a path in a backend such as a vault); a backend refuses any other.
 #[tokio::test]
 async fn names_are_checked() {
     let secrets = MemorySecrets::new();
     let long = "a".repeat(201);
-    for name in ["", "has space", "ünïcode", "semi;colon", &long] {
+    for name in [
+        "",
+        "has space",
+        "ünïcode",
+        "semi;colon",
+        &long,
+        "/key",
+        "key/",
+        "a//b",
+        "../key",
+        "a/../b",
+        "a/./b",
+        ".",
+        "..",
+    ] {
         let got = secrets.get(name).await;
         assert!(matches!(got, Err(SecretError::InvalidName(_))), "{name:?}");
         let set = secrets.set(name, Secret::from("x")).await;
         assert!(matches!(set, Err(SecretError::InvalidName(_))), "{name:?}");
     }
-    for name in ["stripe/api-key", "A_B.c-1", &"a".repeat(200)] {
+    for name in ["stripe/api-key", "A_B.c-1", "a/.b/c..", &"a".repeat(200)] {
         assert_eq!(secrets.get(name).await.unwrap(), None, "{name:?}");
     }
 }
@@ -236,4 +251,14 @@ async fn postgres_secrets_are_kept_in_a_schema() {
     assert_eq!(in_schema.get("a").await.unwrap(), Some(Secret::from("1")));
 
     db.finish().await;
+}
+
+/// Keys' ids are distinct: a row's says which key encrypted it.
+#[tokio::test]
+#[should_panic(expected = "the key id k1 is given twice")]
+async fn a_key_id_is_given_once() {
+    let pool = sqlx::PgPool::connect_lazy("postgres:///unused").unwrap();
+    let _ = PostgresSecrets::new(pool, key("k2", 2))
+        .old_key(key("k1", 1))
+        .old_key(key("k1", 9));
 }

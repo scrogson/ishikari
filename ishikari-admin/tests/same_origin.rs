@@ -121,3 +121,19 @@ async fn an_action_from_the_admin_itself_goes_through() {
 
     db.drop().await;
 }
+
+/// Another site can't frame a page to have its user click the page's buttons, which the browser
+/// would send as the page's own.
+#[tokio::test]
+async fn pages_are_framed_by_their_own_origin_only() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let app = ishikari_admin::app(AppState::with_schema(db.pool.clone(), &db.schema));
+
+    let res = send(&app, Method::GET, "/jobs", &[]).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["x-frame-options"], "SAMEORIGIN");
+
+    db.drop().await;
+}

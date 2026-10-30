@@ -215,7 +215,9 @@ impl WasmModules {
             Some(_) => Some(HashMap::new()),
             None => None,
         };
-        let redact = Redact::new(secrets.iter().flat_map(|secrets| secrets.values()));
+        let redact = Arc::new(Redact::new(
+            secrets.iter().flat_map(|secrets| secrets.values()),
+        ));
         let sandbox = Sandbox::new(
             grants.allowed_hosts.clone(),
             grants.secrets.clone(),
@@ -223,10 +225,12 @@ impl WasmModules {
         );
         let runtime = self.runtime.clone();
         let limits = self.limits(grants);
-        let call =
-            tokio::task::spawn_blocking(move || runtime.run(&guest, sandbox, limits, &input))
-                .await
-                .map_err(|e| format!("the module's call failed: {e}"))?;
+        let redacting = redact.clone();
+        let call = tokio::task::spawn_blocking(move || {
+            runtime.run(&guest, sandbox, limits, &redacting, &input)
+        })
+        .await
+        .map_err(|e| format!("the module's call failed: {e}"))?;
         let result = call.result.and_then(|output| {
             serde_json::from_str(&output).map_err(|e| format!("its output isn't JSON: {e}"))
         });
@@ -419,7 +423,7 @@ fn node_input(
 }
 
 /// `grants` with its hosts and secrets trimmed and blanks dropped, its secrets in order and
-/// once each, or why they can't be granted.
+/// once each, its timeout in whole milliseconds, or why they can't be granted.
 fn checked(mut grants: ModuleGrants) -> Result<ModuleGrants, ModuleError> {
     grants.allowed_hosts = grants
         .allowed_hosts
@@ -438,10 +442,14 @@ fn checked(mut grants: ModuleGrants) -> Result<ModuleGrants, ModuleError> {
     }
     if grants
         .timeout
-        .is_some_and(|t| t.is_zero() || t.as_millis() > i32::MAX as u128)
+        .is_some_and(|t| t.as_millis() == 0 || t.as_millis() > i32::MAX as u128)
     {
         return Err(ModuleError::Invalid("its timeout is out of range".into()));
     }
+    // In whole milliseconds, as it's kept.
+    grants.timeout = grants
+        .timeout
+        .map(|t| Duration::from_millis(t.as_millis() as u64));
     if grants
         .memory_limit_mb
         .is_some_and(|mb| mb == 0 || mb > i32::MAX as u32)

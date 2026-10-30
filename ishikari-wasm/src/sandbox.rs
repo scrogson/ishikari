@@ -92,7 +92,12 @@ impl Host for Sandbox {
         let mut builder = ureq::http::Request::builder()
             .method(request.method.as_str())
             .uri(uri);
-        for (name, value) in &request.headers {
+        // The Host is the URL's (ureq sets it): the guest's could reach the server's other names.
+        for (name, value) in request
+            .headers
+            .iter()
+            .filter(|(name, _)| !name.eq_ignore_ascii_case("host"))
+        {
             builder = builder.header(name, value);
         }
         let request = builder
@@ -174,10 +179,59 @@ fn allows(allowed: &[String], host: &str, port: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::allows;
+    use super::{allows, Sandbox};
+    use crate::runtime::bindings::ishikari::node::host::{Host, Request};
+    use std::io::{BufRead, BufReader, Write};
+    use std::time::{Duration, Instant};
 
     fn allowed(entries: &[&str]) -> Vec<String> {
         entries.iter().map(|e| e.to_string()).collect()
+    }
+
+    /// A request's `Host` is its URL's, whatever the guest says: another would reach the
+    /// server's other names.
+    #[test]
+    fn a_request_is_sent_to_its_urls_host() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let mut hosts = Vec::new();
+            let mut lines = BufReader::new(&socket).lines();
+            while let Some(Ok(line)) = lines.next() {
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("host") {
+                        hosts.push(value.trim().to_string());
+                    }
+                }
+            }
+            let body = hosts.join(",");
+            write!(
+                &socket,
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+
+        let mut sandbox = Sandbox::new(vec![format!("127.0.0.1:{port}")], vec![], None);
+        sandbox.deadline = Some(Instant::now() + Duration::from_secs(5));
+        let response = sandbox
+            .fetch(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{port}/"),
+                headers: vec![("Host".into(), "internal.example".into())],
+                body: None,
+            })
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            String::from_utf8(response.body).unwrap(),
+            format!("127.0.0.1:{port}")
+        );
     }
 
     #[test]

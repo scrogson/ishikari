@@ -17,6 +17,7 @@ use wasmtime_wasi::p2::DynPollable;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::output::Output;
+use crate::redact::Redact;
 use crate::sandbox::Sandbox;
 use crate::typescript;
 
@@ -34,8 +35,11 @@ const JS_RUNTIME: &[u8] = include_bytes!("../js-runtime.wasm");
 /// How often the engine's epoch advances: the granularity of a call's timeout.
 const TICK: Duration = Duration::from_millis(10);
 
-/// The most a table may grow to, in elements.
+/// The most elements a guest's tables may hold together.
 const MAX_TABLE_ELEMENTS: usize = 1 << 20;
+
+/// The most memories a guest may have (each reserves address space).
+const MAX_MEMORIES: usize = 100;
 
 /// What a call may use.
 #[derive(Debug, Clone, Copy)]
@@ -182,9 +186,13 @@ impl Runtime {
 
     /// The node type the module describes itself as.
     pub fn spec(&self, guest: &Guest, limits: Limits) -> Call<NodeSpec> {
-        let call = self.call(guest, Sandbox::default(), limits, |node, store| {
-            node.call_spec(store)
-        });
+        let call = self.call(
+            guest,
+            Sandbox::default(),
+            limits,
+            &Redact::default(),
+            |node, store| node.call_spec(store),
+        );
         Call {
             result: call.result.and_then(|json| {
                 serde_json::from_str(&json).map_err(|e| format!("its spec isn't a node spec: {e}"))
@@ -194,32 +202,31 @@ impl Runtime {
         }
     }
 
-    /// Run a node: `input` is the JSON the module's `run` takes.
+    /// Run a node: `input` is the JSON the module's `run` takes. What it prints is redacted
+    /// with `redact`.
     pub fn run(
         &self,
         guest: &Guest,
         sandbox: Sandbox,
         limits: Limits,
+        redact: &Redact,
         input: &str,
     ) -> Call<String> {
-        self.call(guest, sandbox, limits, |node, store| {
+        self.call(guest, sandbox, limits, redact, |node, store| {
             node.call_run(store, input)
         })
     }
 
-    /// Call `f` on a fresh instance of `guest`, which may reach what `sandbox` grants within
-    /// `limits`.
-    fn call<R>(
+    /// A store for a call in `sandbox` within `limits`, its guest's stdout and stderr kept in
+    /// `stdout` and `stderr`.
+    fn store(
         &self,
-        guest: &Guest,
         mut sandbox: Sandbox,
         limits: Limits,
-        f: impl FnOnce(&Node, &mut Store<State>) -> wasmtime::Result<Result<R, String>>,
-    ) -> Call<R> {
-        let stdout = Output::default();
-        let stderr = Output::default();
+        stdout: &Output,
+        stderr: &Output,
+    ) -> Store<State> {
         sandbox.deadline = Some(Instant::now() + limits.timeout);
-        sandbox.script = guest.script.clone();
         let state = State {
             wasi: WasiCtx::builder()
                 .stdout(stdout.clone())
@@ -228,12 +235,31 @@ impl Runtime {
             table: ResourceTable::new(),
             sandbox,
             memory_bytes: limits.memory_bytes,
+            memory_used: 0,
+            table_elements: 0,
             refused_memory: false,
         };
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| state);
         store.set_epoch_deadline(limits.timeout.div_duration_f64(TICK).ceil().max(1.0) as u64);
         store.epoch_deadline_trap();
+        store
+    }
+
+    /// Call `f` on a fresh instance of `guest`, which may reach what `sandbox` grants within
+    /// `limits`; what it prints is redacted with `redact`.
+    fn call<R>(
+        &self,
+        guest: &Guest,
+        mut sandbox: Sandbox,
+        limits: Limits,
+        redact: &Redact,
+        f: impl FnOnce(&Node, &mut Store<State>) -> wasmtime::Result<Result<R, String>>,
+    ) -> Call<R> {
+        let stdout = Output::default();
+        let stderr = Output::default();
+        sandbox.script = guest.script.clone();
+        let mut store = self.store(sandbox, limits, &stdout, &stderr);
 
         let result = guest
             .pre
@@ -247,8 +273,15 @@ impl Runtime {
             _ => Ok(result),
         });
         let mut logs = state.sandbox.logs;
-        logs.extend(stdout.lines().map(|line| format!("stdout: {line}")));
-        logs.extend(stderr.lines().map(|line| format!("stderr: {line}")));
+        for (stream, output) in [("stdout", &stdout), ("stderr", &stderr)] {
+            // Redacted whole, before it's split: a secret's value may be of several lines.
+            let text = redact.text(&output.text());
+            logs.extend(
+                text.lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| format!("{stream}: {line}")),
+            );
+        }
         let result = match result {
             Ok(result) => result,
             Err(_) if state.refused_memory => Err(format!(
@@ -315,7 +348,11 @@ pub(crate) struct State {
     wasi: WasiCtx,
     table: ResourceTable,
     sandbox: Sandbox,
+    /// The most the guest's memories may hold together, and what they do.
     memory_bytes: usize,
+    memory_used: usize,
+    /// The elements the guest's tables hold together.
+    table_elements: usize,
     /// Whether the limiter refused the guest memory, which it fails for.
     refused_memory: bool,
 }
@@ -330,23 +367,71 @@ impl WasiView for State {
 }
 
 impl ResourceLimiter for State {
+    // Called for a memory's or table's initial size too, from 0.
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        let allowed = desired <= self.memory_bytes;
+        let used = self
+            .memory_used
+            .saturating_add(desired.saturating_sub(current));
+        let allowed = used <= self.memory_bytes;
+        if allowed {
+            self.memory_used = used;
+        }
         self.refused_memory |= !allowed;
         Ok(allowed)
     }
 
     fn table_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        Ok(desired <= MAX_TABLE_ELEMENTS)
+        let elements = self
+            .table_elements
+            .saturating_add(desired.saturating_sub(current));
+        let allowed = elements <= MAX_TABLE_ELEMENTS;
+        if allowed {
+            self.table_elements = elements;
+        }
+        Ok(allowed)
+    }
+
+    fn memories(&self) -> usize {
+        MAX_MEMORIES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Limits, Output, Runtime, Sandbox};
+    use std::time::Duration;
+
+    /// A call's memory limit is on its guest's memories together.
+    #[test]
+    fn the_memory_limit_is_on_all_memories() {
+        let runtime = Runtime::new().unwrap();
+        let limits = Limits {
+            timeout: Duration::from_secs(5),
+            memory_bytes: 64 * 1024 * 1024,
+        };
+        // A core module of two memories, each of `pages` (LEB128) pages of 64 KiB.
+        let instantiate = |pages: [u8; 2]| {
+            let memory = [0, pages[0], pages[1]];
+            let bytes = [b"\0asm\x01\0\0\0".as_slice(), &[5, 7, 2], &memory, &memory].concat();
+            let module = wasmtime::Module::new(&runtime.engine, bytes).unwrap();
+            let output = Output::default();
+            let mut store = runtime.store(Sandbox::default(), limits, &output, &output);
+            wasmtime::Instance::new(&mut store, &module, &[]).map(|_| ())
+        };
+
+        // 400 pages (25 MiB) each.
+        instantiate([0x90, 0x03]).unwrap();
+        // 600 pages (37.5 MiB) each.
+        assert!(instantiate([0xd8, 0x04]).is_err());
     }
 }

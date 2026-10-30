@@ -69,13 +69,18 @@ async fn uploads_are_versioned_by_name() {
         .unwrap();
     assert_eq!(again, first);
 
+    // A timeout is kept in whole milliseconds.
     let granted = ModuleGrants {
         allowed_hosts: vec![" api.example.com ".into(), "".into()],
-        timeout: Some(Duration::from_secs(2)),
+        timeout: Some(Duration::from_micros(2_000_400)),
         memory_limit_mb: Some(32),
         secrets: vec!["api/key".into()],
     };
-    let regranted = modules.upload(upload(V1, granted)).await.unwrap();
+    let regranted = modules.upload(upload(V1, granted.clone())).await.unwrap();
+    assert_eq!(
+        modules.upload(upload(V1, granted)).await.unwrap(),
+        regranted
+    );
     assert_eq!(regranted.version, 2);
     assert_eq!(regranted.sha256, first.sha256);
     assert_eq!(regranted.grants.allowed_hosts, ["api.example.com"]);
@@ -140,7 +145,7 @@ async fn uploads_that_arent_node_modules_are_refused() {
             .upload(upload(
                 V1,
                 ModuleGrants {
-                    timeout: Some(Duration::ZERO),
+                    timeout: Some(Duration::from_micros(500)),
                     ..ModuleGrants::default()
                 },
             ))

@@ -40,6 +40,10 @@ impl Guest for Testkit {
                 eprintln!("warned by v{VERSION}");
                 json!({ "text": text("text").to_uppercase(), "version": VERSION, "input": input })
             }
+            "print" => {
+                println!("{}", text("text"));
+                json!({})
+            }
             "spin" => {
                 let mut n: u64 = 0;
                 loop {

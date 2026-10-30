@@ -88,7 +88,10 @@ pub struct SecretInfo {
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
     /// A name a secret can't have.
-    #[error("{0:?} isn't a secret's name: up to 200 letters, digits and `_ - . /`")]
+    #[error(
+        "{0:?} isn't a secret's name: up to 200 letters, digits and `_ - . /`, without empty, \
+         `.` or `..` segments"
+    )]
     InvalidName(String),
     /// There's no secret of the name.
     #[error("no secret {0}")]
@@ -141,10 +144,12 @@ pub trait SecretStore: Secrets {
 }
 
 /// `name`, if a secret can have it: 1 to [`MAX_NAME_LENGTH`] ASCII letters, digits and
-/// `_ - . /`.
+/// `_ - . /`, in segments split by `/` that aren't empty, `.` or `..` (so a backend that keeps
+/// secrets by path, such as a vault, finds none outside its own).
 pub fn check_name(name: &str) -> Result<&str, SecretError> {
     let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
-    if name.is_empty() || name.len() > MAX_NAME_LENGTH || !name.chars().all(allowed) {
+    let segment = |s: &str| !matches!(s, "" | "." | "..");
+    if name.len() > MAX_NAME_LENGTH || !name.chars().all(allowed) || !name.split('/').all(segment) {
         return Err(SecretError::InvalidName(name.to_string()));
     }
     Ok(name)

@@ -15,6 +15,9 @@ const SCRIPT: &str = "test/script";
 
 const KEY: &str = "sk_live_0123456789";
 
+/// The test component, which prints its `text` for `op: "print"`.
+const KIT: &[u8] = include_bytes!("fixtures/testkit-v1.wasm");
+
 /// A script named `test/script` reading secrets as `inputs.op` says.
 const READS: &str = r#"
 export const spec = { name: "test/script", category: "test" };
@@ -114,6 +117,46 @@ async fn secrets_are_redacted() {
     );
     assert_eq!(run.logs, ["info: the key is [redacted]"]);
     assert_eq!(run.secrets, ["api/key"]);
+
+    db.finish().await;
+}
+
+/// The values of a component's secrets are redacted from what it prints, a value of several
+/// lines whole, and a line cut by the end of what's kept dropped.
+#[tokio::test]
+async fn secrets_are_redacted_from_what_a_component_prints() {
+    const PEM: &str =
+        "-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let secrets = MemorySecrets::new()
+        .with("tls/key", PEM)
+        .with("api/key", KEY);
+    let modules = WasmModules::new(db.pool.clone()).secrets(Arc::new(secrets));
+    let print = |text: String| {
+        let upload = ModuleUpload {
+            bytes: KIT.to_vec(),
+            grants: ModuleGrants {
+                secrets: vec!["tls/key".into(), "api/key".into()],
+                ..ModuleGrants::default()
+            },
+        };
+        let inputs = [
+            ("op".to_string(), json!("print")),
+            ("text".to_string(), json!(text)),
+        ];
+        modules.test_run(upload, inputs.into())
+    };
+
+    let run = print(format!("the key is {PEM}")).await.unwrap();
+    assert_eq!(run.logs, ["stdout: the key is [redacted]"]);
+
+    // What a stream keeps ends (at 64 KiB) inside the key.
+    let run = print(format!("{}\n{}{KEY}", "a".repeat(100), "b".repeat(65_530)))
+        .await
+        .unwrap();
+    assert_eq!(run.logs, [format!("stdout: {}", "a".repeat(100))]);
 
     db.finish().await;
 }
