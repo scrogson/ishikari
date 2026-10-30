@@ -476,6 +476,23 @@ impl ExecutionStorage {
         Ok(())
     }
 
+    /// The nodes the run skipped.
+    pub(crate) async fn skipped_nodes(
+        &self,
+        workflow_run_id: i64,
+    ) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+        let query = format!(
+            "SELECT node_id FROM {} WHERE workflow_run_id = $1 AND status = 'skipped'",
+            self.table_name("ishikari_node_executions")
+        );
+
+        let rows: Vec<String> = sqlx::query_scalar(&query)
+            .bind(workflow_run_id)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// How many of `node_ids` the run has completed or skipped.
     pub(crate) async fn count_finished_nodes(
         &self,

@@ -14,6 +14,11 @@ use crate::{Cancel, Context, PerformResult, Worker};
 /// of a [`Dag`](crate::workflows::Dag), each named by its node: the roots available, the rest
 /// pending until their upstreams complete. It runs in the `workflows` queue, through the
 /// [`NodeRunner`] of an engine whose state is a [`NodeJobs`].
+///
+/// However its runner ends, a node's job that is discarded or cancelled (timed out, panicking,
+/// cancelled, or rescued from a stopped node on its last attempt) records the node failed with
+/// the job's error, unless the runner recorded that attempt failing, and fails the run if it's
+/// still running. Retrying the job runs the run again.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeJob {
     /// The run (`ishikari_workflow_runs`) the node belongs to, with the run's inputs.

@@ -1005,8 +1005,8 @@ async fn create_workflow_run(
 
 /// Get workflow runs for a definition. A run is as finished as its workflow: once the workflow
 /// has finished, its state and completion time are the run's, so the run follows it through a
-/// failure and a retry (the library doesn't write them to the run row). While the workflow
-/// runs, the run row's own status stands, as a `WorkflowExecutor` writes it.
+/// failure and a retry (a `NodeRunner` other than `NodeTypes` doesn't complete the run row).
+/// While the workflow runs, the run row's own status stands, as a `WorkflowExecutor` writes it.
 async fn get_definition_runs(
     pool: &PgPool,
     schema: Option<&str>,
