@@ -68,10 +68,12 @@ impl InsertOpts {
         self
     }
 
-    /// Run no earlier than `delay` from now.
+    /// Run no earlier than `delay` from now: at the last time there is when that's later.
     pub fn schedule_in(mut self, delay: Duration) -> Self {
-        self.scheduled_at =
-            Some(Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default());
+        let at = chrono::Duration::from_std(delay)
+            .ok()
+            .and_then(|delay| Utc::now().checked_add_signed(delay));
+        self.scheduled_at = Some(at.unwrap_or(DateTime::<Utc>::MAX_UTC));
         self
     }
 
@@ -487,6 +489,15 @@ pub(crate) async fn insert_row(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    /// A delay past the last time there is runs at the last time, not now (or a panic).
+    #[test]
+    fn a_delay_past_the_last_time_is_the_last_time() {
+        for delay in [Duration::from_secs(10_000_000_000_000), Duration::MAX] {
+            let opts = InsertOpts::default().schedule_in(delay);
+            assert_eq!(opts.scheduled_at, Some(DateTime::<Utc>::MAX_UTC));
+        }
+    }
 
     #[test]
     fn the_key_uses_worker_queue_and_chosen_args() {
