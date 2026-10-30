@@ -21,7 +21,7 @@ Ishikari is a robust job processing system written in Rust, designed for reliabl
 Add to Cargo.toml:
 
 ```toml
-ishikari = "0.4"
+ishikari = "0.5"
 ```
 
 ### Creating a Job and implementing Worker

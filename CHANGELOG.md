@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.5.0
+
+All five crates move to 0.5.0, `ishikari-wasm` among them for the first time. Migrations **v08**
+and **v09**.
+
+### Upgrading
+
+- **Run v08 and v09** (`ishikari generate migration --database-url …`, or
+  `migrations::migrate`). Both only add: v08 `ishikari_node_modules`, v09 `ishikari_secrets` and
+  modules' granted secrets. Nothing changes for a host that uses neither.
+- **Give the builder your node types:** its palette no longer lists 13 node types hardcoded in
+  the admin. Pass `AppState::with_node_types(types.catalog())` (see `NodeTypes` below). With a
+  catalog, saving, validating or importing a definition with a node of another type answers
+  400 "Unknown node type 'x'"; with none, the palette is empty and any type is saved.
+- **`when` counts null and 0 as false** (`is_truthy`), in `WorkflowExecutor` as in `NodeTypes`:
+  a node whose `when` resolves to either is now skipped.
+- **A skipped node's outputs are null** where a node refers to them, rather than failing it.
+- Importing a definition that doesn't parse answers 400, not 200.
+- The `embed-frontend` feature does nothing and can be dropped (see the builder below).
+- `ishikari-wasm` needs Rust 1.96 (wasmtime's); the other crates' MSRV stays 1.83.
+- The admin's pages may be framed by their own origin only (see Security). A host that frames
+  them from another sets `X-Frame-Options` itself.
+
+### Added
+
+- **`NodeTypes`** (`ishikari::execution`), the host's node types for the admin's definition runs:
+  each a `NodeSpec` (name, palette category, description, input and output schemas) and the
+  `NodeHandler` that runs it. Its `catalog()` is the builder's palette, and as the `NodeRunner`
+  of a `NodeJobs` it runs each node:
+  - resolves its inputs against the run's inputs (a declared input left out takes its
+    `default`) and the outputs of the nodes before it;
+  - skips it when its `when` is falsy or doesn't resolve, and runs the nodes after it;
+  - records its inputs, output and duration;
+  - completes the run with the definition's outputs once every node has completed or been
+    skipped, and fails it when a node fails its last attempt. A node of a type neither
+    registered nor uploaded fails its run without retrying.
+
+  `SchemaField` gains builders (`string()`, `integer()`, … `.required()`, `.describe()`,
+  `.default()`), and `is_truthy` is public.
+- **`NodeModules`**, node types found at run time: `NodeTypes` falls back to them for a type
+  with no Rust handler, at the version uploaded last before the run (or job) was created, so a
+  run and its retries run the same code.
+- **`ishikari-wasm`**, a new crate: `WasmModules` runs node types uploaded as WebAssembly
+  components of the `ishikari:node@0.1.0` world (`wit/node.wit`), or as scripts.
+  - Each call gets a fresh store, a timeout (epoch interruption, with its sleeps and host waits
+    capped at the deadline) and a memory limit on all its memories together.
+  - `fetch` reaches only allow-listed hosts, with the URL's `Host` header whatever the guest
+    sets; WASI gets no files, env, args or sockets.
+  - Compiled components are cached by sha256.
+- **Scripts:** TypeScript or JavaScript ES modules exporting `spec` and `run`, on
+  `js-runtime.wasm` (Boa). swc strips the types and keeps positions, so errors point at the
+  TypeScript as written. The globals are `console`, `fetch`, `URL`, text encoding, base64,
+  `structuredClone`, timers, `AbortController` and `secret`.
+- **`ModuleJob`**: `ModuleJob::new("name", json!({..}))`, in the `modules` queue, runs a
+  module's node as a plain job. Its output completes the job, `{"snooze": s}` snoozes it and
+  `{"cancel": why}` cancels it. Retries, uniqueness and cron work as for any job.
+- **Secrets** (`ishikari::secrets`), the host's, read by name from a backend it picks:
+  - the `Secrets` trait, and `SecretStore` for a backend the admin writes to;
+  - `PostgresSecrets`, encrypted (XChaCha20-Poly1305) with a key the host holds, and
+    `rotate()` for a new key; `EnvSecrets`; `MemorySecrets`.
+
+  Names are letters, digits and `_ - . /`, without empty, `.` or `..` segments. Rust nodes
+  read them with `NodeContext::secret`. A module reads only those it's granted
+  (`ModuleGrants::secrets`), and their values are `[redacted]` in its output, errors and logs
+  (what it prints whole, so a value of several lines goes too). Redaction guards against a
+  mistake, not a module meant to leak one: whoever uploads modules can read what they grant.
+- **The admin**, for a host that opts in (`AppState::with_node_modules`, `with_secrets`):
+  - a Node types page uploads modules with their grants and limits, and lists their versions;
+  - a script editor (`/node-types/script`) writes, test-runs and saves scripts;
+  - a job form (`/node-types/job`) inserts a `ModuleJob`;
+  - a Secrets page sets and deletes secrets, never showing a value, with the modules granted
+    each.
+
+### Changed
+
+- **The workflow builder is one plain script** (`assets/builder.js`, no React and no build step):
+  HTML node cards and an SVG edge layer in one pan and zoom, a `<canvas>` minimap, and the run
+  graphs' layered layout for positions and Tidy.
+  - Add a node from the palette by clicking (after the selected node, connected) or dragging.
+  - Connect nodes by dragging ports; cycles, self-links and duplicates are refused.
+  - A properties panel edits the workflow's inputs and outputs and each node's inputs, `when`,
+    timeout and retries, with a `{{ }}` menu of inputs and upstream outputs.
+  - Renaming a node rewrites its dependents and every `{{nodes.id.…}}` reference.
+  - Undo and redo, keyboard shortcuts, and a warning before leaving unsaved changes.
+
+  The React app and `rust-embed` are gone; `/builder` paths still go to the definition editor.
+
+### Fixed
+
+- **A definition run no longer stays `running` forever when a node's job ends where its
+  runner can't see,** whatever the runner: timed out, panicking, cancelled, or rescued from a
+  stopped node and discarded. The node is recorded failed with the job's error and the run
+  fails; the resolver's sweep catches runs a rescued job, or an older ishikari, left behind.
+  Retrying the job runs the run again.
+- **A node referring to a skipped node's outputs** failed to resolve its inputs, and so failed
+  the run after retrying in vain. They're null now, so branches that merge can read whichever
+  ran.
+- `InsertOpts::schedule_in` panicked on a delay past chrono's last time, and ran the job now on
+  one past its longest duration. Either schedules it at the last time.
+
+### Security
+
+- The admin's responses say `X-Frame-Options: SAMEORIGIN` (unless the host set it): another
+  site framing a page could have its user click the page's buttons, which pass the same-origin
+  check as the page's own.
+- The lockfiles take rustls-webpki 0.103.16 (RUSTSEC-2026-0381, RUSTSEC-2026-0382), and
+  `ishikari-wasm`'s takes wasmtime 49.0.5 (RUSTSEC-2026-0420, -0422, -0423, -0424) and tokio
+  1.54.1 (GHSA-5wjr-9356-4wc8).
+
 ## 0.4.0
 
 All four crates move to 0.4.0. Migrations **v06** and **v07**.

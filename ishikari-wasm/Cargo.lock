@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "ishikari"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "ishikari-admin"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "askama",
  "askama_web",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "ishikari-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "ishikari-wasm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "axum",
