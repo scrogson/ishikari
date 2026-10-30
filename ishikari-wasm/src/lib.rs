@@ -423,7 +423,7 @@ fn node_input(
 }
 
 /// `grants` with its hosts and secrets trimmed and blanks dropped, its secrets in order and
-/// once each, or why they can't be granted.
+/// once each, its timeout in whole milliseconds, or why they can't be granted.
 fn checked(mut grants: ModuleGrants) -> Result<ModuleGrants, ModuleError> {
     grants.allowed_hosts = grants
         .allowed_hosts
@@ -442,10 +442,14 @@ fn checked(mut grants: ModuleGrants) -> Result<ModuleGrants, ModuleError> {
     }
     if grants
         .timeout
-        .is_some_and(|t| t.is_zero() || t.as_millis() > i32::MAX as u128)
+        .is_some_and(|t| t.as_millis() == 0 || t.as_millis() > i32::MAX as u128)
     {
         return Err(ModuleError::Invalid("its timeout is out of range".into()));
     }
+    // In whole milliseconds, as it's kept.
+    grants.timeout = grants
+        .timeout
+        .map(|t| Duration::from_millis(t.as_millis() as u64));
     if grants
         .memory_limit_mb
         .is_some_and(|mb| mb == 0 || mb > i32::MAX as u32)
