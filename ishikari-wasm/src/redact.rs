@@ -6,6 +6,7 @@ use ishikari::secrets::Secret;
 const REDACTED: &str = "[redacted]";
 
 /// The values to redact, longest first, so one that contains another goes whole.
+#[derive(Default)]
 pub(crate) struct Redact(Vec<String>);
 
 impl Redact {

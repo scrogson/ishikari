@@ -17,6 +17,7 @@ use wasmtime_wasi::p2::DynPollable;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::output::Output;
+use crate::redact::Redact;
 use crate::sandbox::Sandbox;
 use crate::typescript;
 
@@ -185,9 +186,13 @@ impl Runtime {
 
     /// The node type the module describes itself as.
     pub fn spec(&self, guest: &Guest, limits: Limits) -> Call<NodeSpec> {
-        let call = self.call(guest, Sandbox::default(), limits, |node, store| {
-            node.call_spec(store)
-        });
+        let call = self.call(
+            guest,
+            Sandbox::default(),
+            limits,
+            &Redact::default(),
+            |node, store| node.call_spec(store),
+        );
         Call {
             result: call.result.and_then(|json| {
                 serde_json::from_str(&json).map_err(|e| format!("its spec isn't a node spec: {e}"))
@@ -197,15 +202,17 @@ impl Runtime {
         }
     }
 
-    /// Run a node: `input` is the JSON the module's `run` takes.
+    /// Run a node: `input` is the JSON the module's `run` takes. What it prints is redacted
+    /// with `redact`.
     pub fn run(
         &self,
         guest: &Guest,
         sandbox: Sandbox,
         limits: Limits,
+        redact: &Redact,
         input: &str,
     ) -> Call<String> {
-        self.call(guest, sandbox, limits, |node, store| {
+        self.call(guest, sandbox, limits, redact, |node, store| {
             node.call_run(store, input)
         })
     }
@@ -240,12 +247,13 @@ impl Runtime {
     }
 
     /// Call `f` on a fresh instance of `guest`, which may reach what `sandbox` grants within
-    /// `limits`.
+    /// `limits`; what it prints is redacted with `redact`.
     fn call<R>(
         &self,
         guest: &Guest,
         mut sandbox: Sandbox,
         limits: Limits,
+        redact: &Redact,
         f: impl FnOnce(&Node, &mut Store<State>) -> wasmtime::Result<Result<R, String>>,
     ) -> Call<R> {
         let stdout = Output::default();
@@ -265,8 +273,15 @@ impl Runtime {
             _ => Ok(result),
         });
         let mut logs = state.sandbox.logs;
-        logs.extend(stdout.lines().map(|line| format!("stdout: {line}")));
-        logs.extend(stderr.lines().map(|line| format!("stderr: {line}")));
+        for (stream, output) in [("stdout", &stdout), ("stderr", &stderr)] {
+            // Redacted whole, before it's split: a secret's value may be of several lines.
+            let text = redact.text(&output.text());
+            logs.extend(
+                text.lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| format!("{stream}: {line}")),
+            );
+        }
         let result = match result {
             Ok(result) => result,
             Err(_) if state.refused_memory => Err(format!(

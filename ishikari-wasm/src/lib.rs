@@ -215,7 +215,9 @@ impl WasmModules {
             Some(_) => Some(HashMap::new()),
             None => None,
         };
-        let redact = Redact::new(secrets.iter().flat_map(|secrets| secrets.values()));
+        let redact = Arc::new(Redact::new(
+            secrets.iter().flat_map(|secrets| secrets.values()),
+        ));
         let sandbox = Sandbox::new(
             grants.allowed_hosts.clone(),
             grants.secrets.clone(),
@@ -223,10 +225,12 @@ impl WasmModules {
         );
         let runtime = self.runtime.clone();
         let limits = self.limits(grants);
-        let call =
-            tokio::task::spawn_blocking(move || runtime.run(&guest, sandbox, limits, &input))
-                .await
-                .map_err(|e| format!("the module's call failed: {e}"))?;
+        let redacting = redact.clone();
+        let call = tokio::task::spawn_blocking(move || {
+            runtime.run(&guest, sandbox, limits, &redacting, &input)
+        })
+        .await
+        .map_err(|e| format!("the module's call failed: {e}"))?;
         let result = call.result.and_then(|output| {
             serde_json::from_str(&output).map_err(|e| format!("its output isn't JSON: {e}"))
         });

@@ -15,24 +15,34 @@ const CAPACITY: usize = 64 * 1024;
 
 /// What a guest wrote to a stream, up to [`CAPACITY`] bytes.
 #[derive(Clone, Default)]
-pub(crate) struct Output(Arc<Mutex<Vec<u8>>>);
+pub(crate) struct Output(Arc<Mutex<Kept>>);
+
+#[derive(Default)]
+struct Kept {
+    bytes: Vec<u8>,
+    /// Whether some was dropped.
+    cut: bool,
+}
 
 impl Output {
-    /// What was written, by line.
-    pub fn lines(&self) -> impl Iterator<Item = String> {
-        let written = String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned();
-        written
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-            .into_iter()
+    /// What was written, without its last line when that was cut short (it may end inside a
+    /// secret's value, which then can't be redacted).
+    pub fn text(&self) -> String {
+        let kept = self.0.lock().unwrap();
+        let text = String::from_utf8_lossy(&kept.bytes);
+        match text.rfind('\n') {
+            Some(end) if kept.cut => text[..end].to_string(),
+            None if kept.cut => String::new(),
+            _ => text.into_owned(),
+        }
     }
 
     fn keep(&self, bytes: &[u8]) {
         let mut kept = self.0.lock().unwrap();
-        let room = CAPACITY.saturating_sub(kept.len());
-        kept.extend_from_slice(&bytes[..bytes.len().min(room)]);
+        let room = CAPACITY.saturating_sub(kept.bytes.len());
+        kept.bytes
+            .extend_from_slice(&bytes[..bytes.len().min(room)]);
+        kept.cut |= bytes.len() > room;
     }
 }
 
