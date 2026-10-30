@@ -10,7 +10,8 @@ cargo set-version --workspace --exclude only-ishikari --bump "$BUMP_TYPE"
 
 VERSION=$(cd ishikari && cargo pkgid | cut -d# -f2 | cut -d: -f2)
 
-# ishikari-wasm is a workspace of its own: its version, and its ishikari's.
+# ishikari-wasm is a workspace of its own: its ishikari and ishikari-admin first (set-version
+# can't resolve it while they ask for the old version), then its own version.
+perl -pi -e 's/^(ishikari(?:-admin)?) = \{ version = "[^"]*"/$1 = { version = "'"$VERSION"'"/' ishikari-wasm/Cargo.toml
 cargo set-version --manifest-path ishikari-wasm/Cargo.toml "$VERSION"
-perl -pi -e 's/^ishikari = \{ version = "[^"]*"/ishikari = { version = "'"$VERSION"'"/' ishikari-wasm/Cargo.toml
 echo "Bumped to version $VERSION"
