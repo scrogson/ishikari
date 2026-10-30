@@ -17,18 +17,33 @@ fn a_secret_hides_its_value() {
     assert!(!format!("{secret:?}").contains("s3cret"));
 }
 
-/// A secret's name is up to 200 letters, digits and `_ - . /`; a backend refuses any other.
+/// A secret's name is up to 200 letters, digits and `_ - . /`, in segments split by `/` that
+/// aren't empty, `.` or `..` (a path in a backend such as a vault); a backend refuses any other.
 #[tokio::test]
 async fn names_are_checked() {
     let secrets = MemorySecrets::new();
     let long = "a".repeat(201);
-    for name in ["", "has space", "ünïcode", "semi;colon", &long] {
+    for name in [
+        "",
+        "has space",
+        "ünïcode",
+        "semi;colon",
+        &long,
+        "/key",
+        "key/",
+        "a//b",
+        "../key",
+        "a/../b",
+        "a/./b",
+        ".",
+        "..",
+    ] {
         let got = secrets.get(name).await;
         assert!(matches!(got, Err(SecretError::InvalidName(_))), "{name:?}");
         let set = secrets.set(name, Secret::from("x")).await;
         assert!(matches!(set, Err(SecretError::InvalidName(_))), "{name:?}");
     }
-    for name in ["stripe/api-key", "A_B.c-1", &"a".repeat(200)] {
+    for name in ["stripe/api-key", "A_B.c-1", "a/.b/c..", &"a".repeat(200)] {
         assert_eq!(secrets.get(name).await.unwrap(), None, "{name:?}");
     }
 }
