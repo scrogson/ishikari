@@ -252,3 +252,13 @@ async fn postgres_secrets_are_kept_in_a_schema() {
 
     db.finish().await;
 }
+
+/// Keys' ids are distinct: a row's says which key encrypted it.
+#[tokio::test]
+#[should_panic(expected = "the key id k1 is given twice")]
+async fn a_key_id_is_given_once() {
+    let pool = sqlx::PgPool::connect_lazy("postgres:///unused").unwrap();
+    let _ = PostgresSecrets::new(pool, key("k2", 2))
+        .old_key(key("k1", 1))
+        .old_key(key("k1", 9));
+}

@@ -101,7 +101,19 @@ impl PostgresSecrets {
     }
 
     /// A key secrets may still be encrypted with, until they're [rotated](Self::rotate).
+    ///
+    /// # Panics
+    ///
+    /// When `key`'s id is the current key's or another old key's: a secret's key id says which
+    /// key encrypted it.
     pub fn old_key(mut self, key: SecretKey) -> Self {
+        assert!(
+            std::iter::once(&self.key)
+                .chain(&self.old_keys)
+                .all(|given| given.id != key.id),
+            "the key id {} is given twice",
+            key.id
+        );
         self.old_keys.push(key);
         self
     }
