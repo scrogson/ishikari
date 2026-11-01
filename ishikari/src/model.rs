@@ -144,8 +144,51 @@ pub struct Job {
 }
 
 impl Job {
+    /// The job's worker, from its args. Why they didn't fit names what was wrong (a field, a
+    /// type) but never a value of theirs, which may be anything the job was given: the error is
+    /// logged and kept with the job.
     pub fn worker(&self) -> anyhow::Result<Box<dyn crate::Worker>> {
-        serde_json::from_value::<Box<dyn crate::Worker>>(self.args.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize worker: {}", e))
+        serde_json::from_value::<Box<dyn crate::Worker>>(self.args.clone()).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize worker {}: {}",
+                self.worker,
+                without_values(&e)
+            )
+        })
+    }
+}
+
+/// What `e` says, without a value of the input it was reading: a field's name is kept (`missing
+/// field `n``), and otherwise only what kind of error it is (`invalid type`, not `invalid type:
+/// string "…"`), with where it was.
+fn without_values(e: &serde_json::Error) -> String {
+    let message = e.to_string();
+    let message = message
+        .strip_suffix(&format!(" at line {} column {}", e.line(), e.column()))
+        .unwrap_or(&message);
+    let names_only = ["missing field `", "unknown field `", "duplicate field `"]
+        .iter()
+        .any(|prefix| message.starts_with(prefix));
+    let what = if names_only {
+        message
+    } else {
+        message
+            .split([':', '`', '"', ','])
+            .next()
+            .unwrap_or_default()
+            .trim()
+    };
+    let category = match e.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    };
+    match e.line() {
+        0 => format!("{what} ({category} error)"),
+        line => format!(
+            "{what} ({category} error at line {line} column {})",
+            e.column()
+        ),
     }
 }

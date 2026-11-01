@@ -348,9 +348,10 @@ async fn a_job_whose_args_dont_fit_its_worker_fails() {
     let Some(db) = TestDb::new().await else {
         return;
     };
+    let (_guard, logs) = common::capture_logs();
     let id = insert_raw(
         &db,
-        serde_json::json!({"ishikari_worker": "Counts", "n": "many"}),
+        serde_json::json!({"ishikari_worker": "Counts", "n": "s3cr3t-arg"}),
     )
     .await;
     let _engine = engine(&db);
@@ -371,6 +372,35 @@ async fn a_job_whose_args_dont_fit_its_worker_fails() {
     assert_eq!(errors[0]["kind"], "error");
     let error = errors[0]["error"].as_str().unwrap();
     assert!(error.contains("invalid type"), "{error}");
+    assert!(error.contains("Counts"), "{error}");
+    // The args may carry anything; what didn't fit isn't kept, nor logged.
+    assert!(!error.contains("s3cr3t"), "{error}");
+    assert!(!logs.text().contains("s3cr3t"), "{}", logs.text());
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_job_missing_an_arg_names_it() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let id = insert_raw(&db, serde_json::json!({"ishikari_worker": "Counts"})).await;
+    let _engine = engine(&db);
+
+    eventually(
+        "the failure is recorded",
+        Duration::from_secs(5),
+        || async { db.state(id).await == "retryable" },
+    )
+    .await;
+    let error: String =
+        sqlx::query_scalar("SELECT errors[1]->>'error' FROM ishikari_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert!(error.contains("missing field `n`"), "{error}");
 
     db.finish().await;
 }
