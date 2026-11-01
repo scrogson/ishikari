@@ -83,7 +83,8 @@ fn get_nested_field(value: &Value, path: &str) -> Option<Value> {
         // Check for array indexing: field[0]
         if let Some(bracket_pos) = part.find('[') {
             let field_name = &part[..bracket_pos];
-            let index_str = &part[bracket_pos + 1..part.len() - 1];
+            // A path ending anywhere but at its `]` finds nothing.
+            let index_str = part[bracket_pos + 1..].strip_suffix(']')?;
 
             // Get the field first
             if !field_name.is_empty() {
@@ -352,6 +353,17 @@ mod tests {
             Some(json!("LA"))
         );
         assert_eq!(get_nested_field(&data, "user.missing"), None);
+    }
+
+    #[test]
+    fn a_malformed_path_finds_nothing() {
+        let data = json!({ "a": [1, 2], "é": [3] });
+        for path in [
+            "a[", "[", "a[]", "a[x]", "a[0", "a[é]", "é[0é", "a[-1]", "a[9]",
+        ] {
+            assert_eq!(get_nested_field(&data, path), None, "{path}");
+        }
+        assert_eq!(get_nested_field(&data, "é[0]"), Some(json!(3)));
     }
 
     #[test]
