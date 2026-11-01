@@ -14,7 +14,7 @@ use std::sync::Arc;
 use askama::Template;
 use axum::extract::Request;
 use axum::http::request::Parts;
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 
@@ -203,6 +203,12 @@ pub(crate) async fn wrap(layout: Arc<dyn Layout>, req: Request, next: Next) -> R
     let mut out = layout.render(&kept, page);
     if out.status().is_success() {
         *out.status_mut() = res.status();
+    }
+    // The page's own framing policy (see `same_origin`), unless the layout set its own.
+    if let Some(frame) = res.headers().get(header::X_FRAME_OPTIONS) {
+        out.headers_mut()
+            .entry(header::X_FRAME_OPTIONS)
+            .or_insert(frame.clone());
     }
     out
 }

@@ -210,3 +210,32 @@ async fn without_a_layout_pages_are_standalone() {
 
     db.drop().await;
 }
+
+/// A page in the host's layout may be framed by its own origin only, as a standalone one is,
+/// unless the host's layout says otherwise.
+#[tokio::test]
+async fn a_page_in_a_host_layout_is_framed_by_its_own_origin_only() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let res = get(&host(&db), "/jobs/jobs", &[]).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["x-frame-options"], "SAMEORIGIN");
+
+    let admin = ishikari_admin::app_with_layout(
+        AppState::with_schema(db.pool.clone(), &db.schema).with_base_path("/jobs"),
+        |parts: &Parts, page: Page| {
+            let mut res = host_layout(parts, page);
+            res.headers_mut()
+                .insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+            res
+        },
+    );
+    let app = Router::new()
+        .nest("/jobs", admin)
+        .layer(middleware::from_fn(sign_in));
+    let res = get(&app, "/jobs/jobs", &[]).await;
+    assert_eq!(res.headers()["x-frame-options"], "DENY");
+
+    db.drop().await;
+}
