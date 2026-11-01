@@ -1,6 +1,6 @@
 //! Ishikari Admin - Standalone server
 
-use ishikari_admin::{app, AppState};
+use ishikari_admin::{app, local_only, AppState};
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -25,8 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create app state
     let state = AppState::new(pool);
 
-    // Build the app
-    let app = app(state);
+    // Build the app: it has no auth, so it answers only requests for localhost
+    let app = local_only(app(state));
 
     // Run the server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));

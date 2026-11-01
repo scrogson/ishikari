@@ -60,6 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
     tracing::info!("Admin UI available at http://{addr}/node-types");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, ishikari_admin::app(state)).await?;
+    // No auth in front of it, so only requests for localhost are answered.
+    let app = ishikari_admin::local_only(ishikari_admin::app(state));
+    axum::serve(listener, app).await?;
     Ok(())
 }

@@ -182,7 +182,10 @@ let app = Router::new()
 ```
 
 Actions a browser sends from another site (cross-origin POSTs and PUTs) are refused; who may
-use the dashboard is your auth's call.
+use the dashboard is your auth's call. Serving it on 127.0.0.1 with no auth (as the
+`ishikari-admin` binary does) isn't enough on its own: wrap it in `ishikari_admin::local_only`,
+which answers only requests for `localhost`, `127.0.0.1` or `[::1]`, so a site pointing its
+own name at 127.0.0.1 can't reach it.
 
 Each page is a standalone page with its own sidebar and light/dark theme. To show the pages inside
 your app's admin instead (your header, navigation and theme), implement `Layout` and

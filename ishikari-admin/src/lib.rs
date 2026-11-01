@@ -47,11 +47,13 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 pub mod layout;
+mod local_only;
 pub mod routes;
 mod same_origin;
 pub mod templates;
 
 pub use layout::{embed_stylesheet_href, Layout, Page};
+pub use local_only::local_only;
 
 // Re-export commonly used types
 pub use routes::dashboard::{JobStats, RecentFailure};

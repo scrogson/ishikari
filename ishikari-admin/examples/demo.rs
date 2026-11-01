@@ -15,7 +15,7 @@ use demo_lib::scenarios;
 use ishikari::dependencies::DependencyResolver;
 use ishikari::execution::NodeJobs;
 use ishikari::{Engine, Postgres, Queue};
-use ishikari_admin::{app, app_at, app_with_layout, AppState};
+use ishikari_admin::{app, app_at, app_with_layout, local_only, AppState};
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -100,7 +100,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_node_types(catalog),
         demo_lib::host::layout,
     );
-    let admin = Router::new().nest("/host", hosted).merge(admin);
+    // No auth in front of it, so only requests for localhost are answered
+    let admin = local_only(Router::new().nest("/host", hosted).merge(admin));
 
     // Start server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
