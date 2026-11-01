@@ -95,6 +95,22 @@ impl Worker for FailsDeep {
     }
 }
 
+/// How many runs of [`SlowThenSlower`] have started.
+static SLOWER_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[ishikari::job]
+struct SlowThenSlower;
+
+#[ishikari::worker]
+impl Worker for SlowThenSlower {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        let run = SLOWER_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let ms = if run == 0 { 400 } else { 2000 };
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+        Complete::default().into()
+    }
+}
+
 /// Insert a job row as another node's code would, with `args` as given.
 async fn insert_raw(db: &TestDb, args: serde_json::Value) -> i64 {
     sqlx::query_scalar(
@@ -136,6 +152,47 @@ async fn a_job_changed_while_it_runs_keeps_its_new_state() {
     // The run finishes ~400 ms after starting; its completion must not land.
     tokio::time::sleep(Duration::from_millis(700)).await;
     assert_eq!(db.state(job.id).await, "cancelled");
+
+    db.finish().await;
+}
+
+/// A job retried while it runs is claimed again at the same attempt (the interrupted one is
+/// refunded), so the attempt can't tell the runs apart: the first run's result must still be
+/// dropped, and the second's kept.
+#[tokio::test]
+async fn a_run_of_a_job_retried_while_it_runs_is_dropped() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(SlowThenSlower, &db.pool).await.unwrap();
+    let storage = Postgres::new(db.pool.clone());
+    let _engine = engine(&db);
+
+    eventually("the job starts", Duration::from_secs(5), || async {
+        db.state(job.id).await == "executing"
+    })
+    .await;
+    assert!(storage.retry_job(job.id).await.unwrap());
+    eventually("the job starts again", Duration::from_secs(5), || async {
+        SLOWER_RUNS.load(std::sync::atomic::Ordering::SeqCst) == 2
+    })
+    .await;
+    let attempt: i32 = sqlx::query_scalar("SELECT attempt FROM ishikari_jobs WHERE id = $1")
+        .bind(job.id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(attempt, 1, "claimed again at the same attempt");
+
+    // The first run finishes ~400 ms after it started; the second is still going.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(db.state(job.id).await, "executing");
+    eventually(
+        "the second run completes",
+        Duration::from_secs(5),
+        || async { db.state(job.id).await == "completed" },
+    )
+    .await;
 
     db.finish().await;
 }

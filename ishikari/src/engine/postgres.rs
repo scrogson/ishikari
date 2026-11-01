@@ -3,10 +3,10 @@
 //! Every statement goes through [`Postgres`], which knows the schema the jobs live in, so an
 //! engine configured with a schema never writes anywhere else.
 //!
-//! Writes that record a job's outcome are fenced on the attempt they belong to:
-//! `WHERE id = $1 AND state = 'executing' AND attempt = $2`. A run whose job was rescued,
-//! cancelled or retried in the meantime finds no row to update, and its result is dropped
-//! rather than overwriting the newer state.
+//! Writes that record a job's outcome are fenced on the claim they belong to:
+//! `WHERE id = $1 AND state = 'executing' AND claims = $2`. A run whose job was rescued,
+//! cancelled or retried in the meantime (and claimed again, perhaps at the same attempt) finds no
+//! row to update, and its result is dropped rather than overwriting the newer state.
 
 use crate::Job;
 use chrono::{DateTime, Utc};
@@ -97,7 +97,8 @@ impl Postgres {
                 {release_executing},
                 attempted_at = now(),
                 attempted_by = array_append(coalesce(j.attempted_by, ARRAY[]::text[]), $3),
-                attempt = j.attempt + 1
+                attempt = j.attempt + 1,
+                claims = j.claims + 1
             FROM subset
             WHERE j.id = subset.id
             RETURNING j.*
@@ -119,11 +120,11 @@ impl Postgres {
         let mut tx = self.pool.begin().await?;
         let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
             "UPDATE {jobs} SET state = 'completed', completed_at = now(), {release} \
-             WHERE id = $1 AND state = 'executing' AND attempt = $2 RETURNING workflow_id",
+             WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
             release = release("'completed'", ""),
         ))
         .bind(job.id)
-        .bind(job.attempt)
+        .bind(job.claims)
         .fetch_optional(&mut *tx)
         .await?;
         let Some(workflow_id) = done else {
@@ -155,7 +156,7 @@ impl Postgres {
                 {release},
                 errors = errors || $3::jsonb,
                 scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE $4 END
-            WHERE id = $1 AND state = 'executing' AND attempt = $2
+            WHERE id = $1 AND state = 'executing' AND claims = $2
             RETURNING state::text, workflow_id
             "#,
             state = self.name("ishikari_job_state"),
@@ -165,7 +166,7 @@ impl Postgres {
             ),
         ))
         .bind(job.id)
-        .bind(job.attempt)
+        .bind(job.claims)
         .bind(error_record(job.attempt, kind, error))
         .bind(retry_at)
         .fetch_optional(&mut *tx)
@@ -195,11 +196,11 @@ impl Postgres {
         let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
             "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
                  errors = errors || $3::jsonb[] \
-             WHERE id = $1 AND state = 'executing' AND attempt = $2 RETURNING workflow_id",
+             WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
             release = release("'cancelled'", ""),
         ))
         .bind(job.id)
-        .bind(job.attempt)
+        .bind(job.claims)
         .bind(reason)
         .fetch_optional(&mut *tx)
         .await?;
@@ -218,11 +219,11 @@ impl Postgres {
         let done = sqlx::query(&format!(
             "UPDATE {jobs} SET state = 'scheduled', {release}, \
                  scheduled_at = now() + $3 * interval '1 second', max_attempts = max_attempts + 1 \
-             WHERE id = $1 AND state = 'executing' AND attempt = $2",
+             WHERE id = $1 AND state = 'executing' AND claims = $2",
             release = release("'scheduled'", ""),
         ))
         .bind(job.id)
-        .bind(job.attempt)
+        .bind(job.claims)
         .bind(seconds as i64)
         .execute(&*self.pool)
         .await?;
@@ -621,19 +622,19 @@ impl Postgres {
         Ok(())
     }
 
-    /// Put interrupted jobs, given as (id, attempt), back to available with the attempt
+    /// Put interrupted jobs, given as (id, claims), back to available with the attempt
     /// refunded. Jobs that moved on meanwhile are left alone. Returns how many were put back.
-    pub(crate) async fn give_back(&self, jobs: &[(i64, i32)]) -> Result<usize, sqlx::Error> {
+    pub(crate) async fn give_back(&self, jobs: &[(i64, i64)]) -> Result<usize, sqlx::Error> {
         let table = self.name("ishikari_jobs");
-        let (ids, attempts): (Vec<i64>, Vec<i32>) = jobs.iter().copied().unzip();
+        let (ids, claims): (Vec<i64>, Vec<i64>) = jobs.iter().copied().unzip();
         let done = sqlx::query(&format!(
             "UPDATE {table} AS j SET state = 'available', attempt = j.attempt - 1, {release} \
-             FROM unnest($1::bigint[], $2::int[]) AS r(id, attempt) \
-             WHERE j.id = r.id AND j.state = 'executing' AND j.attempt = r.attempt",
+             FROM unnest($1::bigint[], $2::bigint[]) AS r(id, claims) \
+             WHERE j.id = r.id AND j.state = 'executing' AND j.claims = r.claims",
             release = release("'available'", "j."),
         ))
         .bind(ids)
-        .bind(attempts)
+        .bind(claims)
         .execute(&*self.pool)
         .await?;
         Ok(done.rows_affected() as usize)

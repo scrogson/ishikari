@@ -135,6 +135,12 @@ pub struct Job {
     /// The workflow this job belongs to (if part of a workflow).
     /// Used for pipelines, DAGs, and sagas.
     pub workflow_id: Option<i64>,
+    /// How many times the job has been claimed. A run's outcome is written only while the job
+    /// is still on the claim it ran for, so the result of one retried, rescued or given back
+    /// while it ran is dropped.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub claims: i64,
 }
 
 impl Job {

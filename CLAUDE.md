@@ -67,7 +67,7 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
 - **`engine/postgres.rs`**: `Postgres`, the storage (it carries the schema). Every job statement
   is here:
   - claiming;
-  - outcome writes, fenced on `state = 'executing' AND attempt = $n`;
+  - outcome writes, fenced on `state = 'executing' AND claims = $n` (each claim counts one);
   - staging;
   - rescue;
   - give-back;
@@ -132,6 +132,7 @@ it creates.
 - v07: saga rollbacks in progress moved off dependency chains (data only)
 - v08: node modules (node types uploaded through the admin)
 - v09: secrets (kept encrypted, and those modules are granted)
+- v10: jobs' claims, counted, which fence a run's outcome
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.
@@ -143,5 +144,5 @@ The installed version is the comment on `ishikari_jobs`. A new version means a n
 - **Shared state**: the engine's `with_state` value is available to workers via
   `Context::state`.
 - **Backoff**: Fixed, Linear, Exponential, ExponentialJitter or Custom.
-- **Postgres is the coordinator**: `SKIP LOCKED` claims, attempt fencing, unique indexes (cron
+- **Postgres is the coordinator**: `SKIP LOCKED` claims, claim fencing, unique indexes (cron
   slots, unique jobs) and advisory locks (the resolver). No leader election.

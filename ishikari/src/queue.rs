@@ -316,7 +316,7 @@ impl Queue {
         }
         let (count, filled) = (jobs.len(), jobs.len() == free);
         for job in jobs {
-            let claimed = (job.id, job.attempt);
+            let claimed = (job.id, job.claims);
             let handle = running.set.spawn(run_job(
                 Arc::clone(&self.storage),
                 Arc::clone(&self.state),
@@ -344,7 +344,7 @@ impl Queue {
                 _ = &mut grace => break,
             }
         }
-        let left: Vec<(i64, i32)> = running.jobs.values().copied().collect();
+        let left: Vec<(i64, i64)> = running.jobs.values().copied().collect();
         running.set.abort_all();
         while running.set.join_next().await.is_some() {}
         let returned = if left.is_empty() {
@@ -372,11 +372,11 @@ pub struct QueueStop {
     pub returned: usize,
 }
 
-/// A queue's running jobs: their tasks, and the (id, attempt) each task runs.
+/// A queue's running jobs: their tasks, and the (id, claims) of the job each task runs.
 #[derive(Default)]
 struct Running {
     set: JoinSet<()>,
-    jobs: HashMap<tokio::task::Id, (i64, i32)>,
+    jobs: HashMap<tokio::task::Id, (i64, i64)>,
 }
 
 impl Running {
