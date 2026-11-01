@@ -401,9 +401,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<DefinitionsQuery>,
 ) -> Result<DefinitionsListTemplate, Response> {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(25).min(100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = super::paged(query.page, query.per_page, 25);
 
     let result = get_definitions(
         &state.pool,

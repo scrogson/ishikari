@@ -272,3 +272,35 @@ async fn the_job_list_filters_by_workflow() {
 
     db.drop().await;
 }
+
+/// A list asked for any page, of any size, is a page of it: the page and its size are kept in
+/// range, and its offset can't overflow.
+#[tokio::test]
+async fn a_list_takes_any_page_and_size() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let app = ishikari_admin::app(AppState::with_schema(db.pool.clone(), &db.schema));
+    for path in [
+        "/workflows",
+        "/sagas",
+        "/dependencies",
+        "/definitions",
+        "/api/workflows",
+        "/api/sagas",
+        "/api/dependencies",
+        "/api/definitions",
+    ] {
+        for query in [
+            format!("page={}", i64::MAX),
+            format!("page={}&per_page={}", i64::MAX / 2, i64::MAX),
+            format!("page={}", i64::MIN),
+            "per_page=0".to_string(),
+            "per_page=-5".to_string(),
+        ] {
+            let res = get(&app, &format!("{path}?{query}"), &[]).await;
+            assert_eq!(res.status(), 200, "{path}?{query}");
+        }
+    }
+    db.drop().await;
+}

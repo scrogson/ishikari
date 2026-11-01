@@ -128,9 +128,7 @@ pub async fn workflows_table(
     State(state): State<AppState>,
     Query(query): Query<WorkflowsQuery>,
 ) -> WorkflowsTablePartial {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(25).min(100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = super::paged(query.page, query.per_page, 25);
 
     let (workflows, total) = get_workflows(
         &state.pool,
@@ -268,9 +266,7 @@ pub async fn dependencies_table(
     State(state): State<AppState>,
     Query(query): Query<DependenciesQuery>,
 ) -> DependenciesTablePartial {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(50).min(100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = super::paged(query.page, query.per_page, 50);
 
     let (dependencies, total) = get_dependencies(
         &state.pool,
@@ -413,9 +409,7 @@ pub async fn sagas_table(
     State(state): State<AppState>,
     Query(query): Query<SagasQuery>,
 ) -> SagasTablePartial {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(25).min(100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = super::paged(query.page, query.per_page, 25);
 
     let (sagas, total) = get_sagas(
         &state.pool,
@@ -552,9 +546,7 @@ pub async fn definitions_table(
     State(state): State<AppState>,
     Query(query): Query<DefinitionsQuery>,
 ) -> DefinitionsTablePartial {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(25).min(100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = super::paged(query.page, query.per_page, 25);
 
     let (definitions, total) = get_definitions(
         &state.pool,
