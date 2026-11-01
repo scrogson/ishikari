@@ -441,3 +441,78 @@ async fn runs_use_the_version_uploaded_before_them() {
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
 }
+
+/// The host sets the most a module may be granted: more is refused, and a module kept with more
+/// (granted before the host lowered it) runs within it.
+#[tokio::test]
+async fn a_module_is_granted_at_most_what_the_host_allows() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let invalid = |result: Result<NodeModule, ModuleError>| match result {
+        Err(ModuleError::Invalid(why)) => why,
+        other => panic!("expected the upload to be refused, got {other:?}"),
+    };
+    let granted = |timeout: u64, memory_limit_mb: u32| ModuleGrants {
+        timeout: Some(Duration::from_millis(timeout)),
+        memory_limit_mb: Some(memory_limit_mb),
+        ..ModuleGrants::default()
+    };
+
+    // By default, a module may be granted 10 minutes and 1 GiB.
+    let modules = WasmModules::new(db.pool.clone());
+    let why = invalid(modules.upload(upload(V1, granted(86_400_000, 64))).await);
+    assert!(why.contains("its timeout is longer than 600s"), "{why}");
+    let why = invalid(modules.upload(upload(V1, granted(1000, 4096))).await);
+    assert!(why.contains("its memory limit is over 1024 MiB"), "{why}");
+
+    let modules = WasmModules::new(db.pool.clone())
+        .max_timeout(Duration::from_millis(200))
+        .max_memory_mb(128);
+    let why = invalid(modules.upload(upload(V1, granted(201, 64))).await);
+    assert!(why.contains("its timeout is longer than 200ms"), "{why}");
+    let why = invalid(modules.upload(upload(V1, granted(200, 129))).await);
+    assert!(why.contains("its memory limit is over 128 MiB"), "{why}");
+    match modules
+        .test_run(upload(V1, granted(201, 64)), Default::default())
+        .await
+    {
+        Err(ModuleError::Invalid(why)) => assert!(why.contains("200ms"), "{why}"),
+        other => panic!("expected the test run to be refused, got {other:?}"),
+    }
+    assert!(modules.modules().await.unwrap().is_empty());
+
+    WasmModules::new(db.pool.clone())
+        .upload(upload(V1, granted(10_000, 64)))
+        .await
+        .unwrap();
+    let error = failure(run_node(&modules, &db.pool, json!({ "op": "spin" })).await);
+    assert_eq!(error, "ran longer than its 200ms timeout");
+
+    db.finish().await;
+}
+
+/// A module larger than the crate takes is refused before it's compiled or stripped.
+#[tokio::test]
+async fn a_module_too_large_is_refused() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = WasmModules::new(db.pool.clone());
+    let large = vec![b' '; ishikari_wasm::MAX_MODULE_BYTES + 1];
+    match modules.describe(&large).await {
+        Err(ModuleError::Invalid(why)) => assert!(why.contains("larger than 32 MiB"), "{why}"),
+        other => panic!("expected the module to be refused, got {other:?}"),
+    }
+    let mut component = V1.to_vec();
+    component.resize(ishikari_wasm::MAX_MODULE_BYTES + 1, 0);
+    match modules
+        .upload(upload(&component, ModuleGrants::default()))
+        .await
+    {
+        Err(ModuleError::Invalid(why)) => assert!(why.contains("larger than 32 MiB"), "{why}"),
+        other => panic!("expected the module to be refused, got {other:?}"),
+    }
+
+    db.finish().await;
+}

@@ -141,7 +141,12 @@ Each call gets a fresh instance. A module reaches only what its upload granted:
 - WASI without files, environment, arguments or sockets. stdout and stderr go to the node's
   logs, and the last lines of them to a failed node's error.
 - Its timeout and memory limit, by default 30s and 64 MiB (`WasmModules::timeout`,
-  `WasmModules::memory_limit_mb`).
+  `WasmModules::memory_limit_mb`). An upload may grant at most 10 minutes and 1 GiB
+  (`WasmModules::max_timeout`, `WasmModules::max_memory_mb`); a module kept with more runs
+  within them.
+
+A module is at most 32 MiB (`MAX_MODULE_BYTES`). The modules uploaded or run lately (64 of
+them) stay compiled; one only described or test-run isn't kept.
 
 Uploading a name again makes its next version, with the grants given then; the same bytes and
 grants again change nothing. A run uses the version uploaded last before it was created.

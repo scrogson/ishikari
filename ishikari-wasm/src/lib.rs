@@ -95,6 +95,10 @@ const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 /// The most bytes of a node's error kept; the rest is dropped.
 const MAX_ERROR_BYTES: usize = 64 * 1024;
 
+/// The largest module taken, component or script; a larger one is refused before it's compiled
+/// or stripped.
+pub const MAX_MODULE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Modules (WebAssembly components and scripts) uploaded as node types, kept in
 /// `ishikari_node_modules`.
 #[derive(Clone)]
@@ -104,12 +108,15 @@ pub struct WasmModules {
     runtime: Arc<Runtime>,
     timeout: Duration,
     memory_limit_mb: u32,
+    max_timeout: Duration,
+    max_memory_mb: u32,
     secrets: Option<Arc<dyn Secrets>>,
 }
 
 impl WasmModules {
     /// Modules kept in `pool`'s search path; a node may run for 30s and use 64 MiB unless its
-    /// module was granted otherwise. Every `WasmModules` of the process shares one engine, and
+    /// module was granted otherwise, and a module may be granted at most 10 minutes and 1 GiB.
+    /// Every `WasmModules` of the process shares one engine, and
     /// what it has compiled.
     ///
     /// # Panics
@@ -122,6 +129,8 @@ impl WasmModules {
             runtime: Runtime::shared(),
             timeout: Duration::from_secs(30),
             memory_limit_mb: 64,
+            max_timeout: Duration::from_secs(10 * 60),
+            max_memory_mb: 1024,
             secrets: None,
         }
     }
@@ -146,6 +155,20 @@ impl WasmModules {
         self
     }
 
+    /// The longest timeout a module may be granted. A module kept with a longer one (granted
+    /// before this was lowered) runs within this.
+    pub fn max_timeout(mut self, max_timeout: Duration) -> Self {
+        self.max_timeout = max_timeout;
+        self
+    }
+
+    /// The most memory a module may be granted, in MiB. A module kept with more (granted before
+    /// this was lowered) runs within this.
+    pub fn max_memory_mb(mut self, max_memory_mb: u32) -> Self {
+        self.max_memory_mb = max_memory_mb;
+        self
+    }
+
     /// The host's secrets, which a module reads those of it was granted from. Without them, a
     /// module reads none.
     pub fn secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
@@ -160,32 +183,66 @@ impl WasmModules {
         }
     }
 
+    /// What a node of a module granted `grants` may use: within the maxima, whatever it was
+    /// granted when it was kept.
     fn limits(&self, grants: &ModuleGrants) -> Limits {
+        let memory_limit_mb = grants
+            .memory_limit_mb
+            .unwrap_or(self.memory_limit_mb)
+            .min(self.max_memory_mb);
         Limits {
-            timeout: grants.timeout.unwrap_or(self.timeout),
-            memory_bytes: grants.memory_limit_mb.unwrap_or(self.memory_limit_mb) as usize
-                * 1024
-                * 1024,
+            timeout: grants.timeout.unwrap_or(self.timeout).min(self.max_timeout),
+            memory_bytes: memory_limit_mb as usize * 1024 * 1024,
         }
     }
 
-    /// The module of `bytes` loaded, on a blocking thread.
-    async fn load(&self, sha256: String, bytes: Vec<u8>) -> Result<Guest, String> {
+    /// `grants` [checked](checked), and within the maxima.
+    fn checked(&self, grants: ModuleGrants) -> Result<ModuleGrants, ModuleError> {
+        let grants = checked(grants)?;
+        if grants.timeout.is_some_and(|t| t > self.max_timeout) {
+            return Err(ModuleError::Invalid(format!(
+                "its timeout is longer than {:?}",
+                self.max_timeout
+            )));
+        }
+        if grants
+            .memory_limit_mb
+            .is_some_and(|mb| mb > self.max_memory_mb)
+        {
+            return Err(ModuleError::Invalid(format!(
+                "its memory limit is over {} MiB",
+                self.max_memory_mb
+            )));
+        }
+        Ok(grants)
+    }
+
+    /// The module of `bytes` loaded, on a blocking thread, and kept loaded when `keep` (it's
+    /// uploaded, or run as a node), not when it's only described or test-run.
+    async fn load(&self, sha256: String, bytes: Vec<u8>, keep: bool) -> Result<Guest, String> {
         let runtime = self.runtime.clone();
-        tokio::task::spawn_blocking(move || runtime.load(&sha256, &bytes))
+        tokio::task::spawn_blocking(move || runtime.load(&sha256, &bytes, keep))
             .await
             .map_err(|e| format!("loading the module failed: {e}"))?
     }
 
-    /// The module of `bytes` loaded, with its spec, called within `grants`' memory limit.
+    /// The module of `bytes` loaded (and kept loaded when `keep`), with its spec, called within
+    /// `grants`' memory limit.
     async fn spec(
         &self,
         sha256: String,
         bytes: &[u8],
         grants: &ModuleGrants,
+        keep: bool,
     ) -> Result<(Guest, NodeSpec), ModuleError> {
+        if bytes.len() > MAX_MODULE_BYTES {
+            return Err(ModuleError::Invalid(format!(
+                "it's larger than {} MiB",
+                MAX_MODULE_BYTES / (1024 * 1024)
+            )));
+        }
         let guest = self
-            .load(sha256, bytes.to_vec())
+            .load(sha256, bytes.to_vec(), keep)
             .await
             .map_err(ModuleError::Invalid)?;
         let runtime = self.runtime.clone();
@@ -303,12 +360,14 @@ impl NodeModules for WasmModules {
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await?;
-                self.load(module.sha256.clone(), bytes).await.map_err(|e| {
-                    ModuleError::Runtime(format!(
-                        "module {} v{}: {e}",
-                        module.spec.name, module.version
-                    ))
-                })?
+                self.load(module.sha256.clone(), bytes, true)
+                    .await
+                    .map_err(|e| {
+                        ModuleError::Runtime(format!(
+                            "module {} v{}: {e}",
+                            module.spec.name, module.version
+                        ))
+                    })?
             }
         };
         Ok(Some(Arc::new(WasmNode {
@@ -330,13 +389,15 @@ impl NodeModules for WasmModules {
 
     async fn describe(&self, bytes: &[u8]) -> Result<NodeSpec, ModuleError> {
         let sha256 = format!("{:x}", Sha256::digest(bytes));
-        let (_, spec) = self.spec(sha256, bytes, &ModuleGrants::default()).await?;
+        let (_, spec) = self
+            .spec(sha256, bytes, &ModuleGrants::default(), false)
+            .await?;
         Ok(spec)
     }
 
     async fn upload(&self, upload: ModuleUpload) -> Result<NodeModule, ModuleError> {
         let ModuleUpload { bytes, grants } = upload;
-        let grants = checked(grants)?;
+        let grants = self.checked(grants)?;
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
         let size = bytes.len() as i64;
         let source = match Kind::of(&bytes) {
@@ -344,7 +405,7 @@ impl NodeModules for WasmModules {
             _ => None,
         };
 
-        let (_, spec) = self.spec(sha256.clone(), &bytes, &grants).await?;
+        let (_, spec) = self.spec(sha256.clone(), &bytes, &grants, true).await?;
 
         let mut tx = self.pool.begin().await?;
         // One upload of a name at a time, so each gets the next version.
@@ -405,9 +466,9 @@ impl NodeModules for WasmModules {
         inputs: HashMap<String, serde_json::Value>,
     ) -> Result<TestRun, ModuleError> {
         let ModuleUpload { bytes, grants } = upload;
-        let grants = checked(grants)?;
+        let grants = self.checked(grants)?;
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
-        let (guest, spec) = self.spec(sha256, &bytes, &grants).await?;
+        let (guest, spec) = self.spec(sha256, &bytes, &grants, false).await?;
 
         let input = node_input("test", &spec.name, &inputs, serde_json::Map::new());
         let call = self

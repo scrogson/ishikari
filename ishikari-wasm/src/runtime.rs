@@ -1,6 +1,6 @@
 //! Loading and calling modules: a wasmtime engine whose epoch a ticker advances, a linker with
 //! WASI (nothing to reach, and sleeps that end at the call's deadline), `host` and `script`, and
-//! loaded modules cached by their sha256. A component is compiled; a script is stripped of its
+//! the modules uploaded or run lately kept loaded by their sha256. A component is compiled; a script is stripped of its
 //! TypeScript and run by the JavaScript runtime (`js-runtime.wasm`, built from `js-runtime/`),
 //! compiled once.
 
@@ -40,6 +40,9 @@ const MAX_TABLE_ELEMENTS: usize = 1 << 20;
 
 /// The most memories a guest may have (each reserves address space).
 const MAX_MEMORIES: usize = 100;
+
+/// The most modules kept loaded; past it, the one used longest ago is dropped.
+const MAX_LOADED: usize = 64;
 
 /// What a call may use.
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +85,7 @@ impl<'a> Kind<'a> {
 pub(crate) struct Runtime {
     engine: Engine,
     linker: Linker<State>,
-    loaded: Mutex<HashMap<String, Guest>>,
+    loaded: Mutex<Recent<Guest>>,
     js_runtime: OnceLock<Result<NodePre<State>, String>>,
 }
 
@@ -132,20 +135,20 @@ impl Runtime {
         Ok(Self {
             engine,
             linker,
-            loaded: Mutex::new(HashMap::new()),
+            loaded: Mutex::new(Recent::new(MAX_LOADED)),
             js_runtime: OnceLock::new(),
         })
     }
 
-    /// The module of `sha256`, if it's been loaded here.
+    /// The module of `sha256`, if it's kept loaded here.
     pub fn cached(&self, sha256: &str) -> Option<Guest> {
-        self.loaded.lock().unwrap().get(sha256).cloned()
+        self.loaded.lock().unwrap().get(sha256)
     }
 
     /// The module of `bytes` (whose sha256 is `sha256`), ready to call: a component compiled,
     /// and checked to be a `node` this runtime can run (importing nothing beyond WASI and
-    /// `host`, exporting `spec` and `run`), or a script.
-    pub fn load(&self, sha256: &str, bytes: &[u8]) -> Result<Guest, String> {
+    /// `host`, exporting `spec` and `run`), or a script. Kept loaded when `keep`.
+    pub fn load(&self, sha256: &str, bytes: &[u8], keep: bool) -> Result<Guest, String> {
         if let Some(guest) = self.cached(sha256) {
             return Ok(guest);
         }
@@ -159,10 +162,12 @@ impl Runtime {
                 script: Some(typescript::javascript(source)?.into()),
             },
         };
-        self.loaded
-            .lock()
-            .unwrap()
-            .insert(sha256.to_string(), guest.clone());
+        if keep {
+            self.loaded
+                .lock()
+                .unwrap()
+                .insert(sha256.to_string(), guest.clone());
+        }
         Ok(guest)
     }
 
@@ -406,10 +411,77 @@ impl ResourceLimiter for State {
     }
 }
 
+/// At most `capacity` values by key, dropping the one used longest ago to make room.
+struct Recent<V> {
+    capacity: usize,
+    used: u64,
+    values: HashMap<String, (V, u64)>,
+}
+
+impl<V: Clone> Recent<V> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            used: 0,
+            values: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<V> {
+        self.used += 1;
+        let (value, used) = self.values.get_mut(key)?;
+        *used = self.used;
+        Some(value.clone())
+    }
+
+    fn insert(&mut self, key: String, value: V) {
+        self.used += 1;
+        if !self.values.contains_key(&key) && self.values.len() >= self.capacity {
+            let oldest = self
+                .values
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                self.values.remove(&oldest);
+            }
+        }
+        self.values.insert(key, (value, self.used));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Limits, Output, Runtime, Sandbox};
+    use super::{Limits, Output, Recent, Runtime, Sandbox};
     use std::time::Duration;
+
+    /// The one used longest ago is dropped to make room, and a get is a use.
+    #[test]
+    fn the_value_used_longest_ago_is_dropped() {
+        let mut recent = Recent::new(2);
+        recent.insert("a".into(), 1);
+        recent.insert("b".into(), 2);
+        assert_eq!(recent.get("a"), Some(1));
+        recent.insert("c".into(), 3);
+        assert_eq!(recent.get("b"), None);
+        assert_eq!(recent.get("a"), Some(1));
+        assert_eq!(recent.get("c"), Some(3));
+        // Inserting what's there again drops nothing.
+        recent.insert("c".into(), 4);
+        assert_eq!((recent.get("a"), recent.get("c")), (Some(1), Some(4)));
+        assert_eq!(recent.values.len(), 2);
+    }
+
+    /// A module is kept loaded only when it's asked to be.
+    #[test]
+    fn a_module_is_kept_loaded_only_when_asked() {
+        let runtime = Runtime::new().unwrap();
+        let script = b"export const spec = { name: 'kept' };\nexport function run() { return {}; }";
+        runtime.load("described", script, false).unwrap();
+        assert!(runtime.cached("described").is_none());
+        runtime.load("uploaded", script, true).unwrap();
+        assert!(runtime.cached("uploaded").is_some());
+    }
 
     /// A call's memory limit is on its guest's memories together.
     #[test]
