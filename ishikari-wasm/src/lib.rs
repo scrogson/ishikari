@@ -127,8 +127,10 @@ impl WasmModules {
     }
 
     /// Keep modules in `schema`, as the engine's `Postgres` keeps jobs.
+    ///
+    /// Panics unless `schema` is [valid](ishikari::migrations::is_valid_schema).
     pub fn schema(mut self, schema: impl Into<String>) -> Self {
-        self.schema = Some(schema.into());
+        self.schema = Some(ishikari::migrations::checked_schema(schema));
         self
     }
 

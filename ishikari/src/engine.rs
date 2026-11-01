@@ -140,8 +140,10 @@ impl EngineBuilder {
     ///
     /// Every job the engine inserts, runs, stages or records is read and written there. If not
     /// specified, the storage's schema is used (the connection's search path by default).
+    ///
+    /// Panics unless `schema` is [valid](crate::migrations::is_valid_schema).
     pub fn schema<T: Into<String>>(mut self, schema: T) -> Self {
-        self.schema = Some(schema.into());
+        self.schema = Some(crate::migrations::checked_schema(schema));
         self
     }
 

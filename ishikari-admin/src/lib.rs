@@ -110,9 +110,11 @@ impl AppState {
     }
 
     /// Create app state with a custom schema for multi-tenant support.
+    ///
+    /// Panics unless `schema` is [valid](ishikari::migrations::is_valid_schema).
     pub fn with_schema(pool: PgPool, schema: impl Into<String>) -> Self {
         Self {
-            schema: Some(schema.into()),
+            schema: Some(ishikari::migrations::checked_schema(schema)),
             ..Self::new(pool)
         }
     }

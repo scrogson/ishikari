@@ -116,3 +116,21 @@ async fn every_outcome_is_written_to_the_engines_schema() {
     pool.close().await;
     db.finish().await;
 }
+
+/// A schema name is written into SQL as it is, so one that isn't a plain lowercase name is
+/// refused rather than run.
+#[tokio::test]
+async fn migrating_an_invalid_schema_is_refused() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    for schema in ["x; DROP TABLE ishikari_jobs; --", "Tenant"] {
+        let refused = ishikari::migrations::migrate(&db.pool, schema).await;
+        assert!(
+            matches!(&refused, Err(sqlx::Error::Configuration(e)) if e.to_string().starts_with("invalid schema name")),
+            "{refused:?}"
+        );
+    }
+
+    db.finish().await;
+}

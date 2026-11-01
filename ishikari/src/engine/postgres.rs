@@ -32,8 +32,10 @@ impl Postgres {
     }
 
     /// Keep jobs in `schema` rather than the connection's search path.
+    ///
+    /// Panics unless `schema` is [valid](crate::migrations::is_valid_schema).
     pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
-        self.schema = Some(schema.into());
+        self.schema = Some(crate::migrations::checked_schema(schema));
         self
     }
 

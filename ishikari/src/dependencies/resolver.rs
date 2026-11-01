@@ -54,8 +54,10 @@ impl DependencyResolver {
     }
 
     /// Set the schema for multi-tenant support.
+    ///
+    /// Panics unless `schema` is [valid](crate::migrations::is_valid_schema).
     pub fn schema(mut self, schema: impl Into<String>) -> Self {
-        self.schema = Some(schema.into());
+        self.schema = Some(crate::migrations::checked_schema(schema));
         self
     }
 

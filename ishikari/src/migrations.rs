@@ -39,14 +39,45 @@ const VERSIONS: [&str; CURRENT_VERSION as usize] = [
     include_str!("../migrations/v10.sql"),
 ];
 
+/// Whether `schema` may hold ishikari's tables: a name Postgres takes as it is, unquoted, of
+/// lowercase ASCII letters, digits and `_`, not starting with a digit, of at most 63 bytes. It's
+/// written into SQL as it is, so nothing else is taken (and a name with capitals would be
+/// folded to lowercase where it's written, but not where it's looked up).
+pub fn is_valid_schema(schema: &str) -> bool {
+    let mut bytes = schema.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    schema.len() <= 63
+        && (first.is_ascii_lowercase() || first == b'_')
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `schema`, when it's [valid](is_valid_schema).
+///
+/// # Panics
+///
+/// Panics when it isn't.
+pub fn checked_schema(schema: impl Into<String>) -> String {
+    let schema = schema.into();
+    assert!(
+        is_valid_schema(&schema),
+        "invalid schema name {schema:?}: use lowercase letters, digits and _ (not first), \
+         at most 63 bytes"
+    );
+    schema
+}
+
 /// The SQL that takes `schema` from version `from` (0 for a fresh install) to version `to`,
 /// creating the schema first when it isn't `public` and recording `to` as the installed
 /// version.
 ///
 /// # Panics
 ///
-/// Panics unless `0 <= from < to <= CURRENT_VERSION`.
+/// Panics unless `0 <= from < to <= CURRENT_VERSION`, and `schema` is
+/// [valid](is_valid_schema).
 pub fn sql(schema: &str, from: i32, to: i32) -> String {
+    let schema = &checked_schema(schema);
     assert!(
         0 <= from && from < to && to <= CURRENT_VERSION,
         "invalid migration range {from}..{to} (current version is {CURRENT_VERSION})"
@@ -91,8 +122,13 @@ pub async fn migrated_version<'e>(
 }
 
 /// Bring `schema` up to [`CURRENT_VERSION`], applying only the versions it doesn't have yet.
-/// Returns the version it started from.
+/// Returns the version it started from. An [invalid](is_valid_schema) schema is refused.
 pub async fn migrate(pool: &PgPool, schema: &str) -> Result<i32, sqlx::Error> {
+    if !is_valid_schema(schema) {
+        return Err(sqlx::Error::Configuration(
+            format!("invalid schema name {schema:?}").into(),
+        ));
+    }
     let from = migrated_version(pool, schema).await?;
     if from < CURRENT_VERSION {
         let mut tx = pool.begin().await?;
@@ -119,6 +155,38 @@ fn apply_schema(sql: &str, schema: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_schema_is_a_name_postgres_takes_unquoted() {
+        for schema in ["public", "tenant_a", "_x", "t2", &"a".repeat(63)] {
+            assert!(is_valid_schema(schema), "{schema}");
+        }
+        for schema in [
+            "",
+            "Tenant",
+            "2t",
+            "a-b",
+            "a.b",
+            "x; DROP TABLE ishikari_jobs; --",
+            "x\"",
+            "é",
+            &"a".repeat(64),
+        ] {
+            assert!(!is_valid_schema(schema), "{schema}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid schema name")]
+    fn sql_for_an_invalid_schema_panics() {
+        sql("x; DROP TABLE ishikari_jobs; --", 0, CURRENT_VERSION);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid schema name")]
+    fn inserting_into_an_invalid_schema_panics() {
+        let _ = crate::InsertOpts::default().schema("Tenant");
+    }
 
     #[test]
     fn public_schema_has_no_prefix_or_create() {
