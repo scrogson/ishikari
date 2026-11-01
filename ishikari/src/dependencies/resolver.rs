@@ -72,7 +72,9 @@ impl DependencyResolver {
     }
 
     /// Run the resolver loop. Each tick holds an advisory lock (per schema) while it resolves,
-    /// so with several nodes only one sweeps at a time; the others skip that tick.
+    /// so with several nodes only one sweeps at a time; the others skip that tick. The lock is a
+    /// transaction's, so a sweep stopped part way (its task aborted, or panicking) lets go of it
+    /// with its transaction, rather than leaving it on a connection back in the pool.
     #[instrument(skip(self))]
     async fn run(self) {
         let mut interval = tokio::time::interval(self.interval);
@@ -83,15 +85,15 @@ impl DependencyResolver {
 
         loop {
             interval.tick().await;
-            let mut lock = match self.pool.acquire().await {
-                Ok(conn) => conn,
+            let mut lock = match self.pool.begin().await {
+                Ok(tx) => tx,
                 Err(e) => {
                     error!(error = %e, "dependency resolver couldn't get a connection");
                     continue;
                 }
             };
             let held: std::result::Result<bool, sqlx::Error> =
-                sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
+                sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtext($1))")
                     .bind(&key)
                     .fetch_one(&mut *lock)
                     .await;
@@ -100,10 +102,7 @@ impl DependencyResolver {
                     if let Err(e) = self.resolve_once().await {
                         error!(error = %e, "dependency resolution failed");
                     }
-                    let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext($1))")
-                        .bind(&key)
-                        .execute(&mut *lock)
-                        .await;
+                    let _ = lock.rollback().await;
                 }
                 Ok(false) => debug!("another node is resolving dependencies"),
                 Err(e) => error!(error = %e, "dependency resolver couldn't take its lock"),
