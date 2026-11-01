@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+Migration **v10**.
+
+### Upgrading
+
+- **Run v10** (`ishikari generate migration --database-url …`, or `migrations::migrate`). It
+  only adds `ishikari_jobs.claims`. Upgrade every node together: a node that doesn't count
+  claims writes outcomes the others' fence refuses.
+- `Job` has a new public field, `claims`: a struct literal of it needs it too.
+- A schema name given to any of the crates (`Postgres::with_schema`, each builder's
+  `schema`, the migrations) must be lowercase ASCII letters, digits and
+  `_`, not starting with a digit, of at most 63 bytes (`migrations::is_valid_schema`). Any
+  other panics, and `migrations::migrate` refuses it with an error.
+- `EnvSecrets::new("")` panics: with no prefix, every environment variable would be a secret.
+- A definition may have at most 1000 nodes.
+- A script nested more than 2048 deep is refused on upload, as is one with a `/` that may
+  divide or begin a regular expression after a `}` or `)` (put either in parentheses) or an
+  escape in a name.
+- A module may be granted at most 10 minutes and 1 GiB, unless the host raises them
+  (`WasmModules::max_timeout`, `WasmModules::max_memory_mb`); one kept with more runs within
+  them. A module is at most 32 MiB (`ishikari_wasm::MAX_MODULE_BYTES`).
+
+### Added
+
+- `ishikari_admin::local_only`, the admin answering only requests for `localhost`,
+  `127.0.0.1` or `[::1]`, for serving it on the loopback interface without auth. The
+  `ishikari-admin` binary and the examples use it.
+- `WasmModules::max_timeout` and `WasmModules::max_memory_mb`.
+- `migrations::is_valid_schema` and `migrations::checked_schema`.
+
+### Fixed
+
+- A job's outcome is fenced on its claim (`claims`, counted on each), not its attempt, which a
+  retry, give-back or cancel and retry reuses.
+- An outcome that can't be written after retrying is replaced by an error, so its job doesn't
+  stay executing.
+- A job row with null `tags` is claimed as having none, rather than failing its claim's batch.
+- The resolver's advisory lock is a transaction's, released however its sweep ends.
+- A definition's cycle check, and `Validator`'s, no longer recurse once per node.
+- A malformed field path (`a[`, `a[x]`, …) finds nothing rather than panicking.
+- A job whose arguments don't deserialize logs and fails with where and why, not their values.
+- The admin keeps `X-Frame-Options` on pages inside the host's layout (`app_with_layout`).
+- A module's log lines are cut at 8 KiB and its logs at 1 MiB per call; its output at 10 MiB
+  and its error at 64 KiB.
+- A script's types are stripped on a thread of its own, once its nesting is bounded.
+- The modules kept compiled are the 64 uploaded or run last; a module only described or
+  test-run isn't kept.
+- A definition's export is named with only `[A-Za-z0-9._-]` of its name.
+- A list's page and its size are kept in range (pages up to 1,000,000, of 1 to 100 rows).
+
 ## 0.5.0
 
 All five crates move to 0.5.0, `ishikari-wasm` among them for the first time. Migrations **v08**
