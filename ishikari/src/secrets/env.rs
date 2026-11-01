@@ -9,10 +9,17 @@ pub struct EnvSecrets {
 }
 
 impl EnvSecrets {
+    /// Secrets from the variables named `{prefix}...`.
+    ///
+    /// Panics if `prefix` is empty: every variable of the process (its database's URL among
+    /// them) would be a secret a module may be granted.
     pub fn new(prefix: impl Into<String>) -> Self {
-        Self {
-            prefix: prefix.into(),
-        }
+        let prefix = prefix.into();
+        assert!(
+            !prefix.is_empty(),
+            "EnvSecrets needs a prefix, or every environment variable is a secret"
+        );
+        Self { prefix }
     }
 
     /// The variable of the secret `name`.
@@ -39,5 +46,24 @@ impl Secrets for EnvSecrets {
                 Err(SecretError::Backend(format!("{variable} isn't UTF-8")))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EnvSecrets;
+
+    #[test]
+    #[should_panic(expected = "EnvSecrets needs a prefix")]
+    fn an_empty_prefix_is_refused() {
+        EnvSecrets::new("");
+    }
+
+    #[test]
+    fn a_secret_is_its_prefixed_variable() {
+        assert_eq!(
+            EnvSecrets::new("APP_").variable("stripe/api-key"),
+            "APP_STRIPE_API_KEY"
+        );
     }
 }
