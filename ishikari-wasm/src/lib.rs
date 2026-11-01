@@ -89,6 +89,12 @@ const SPEC_TIMEOUT: Duration = Duration::from_secs(5);
 /// The lines of a failed node's logs its error keeps.
 const LOG_LINES_IN_ERRORS: usize = 20;
 
+/// The largest output a node may return, as JSON.
+const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+
+/// The most bytes of a node's error kept; the rest is dropped.
+const MAX_ERROR_BYTES: usize = 64 * 1024;
+
 /// Modules (WebAssembly components and scripts) uploaded as node types, kept in
 /// `ishikari_node_modules`.
 #[derive(Clone)]
@@ -233,12 +239,20 @@ impl WasmModules {
         .await
         .map_err(|e| format!("the module's call failed: {e}"))?;
         let result = call.result.and_then(|output| {
+            if output.len() > MAX_OUTPUT_BYTES {
+                return Err(format!(
+                    "its output is larger than {} MiB",
+                    MAX_OUTPUT_BYTES / (1024 * 1024)
+                ));
+            }
             serde_json::from_str(&output).map_err(|e| format!("its output isn't JSON: {e}"))
         });
         Ok(Call {
-            result: result
-                .map(|output| redact.json(output))
-                .map_err(|e| redact.text(&e)),
+            result: result.map(|output| redact.json(output)).map_err(|e| {
+                // Redacted before it's cut short, where a secret's value cut in two couldn't be
+                // found.
+                sandbox::prefix(&redact.text(&e), MAX_ERROR_BYTES).to_string()
+            }),
             logs: call.logs.iter().map(|line| redact.text(line)).collect(),
             secrets: call.secrets,
         })

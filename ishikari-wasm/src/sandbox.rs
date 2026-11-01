@@ -7,11 +7,18 @@ use std::sync::Arc;
 use ishikari::secrets::Secret;
 use std::time::{Duration, Instant};
 
+use crate::redact::Redact;
 use crate::runtime::bindings::ishikari::node::host::{Host, Level, Request, Response};
 use crate::runtime::bindings::ishikari::node::script;
 
 /// The most lines a guest may log; the rest are dropped.
 const MAX_LOG_LINES: usize = 1000;
+
+/// The most bytes a logged line keeps (its level included); the rest of it is dropped.
+const MAX_LOG_LINE_BYTES: usize = 8 * 1024;
+
+/// The most bytes of lines a guest may log; the rest are dropped.
+const MAX_LOG_BYTES: usize = 1024 * 1024;
 
 /// The largest response body `fetch` reads.
 const MAX_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
@@ -27,6 +34,10 @@ pub(crate) struct Sandbox {
     /// When the call runs out of time; `fetch` gets what's left as its own timeout.
     pub deadline: Option<Instant>,
     pub logs: Vec<String>,
+    /// The bytes of `logs`.
+    log_bytes: usize,
+    /// The values of `secrets`, taken out of a line before it's cut short.
+    redact: Redact,
     /// The names of the granted secrets the guest read, in the order it first read them.
     pub read: Vec<String>,
     /// The script, when the guest is the runtime of scripts.
@@ -44,6 +55,7 @@ impl Sandbox {
         Self {
             allowed_hosts,
             granted,
+            redact: Redact::new(secrets.iter().flat_map(|secrets| secrets.values())),
             secrets,
             ..Self::default()
         }
@@ -58,15 +70,24 @@ impl Sandbox {
 
 impl Host for Sandbox {
     fn log(&mut self, level: Level, message: String) {
-        if self.logs.len() < MAX_LOG_LINES {
-            let level = match level {
-                Level::Debug => "debug",
-                Level::Info => "info",
-                Level::Warn => "warn",
-                Level::Error => "error",
-            };
-            self.logs.push(format!("{level}: {message}"));
+        if self.logs.len() >= MAX_LOG_LINES || self.log_bytes >= MAX_LOG_BYTES {
+            return;
         }
+        let level = match level {
+            Level::Debug => "debug",
+            Level::Info => "info",
+            Level::Warn => "warn",
+            Level::Error => "error",
+        };
+        let room = MAX_LOG_LINE_BYTES.min(MAX_LOG_BYTES - self.log_bytes);
+        // Redacted before it's cut short, where a secret's value cut in two couldn't be found.
+        // What's past the room by more than a secret's length can't be kept, nor be part of one
+        // that is, so it isn't searched.
+        let searched = prefix(&message, room + self.redact.longest());
+        let line = format!("{level}: {}", self.redact.text(searched));
+        let line = prefix(&line, room).to_string();
+        self.log_bytes += line.len();
+        self.logs.push(line);
     }
 
     fn fetch(&mut self, request: Request) -> Result<Response, String> {
@@ -177,15 +198,63 @@ fn allows(allowed: &[String], host: &str, port: u16) -> bool {
     })
 }
 
+/// The longest start of `text` of at most `bytes` bytes that ends on a character.
+pub(crate) fn prefix(text: &str, bytes: usize) -> &str {
+    if text.len() <= bytes {
+        return text;
+    }
+    let mut end = bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{allows, Sandbox};
-    use crate::runtime::bindings::ishikari::node::host::{Host, Request};
+    use super::{allows, Sandbox, MAX_LOG_BYTES, MAX_LOG_LINE_BYTES};
+    use crate::runtime::bindings::ishikari::node::host::{Host, Level, Request};
+    use ishikari::secrets::Secret;
+    use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
     use std::time::{Duration, Instant};
 
     fn allowed(entries: &[&str]) -> Vec<String> {
         entries.iter().map(|e| e.to_string()).collect()
+    }
+
+    /// A guest logging a long line over and over is kept to a line's and a call's bytes.
+    #[test]
+    fn logs_are_kept_to_their_bytes() {
+        let mut sandbox = Sandbox::default();
+        let line = "x".repeat(64 * 1024);
+        for _ in 0..1000 {
+            sandbox.log(Level::Info, line.clone());
+        }
+        assert!(sandbox.logs.iter().all(|l| l.len() <= MAX_LOG_LINE_BYTES));
+        let kept: usize = sandbox.logs.iter().map(String::len).sum();
+        assert!(kept <= MAX_LOG_BYTES, "{kept}");
+        assert!(sandbox.logs[0].starts_with("info: xxx"));
+
+        // A line cut short at a character's boundary.
+        let mut sandbox = Sandbox::default();
+        sandbox.log(Level::Info, "é".repeat(MAX_LOG_LINE_BYTES));
+        assert!(sandbox.logs[0].len() <= MAX_LOG_LINE_BYTES);
+    }
+
+    /// A line is redacted before it's cut short, so no part of a secret is left behind where it
+    /// can't be recognized.
+    #[test]
+    fn a_long_line_is_redacted_before_it_is_cut() {
+        let secret = "s3cr3t-value-0123456789";
+        let secrets = HashMap::from([("k".to_string(), Secret::from(secret))]);
+        let mut sandbox = Sandbox::new(vec![], vec!["k".into()], Some(secrets));
+        let line = format!(
+            "{}{secret}",
+            "a".repeat(MAX_LOG_LINE_BYTES - "info: ".len() - 8)
+        );
+        sandbox.log(Level::Info, line);
+        assert!(!sandbox.logs[0].contains("s3cr"), "{}", sandbox.logs[0]);
     }
 
     /// A request's `Host` is its URL's, whatever the guest says: another would reach the

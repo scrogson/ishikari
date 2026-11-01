@@ -473,3 +473,34 @@ async fn a_script_is_tested_without_being_kept() {
 
     db.finish().await;
 }
+
+/// What a node returns, and why it failed, are kept to a size.
+#[tokio::test]
+async fn a_scripts_output_and_error_are_kept_to_their_size() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = WasmModules::new(db.pool.clone());
+    let grants = ModuleGrants {
+        memory_limit_mb: Some(512),
+        ..ModuleGrants::default()
+    };
+
+    let source = running(r#"return "x".repeat(11 * 1024 * 1024);"#);
+    let run = modules
+        .test_run(upload(&source, grants.clone()), HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(run.output.unwrap_err(), "its output is larger than 10 MiB");
+
+    let source = running(r#"throw new Error("x".repeat(1024 * 1024));"#);
+    let run = modules
+        .test_run(upload(&source, grants), HashMap::new())
+        .await
+        .unwrap();
+    let error = run.output.unwrap_err();
+    assert!(error.len() <= 64 * 1024, "{}", error.len());
+    assert!(error.contains("xxxx"), "{error:.200}");
+
+    db.finish().await;
+}

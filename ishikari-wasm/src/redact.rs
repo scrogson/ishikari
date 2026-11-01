@@ -21,6 +21,11 @@ impl Redact {
         Self(values)
     }
 
+    /// The length of the longest value, in bytes.
+    pub fn longest(&self) -> usize {
+        self.0.first().map_or(0, String::len)
+    }
+
     /// `text` without the values.
     pub fn text(&self, text: &str) -> String {
         self.0.iter().fold(text.to_string(), |text, value| {
