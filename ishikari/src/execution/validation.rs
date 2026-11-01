@@ -187,48 +187,41 @@ impl<'a> Validator<'a> {
         self.check_unreachable_nodes(result);
     }
 
-    /// Detect cycles in the dependency graph.
+    /// Detect cycles in the dependency graph: the path that closes one, `a -> b -> a`. The
+    /// search keeps its path on the heap rather than recursing, so a long chain of
+    /// dependencies can't overflow the stack.
     fn detect_cycles(&self) -> Result<(), Vec<String>> {
-        let mut visited = HashSet::new();
-        let mut rec_stack = HashSet::new();
-        let mut path = Vec::new();
-
-        for node_id in self.workflow.nodes.keys() {
-            if !visited.contains(node_id) {
-                self.dfs_cycle_check(node_id, &mut visited, &mut rec_stack, &mut path)?
+        let nodes = &self.workflow.nodes;
+        let mut visited: HashSet<&str> = HashSet::new();
+        let mut on_path: HashSet<&str> = HashSet::new();
+        for start in nodes.keys() {
+            if !visited.insert(start) {
+                continue;
             }
-        }
-
-        Ok(())
-    }
-
-    fn dfs_cycle_check(
-        &self,
-        node_id: &str,
-        visited: &mut HashSet<String>,
-        rec_stack: &mut HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<(), Vec<String>> {
-        visited.insert(node_id.to_string());
-        rec_stack.insert(node_id.to_string());
-        path.push(node_id.to_string());
-
-        if let Some(node) = self.workflow.nodes.get(node_id) {
-            for dep_id in &node.depends_on {
-                if !visited.contains(dep_id) {
-                    self.dfs_cycle_check(dep_id, visited, rec_stack, path)?;
-                } else if rec_stack.contains(dep_id) {
-                    // Found cycle - return the path
-                    let cycle_start = path.iter().position(|x| x == dep_id).unwrap();
-                    let mut cycle = path[cycle_start..].to_vec();
-                    cycle.push(dep_id.clone());
+            on_path.insert(start);
+            // Each node on the path, with the index of the next of its dependencies to follow.
+            let mut path: Vec<(&str, usize)> = vec![(start, 0)];
+            while let Some(&(node_id, next)) = path.last() {
+                let deps = nodes.get(node_id).map_or(&[][..], |n| &n.depends_on);
+                let Some(dep) = deps.get(next) else {
+                    on_path.remove(node_id);
+                    path.pop();
+                    continue;
+                };
+                path.last_mut().unwrap().1 += 1;
+                if on_path.contains(dep.as_str()) {
+                    let from = path.iter().position(|&(n, _)| n == dep).unwrap();
+                    let mut cycle: Vec<String> =
+                        path[from..].iter().map(|&(n, _)| n.to_string()).collect();
+                    cycle.push(dep.clone());
                     return Err(cycle);
+                }
+                if visited.insert(dep) {
+                    on_path.insert(dep);
+                    path.push((dep, 0));
                 }
             }
         }
-
-        path.pop();
-        rec_stack.remove(node_id);
         Ok(())
     }
 
@@ -606,6 +599,43 @@ mod tests {
 
         assert!(!result.is_valid());
         assert!(result.errors.iter().any(|e| e.code == "E004"));
+    }
+
+    #[test]
+    fn a_long_chain_is_checked_for_cycles_without_recursing() {
+        // On a thread with a tokio worker's 2 MiB stack.
+        let checked = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let names: Vec<String> = (0..100_000).map(|i| format!("n{i}")).collect();
+                let nodes = (0..names.len())
+                    .map(|i| {
+                        make_node(
+                            &names[i],
+                            &names[i.saturating_sub(1)..i]
+                                .iter()
+                                .map(String::as_str)
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect();
+                let workflow = make_workflow(nodes);
+                let inputs = HashMap::new();
+                Validator::new(&workflow, &inputs).validate().is_valid()
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(checked);
+    }
+
+    #[test]
+    fn a_cycle_is_named_by_its_path() {
+        let workflow = make_workflow(vec![make_node("a", &["a"]), make_node("b", &[])]);
+        let inputs = HashMap::new();
+        let result = Validator::new(&workflow, &inputs).validate();
+        let cycle = result.errors.iter().find(|e| e.code == "E004").unwrap();
+        assert_eq!(cycle.message, "Circular dependency detected: a -> a");
     }
 
     #[test]

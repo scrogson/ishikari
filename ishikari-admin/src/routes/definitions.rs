@@ -167,6 +167,48 @@ fn default_version() -> i32 {
     1
 }
 
+/// The most nodes a workflow definition may have.
+const MAX_NODES: usize = 1000;
+
+/// A cycle among `nodes` (each depending on the ids `depends_on` gives), as the path that
+/// closes it: `a -> b -> a`. The search keeps its path on the heap rather than recursing, so a
+/// long chain of dependencies can't overflow the stack.
+fn find_cycle<'a, N>(
+    nodes: &'a HashMap<String, N>,
+    depends_on: impl Fn(&'a N) -> &'a [String],
+) -> Option<Vec<&'a str>> {
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut on_path: HashSet<&str> = HashSet::new();
+    for start in nodes.keys() {
+        if !visited.insert(start) {
+            continue;
+        }
+        on_path.insert(start);
+        // Each node on the path, with the index of the next of its dependencies to follow.
+        let mut path: Vec<(&str, usize)> = vec![(start, 0)];
+        while let Some(&(node_id, next)) = path.last() {
+            let deps = nodes.get(node_id).map_or(&[][..], &depends_on);
+            let Some(dep) = deps.get(next) else {
+                on_path.remove(node_id);
+                path.pop();
+                continue;
+            };
+            path.last_mut().unwrap().1 += 1;
+            if on_path.contains(dep.as_str()) {
+                let from = path.iter().position(|&(n, _)| n == dep).unwrap();
+                let mut cycle: Vec<&str> = path[from..].iter().map(|&(n, _)| n).collect();
+                cycle.push(dep);
+                return Some(cycle);
+            }
+            if visited.insert(dep) {
+                on_path.insert(dep);
+                path.push((dep, 0));
+            }
+        }
+    }
+    None
+}
+
 impl WorkflowDefinition {
     /// Parse a workflow definition from YAML.
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
@@ -186,6 +228,13 @@ impl WorkflowDefinition {
         // Check for empty workflow
         if self.nodes.is_empty() {
             return Err("Workflow must have at least one node".to_string());
+        }
+
+        if self.nodes.len() > MAX_NODES {
+            return Err(format!(
+                "A workflow may have at most {MAX_NODES} nodes; this one has {}",
+                self.nodes.len()
+            ));
         }
 
         // Collect all node IDs
@@ -229,52 +278,10 @@ impl WorkflowDefinition {
 
     /// Detect cycles in the workflow graph.
     fn detect_cycles(&self) -> Result<(), String> {
-        let mut visited = HashSet::new();
-        let mut rec_stack = HashSet::new();
-        let mut path = Vec::new();
-
-        for node_id in self.nodes.keys() {
-            if !visited.contains(node_id) {
-                if let Some(cycle_path) =
-                    self.dfs_cycle(node_id, &mut visited, &mut rec_stack, &mut path)
-                {
-                    return Err(format!("Cycle detected: {}", cycle_path));
-                }
-            }
+        match find_cycle(&self.nodes, |node| &node.depends_on) {
+            Some(cycle) => Err(format!("Cycle detected: {}", cycle.join(" -> "))),
+            None => Ok(()),
         }
-
-        Ok(())
-    }
-
-    fn dfs_cycle(
-        &self,
-        node_id: &str,
-        visited: &mut HashSet<String>,
-        rec_stack: &mut HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Option<String> {
-        visited.insert(node_id.to_string());
-        rec_stack.insert(node_id.to_string());
-        path.push(node_id.to_string());
-
-        if let Some(node_def) = self.nodes.get(node_id) {
-            for dep in &node_def.depends_on {
-                if !visited.contains(dep) {
-                    if let Some(cycle) = self.dfs_cycle(dep, visited, rec_stack, path) {
-                        return Some(cycle);
-                    }
-                } else if rec_stack.contains(dep) {
-                    // Found a cycle
-                    let cycle_start = path.iter().position(|n| n == dep).unwrap();
-                    let cycle_path = path[cycle_start..].join(" -> ") + " -> " + dep;
-                    return Some(cycle_path);
-                }
-            }
-        }
-
-        path.pop();
-        rec_stack.remove(node_id);
-        None
     }
 
     /// Get the topological order of nodes for execution.
@@ -1291,5 +1298,65 @@ metadata:
                 "Workflow must have at least one node",
             ]
         );
+    }
+
+    /// A definition of `n` nodes, each depending on the one before it.
+    fn chain(n: usize) -> WorkflowDefinition {
+        let nodes: serde_json::Map<String, Value> = (0..n)
+            .map(|i| {
+                let depends_on: Vec<String> =
+                    (i > 0).then(|| format!("n{}", i - 1)).into_iter().collect();
+                (
+                    format!("n{i}"),
+                    json!({"type": "t", "depends_on": depends_on}),
+                )
+            })
+            .collect();
+        serde_json::from_value(json!({"name": "chain", "nodes": nodes})).unwrap()
+    }
+
+    /// `f`'s result, run on a thread with a tokio worker's 2 MiB stack.
+    fn on_a_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_long_chain_is_checked_for_cycles_without_recursing() {
+        let def = chain(100_000);
+        assert_eq!(on_a_small_stack(move || def.detect_cycles()), Ok(()));
+    }
+
+    #[test]
+    fn a_definition_of_too_many_nodes_is_refused() {
+        let def = chain(10_000);
+        let error = on_a_small_stack(move || def.validate()).unwrap_err();
+        assert_eq!(
+            error,
+            "A workflow may have at most 1000 nodes; this one has 10000"
+        );
+        assert_eq!(chain(1000).validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_cycle_is_named_by_its_path() {
+        let mut def = chain(4);
+        def.nodes.get_mut("n0").unwrap().depends_on = vec!["n2".into()];
+        let error = def.validate().unwrap_err();
+        // The path starts where the search did, so it's one turn of the cycle from there.
+        let turns = [
+            "Cycle detected: n0 -> n2 -> n1 -> n0",
+            "Cycle detected: n1 -> n0 -> n2 -> n1",
+            "Cycle detected: n2 -> n1 -> n0 -> n2",
+        ];
+        assert!(turns.contains(&error.as_str()), "{error}");
+
+        let mut def = chain(2);
+        def.nodes.get_mut("n1").unwrap().depends_on = vec!["n1".into()];
+        assert_eq!(def.validate().unwrap_err(), "Cycle detected: n1 -> n1");
     }
 }
