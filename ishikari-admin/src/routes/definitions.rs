@@ -549,7 +549,16 @@ pub async fn export_yaml(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e).into_response())?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Definition not found").into_response())?;
 
-    let filename = format!("{}-v{}.yaml", definition.name, definition.version);
+    // Only what's safe in a filename, and in the quoted string it's put in.
+    let name: String = definition
+        .name
+        .chars()
+        .map(|c| match c {
+            c if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') => c,
+            _ => '_',
+        })
+        .collect();
+    let filename = format!("{name}-v{}.yaml", definition.version);
 
     Ok((
         [

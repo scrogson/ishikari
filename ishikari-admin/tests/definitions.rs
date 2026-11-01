@@ -261,3 +261,26 @@ async fn a_run_fails_with_its_workflow_and_runs_again_on_a_retry() {
 
     db.drop().await;
 }
+
+/// An export is named by its definition's name with only what's safe in a filename kept.
+#[tokio::test]
+async fn an_export_is_named_safely() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let s = &db.schema;
+    let app = ishikari_admin::app(AppState::with_schema(db.pool.clone(), s));
+    let yaml = DEFINITION.replace("name: greet", r#"name: "a\"; filename=..\\évil.sh; x=\"""#);
+    let res = post_form(&app, "/definitions/import", &[("yaml", &yaml)]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let definition: i64 = location(&res).rsplit('/').next().unwrap().parse().unwrap();
+
+    let res = get(&app, &format!("/definitions/{definition}/export"), &[]).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()[header::CONTENT_DISPOSITION],
+        r#"attachment; filename="a___filename_..__vil.sh__x__-v1.yaml""#
+    );
+
+    db.drop().await;
+}
