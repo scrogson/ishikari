@@ -7,7 +7,7 @@ mod common;
 use chrono::{DateTime, Utc};
 use common::{eventually, TestDb};
 use ishikari::prelude::*;
-use ishikari::{Engine, Postgres, Queue};
+use ishikari::{Backoff, Engine, Postgres, Queue};
 use std::time::Duration;
 
 #[ishikari::job]
@@ -92,6 +92,26 @@ impl Worker for FailsDeep {
             .context("fetching the feed")
             .context("syncing town 7")
             .into())
+    }
+}
+
+#[ishikari::job]
+struct FailsWithNul;
+
+#[ishikari::worker]
+impl Worker for FailsWithNul {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        Err("a\0b".into())
+    }
+}
+
+#[ishikari::job]
+struct SnoozesForever;
+
+#[ishikari::worker]
+impl Worker for SnoozesForever {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        Snooze(u64::MAX).into()
     }
 }
 
@@ -377,6 +397,56 @@ async fn an_error_is_recorded_with_its_sources() {
         errors[0]["error"],
         "syncing town 7: fetching the feed: connection refused"
     );
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn an_error_with_a_nul_in_it_is_recorded() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(FailsWithNul, &db.pool).await.unwrap();
+    let _engine = engine(&db);
+
+    eventually(
+        "the failure is recorded",
+        Duration::from_secs(5),
+        || async { db.state(job.id).await == "retryable" },
+    )
+    .await;
+    let errors: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT errors FROM ishikari_jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(errors[0]["error"], "ab");
+
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_snooze_too_long_to_write_is_cut_to_the_longest_backoff() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let job = ishikari::insert(SnoozesForever, &db.pool).await.unwrap();
+    let _engine = engine(&db);
+
+    eventually("the snooze is recorded", Duration::from_secs(5), || async {
+        db.state(job.id).await == "scheduled"
+    })
+    .await;
+    let wait: f64 = sqlx::query_scalar(
+        "SELECT extract(epoch FROM scheduled_at - now())::float8 FROM ishikari_jobs WHERE id = $1",
+    )
+    .bind(job.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let longest = Backoff::MAX_DELAY.as_secs_f64();
+    assert!(wait > longest - 60.0 && wait <= longest, "{wait}");
 
     db.finish().await;
 }

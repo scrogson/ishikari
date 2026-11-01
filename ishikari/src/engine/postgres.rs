@@ -212,10 +212,11 @@ impl Postgres {
         Ok(true)
     }
 
-    /// Put the job back to run again in `seconds`, without using up an attempt. False when the
-    /// job had moved on.
+    /// Put the job back to run again in `seconds` (at most [`Backoff::MAX_DELAY`]), without
+    /// using up an attempt. False when the job had moved on.
     pub(crate) async fn snooze(&self, job: &Job, seconds: u64) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
+        let seconds = seconds.min(crate::Backoff::MAX_DELAY.as_secs());
         let done = sqlx::query(&format!(
             "UPDATE {jobs} SET state = 'scheduled', {release}, \
                  scheduled_at = now() + $3 * interval '1 second', max_attempts = max_attempts + 1 \
@@ -737,13 +738,14 @@ impl ErrorKind {
     }
 }
 
-/// An entry of a job's `errors`: `{attempt, at, kind, error}`.
+/// An entry of a job's `errors`: `{attempt, at, kind, error}`. A NUL is left out of the
+/// error: Postgres refuses one in jsonb, and the outcome couldn't be written.
 pub(crate) fn error_record(attempt: i32, kind: ErrorKind, error: &str) -> serde_json::Value {
     serde_json::json!({
         "attempt": attempt,
         "at": Utc::now(),
         "kind": kind.as_str(),
-        "error": error,
+        "error": error.replace('\0', ""),
     })
 }
 

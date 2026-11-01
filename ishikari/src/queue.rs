@@ -589,8 +589,28 @@ const RECORD_FOR: Duration = Duration::from_secs(60);
 
 /// Write the outcome, retrying a failed write with backoff for up to [`RECORD_FOR`]. A job that
 /// moved on while it ran (rescued, cancelled or retried) keeps its new state; the result is
-/// dropped.
+/// dropped. An outcome that still can't be written is replaced by an error saying so, retried
+/// the same way, so the job doesn't stay executing (holding its unique key and its workflow)
+/// while its node lives.
 async fn record(storage: &Postgres, job: &Job, outcome: &Outcome) {
+    let Err(e) = write(storage, job, outcome).await else {
+        return;
+    };
+    let name = outcome.name();
+    error!(id = job.id, outcome = name, error = %e, "failed to record job outcome; recording an error instead");
+    let fallback = Outcome::Error(
+        ErrorKind::Error,
+        format!("its outcome ({name}) couldn't be recorded: {e}"),
+        default_backoff(job.attempt),
+    );
+    if let Err(e) = write(storage, job, &fallback).await {
+        error!(id = job.id, error = %e, "failed to record job outcome; giving up, the job stays executing until its node stops");
+    }
+}
+
+/// Write the outcome, retrying a failed write with backoff for up to [`RECORD_FOR`]. The error
+/// of the last try when it never went through.
+async fn write(storage: &Postgres, job: &Job, outcome: &Outcome) -> Result<(), sqlx::Error> {
     let started = Instant::now();
     let mut delay = Duration::from_millis(100);
     loop {
@@ -604,7 +624,7 @@ async fn record(storage: &Postgres, job: &Job, outcome: &Outcome) {
         };
         let outcome = outcome.name();
         match written {
-            Ok(true) => return,
+            Ok(true) => return Ok(()),
             Ok(false) => {
                 warn!(
                     id = job.id,
@@ -612,17 +632,14 @@ async fn record(storage: &Postgres, job: &Job, outcome: &Outcome) {
                     outcome,
                     "job changed while it ran; result dropped"
                 );
-                return;
+                return Ok(());
             }
             Err(e) if started.elapsed() + delay < RECORD_FOR => {
                 warn!(id = job.id, outcome, error = %e, retry_in = ?delay, "failed to record job outcome; retrying");
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(5));
             }
-            Err(e) => {
-                error!(id = job.id, outcome, error = %e, "failed to record job outcome; giving up, the job stays executing until its node stops");
-                return;
-            }
+            Err(e) => return Err(e),
         }
     }
 }
