@@ -10,6 +10,7 @@
 
 use crate::Job;
 use chrono::{DateTime, Utc};
+use sqlx::{FromRow, Row};
 use std::sync::Arc;
 
 mod runs;
@@ -69,7 +70,9 @@ impl Postgres {
         qualified(self.schema.as_deref(), name)
     }
 
-    /// Mark up to `limit` available jobs in `queue` as executing by `node` and return them.
+    /// Mark up to `limit` available jobs in `queue` as executing by `node` and return them. The
+    /// claim is committed before the rows are read as jobs, so one that can't be is discarded
+    /// with why, rather than leaving the batch executing with no run.
     pub(crate) async fn claim(
         &self,
         queue: &str,
@@ -80,7 +83,7 @@ impl Postgres {
             return Ok(vec![]);
         }
         let jobs = self.name("ishikari_jobs");
-        sqlx::query_as::<_, Job>(&format!(
+        let rows = sqlx::query(&format!(
             r#"
             WITH subset AS (
                 SELECT id
@@ -101,7 +104,11 @@ impl Postgres {
                 claims = j.claims + 1
             FROM subset
             WHERE j.id = subset.id
-            RETURNING j.*
+            RETURNING j.id, j.state, j.queue, j.worker, j.args, j.errors, j.attempt,
+                j.max_attempts, j.priority,
+                array_remove(coalesce(j.tags, ARRAY[]::varchar[]), NULL) AS tags,
+                j.meta, j.attempted_by, j.inserted_at, j.scheduled_at, j.attempted_at,
+                j.completed_at, j.discarded_at, j.cancelled_at, j.workflow_id, j.claims
             "#,
             release_executing = release("'executing'", "j."),
         ))
@@ -109,7 +116,52 @@ impl Postgres {
         .bind(limit)
         .bind(node)
         .fetch_all(&*self.pool)
-        .await
+        .await?;
+        let mut claimed = Vec::with_capacity(rows.len());
+        for row in rows {
+            // Tags another producer left NULL (or with NULLs in them) were read as none, above.
+            match Job::from_row(&row) {
+                Ok(job) => claimed.push(job),
+                Err(e) => {
+                    if let Err(write) = self.discard_unreadable(&row, &e).await {
+                        tracing::error!(error = %write, "failed to discard a claimed row that can't be read as a job; it stays executing until its node stops");
+                    }
+                }
+            }
+        }
+        Ok(claimed)
+    }
+
+    /// Discard a claimed row that can't be read as a job, with `why`.
+    async fn discard_unreadable(
+        &self,
+        row: &sqlx::postgres::PgRow,
+        why: &sqlx::Error,
+    ) -> Result<(), sqlx::Error> {
+        let (id, attempt, claims): (i64, i32, i64) = (
+            row.try_get("id")?,
+            row.try_get("attempt")?,
+            row.try_get("claims")?,
+        );
+        tracing::error!(id, error = %why, "a claimed row can't be read as a job; discarding it");
+        let jobs = self.name("ishikari_jobs");
+        let error = format!("its row couldn't be read as a job: {why}");
+        let mut tx = self.pool.begin().await?;
+        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
+            "UPDATE {jobs} SET state = 'discarded', discarded_at = now(), {release}, \
+                 errors = errors || $3::jsonb \
+             WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
+            release = release("'discarded'", ""),
+        ))
+        .bind(id)
+        .bind(claims)
+        .bind(error_record(attempt, ErrorKind::Error, &error))
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(workflow_id) = done {
+            self.after_failed(&mut tx, id, workflow_id).await?;
+        }
+        tx.commit().await
     }
 
     /// Record a successful run, and in the same transaction release the jobs that were waiting

@@ -450,3 +450,70 @@ async fn a_snooze_too_long_to_write_is_cut_to_the_longest_backoff() {
 
     db.finish().await;
 }
+
+/// A row another producer (or a hand-written statement) left with NULL tags runs, and so does
+/// the rest of the batch it was claimed with.
+#[tokio::test]
+async fn a_job_with_null_tags_runs_with_its_batch() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let untagged = ishikari::insert(Quick, &db.pool).await.unwrap();
+    let mate = ishikari::insert(Quick, &db.pool).await.unwrap();
+    sqlx::query("UPDATE ishikari_jobs SET tags = NULL WHERE id = $1")
+        .bind(untagged.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let _engine = engine(&db);
+
+    for job in [untagged.id, mate.id] {
+        eventually("the job completes", Duration::from_secs(5), || async {
+            db.state(job).await == "completed"
+        })
+        .await;
+    }
+
+    db.finish().await;
+}
+
+/// A row that can't be read as a job once claimed is discarded, saying why, and the rest of
+/// its batch runs.
+#[tokio::test]
+async fn a_claimed_row_that_cant_be_read_is_discarded() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let unreadable = ishikari::insert(Quick, &db.pool).await.unwrap();
+    let mate = ishikari::insert(Quick, &db.pool).await.unwrap();
+    sqlx::query("UPDATE ishikari_jobs SET errors = ARRAY[NULL]::jsonb[] WHERE id = $1")
+        .bind(unreadable.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let _engine = engine(&db);
+
+    eventually(
+        "the batch-mate completes",
+        Duration::from_secs(5),
+        || async { db.state(mate.id).await == "completed" },
+    )
+    .await;
+    eventually("the row is discarded", Duration::from_secs(5), || async {
+        db.state(unreadable.id).await == "discarded"
+    })
+    .await;
+    let error: String = sqlx::query_scalar(
+        "SELECT errors[cardinality(errors)]->>'error' FROM ishikari_jobs WHERE id = $1",
+    )
+    .bind(unreadable.id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(
+        error.starts_with("its row couldn't be read as a job"),
+        "{error}"
+    );
+
+    db.finish().await;
+}
