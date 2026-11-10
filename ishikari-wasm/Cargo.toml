@@ -1,6 +1,6 @@
 [package]
 name = "ishikari-wasm"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 # wasmtime's, which is why this crate isn't in the repository's workspace.
 rust-version = "1.96"
@@ -12,7 +12,7 @@ readme = "README.md"
 include = ["src", "wit", "js-runtime.wasm", "README.md"]
 
 [dependencies]
-ishikari = { version = "0.5.0", path = "../ishikari" }
+ishikari = { version = "0.6.0", path = "../ishikari" }
 
 # The runtime: components, with WASI p2 for what guests' standard libraries import
 wasmtime = { version = "49", default-features = false, features = [
@@ -45,7 +45,7 @@ ureq = "3"
 
 [dev-dependencies]
 axum = "0.8"
-ishikari-admin = { version = "0.5.0", path = "../ishikari-admin" }
+ishikari-admin = { version = "0.6.0", path = "../ishikari-admin" }
 serde_urlencoded = "0.7"
 tokio = { version = "1.41", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }

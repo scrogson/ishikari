@@ -31,7 +31,7 @@ PostgreSQL 12 or later, and Rust 1.94 or later (sqlx 0.9).
 
 ```toml
 [dependencies]
-ishikari = "0.5"
+ishikari = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

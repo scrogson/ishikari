@@ -2,7 +2,8 @@
 
 ## 0.6.0
 
-Migration **v10**. Modules no longer read secrets' values: see Upgrading.
+All five crates move to 0.6.0. Migration **v10**. Modules no longer read secrets' values: see
+Upgrading.
 
 ### Upgrading
 
