@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+All five crates move to 0.6.1. No migration, and nothing to change in a host.
+
+### Fixed
+
+- tokio 1.54.1 in the workspace's lockfile, for RUSTSEC-2026-0386.
+- The cron tests allow for a slow machine.
+
 ## 0.6.0
 
 All five crates move to 0.6.0. Migration **v10**. Modules no longer read secrets' values: see
