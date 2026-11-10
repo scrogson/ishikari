@@ -117,23 +117,24 @@ async fn running_a_definition_inserts_its_nodes_as_a_workflows_steps() {
 
     let workflow = run(&app, definition).await;
 
-    let (run, inputs): (i64, Value) = sqlx::query_as(&format!(
+    let (run, inputs): (i64, Value) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, inputs FROM {s}.ishikari_workflow_runs WHERE workflow_id = $1"
-    ))
+    )))
     .bind(workflow)
     .fetch_one(&db.pool)
     .await
     .expect("the run, on the workflow");
     assert_eq!(inputs, json!({"name": "ada"}));
 
-    let steps: Vec<(i64, String, String, String, i32, Value)> = sqlx::query_as(&format!(
-        "SELECT id, meta->>'ishikari_step', worker, state::text, max_attempts, args \
+    let steps: Vec<(i64, String, String, String, i32, Value)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT id, meta->>'ishikari_step', worker, state::text, max_attempts, args \
          FROM {s}.ishikari_jobs WHERE workflow_id = $1 ORDER BY meta->>'ishikari_step'"
-    ))
-    .bind(workflow)
-    .fetch_all(&db.pool)
-    .await
-    .unwrap();
+        )))
+        .bind(workflow)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
     let names: Vec<&str> = steps.iter().map(|s| s.1.as_str()).collect();
     assert_eq!(names, ["hello", "shout"], "one step per node, named by it");
 
@@ -154,9 +155,9 @@ async fn running_a_definition_inserts_its_nodes_as_a_workflows_steps() {
     let (shout, _, _, state, max_attempts, _) = &steps[1];
     assert_eq!(state, "pending", "waits on its upstream");
     assert_eq!(*max_attempts, 3, "the default attempts");
-    let upstream: i64 = sqlx::query_scalar(&format!(
+    let upstream: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT depends_on_job_id FROM {s}.ishikari_job_dependencies WHERE job_id = $1"
-    ))
+    )))
     .bind(shout)
     .fetch_one(&db.pool)
     .await
@@ -176,9 +177,9 @@ async fn running_a_definition_inserts_its_nodes_as_a_workflows_steps() {
         "the workflow completes",
         Duration::from_secs(10),
         || async {
-            let state: String = sqlx::query_scalar(&format!(
+            let state: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT state FROM {s}.ishikari_workflows WHERE id = $1"
-            ))
+            )))
             .bind(workflow)
             .fetch_one(&db.pool)
             .await
@@ -226,9 +227,9 @@ async fn a_run_fails_with_its_workflow_and_runs_again_on_a_retry() {
         .with_queue(Queue::builder(NodeJob::QUEUE).interval(Duration::from_millis(20)))
         .start(Postgres::new(db.pool.clone()).with_schema(s));
     eventually("the workflow fails", Duration::from_secs(10), || async {
-        let state: String = sqlx::query_scalar(&format!(
+        let state: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT state FROM {s}.ishikari_workflows WHERE id = $1"
-        ))
+        )))
         .bind(workflow)
         .fetch_one(&db.pool)
         .await
@@ -241,9 +242,9 @@ async fn a_run_fails_with_its_workflow_and_runs_again_on_a_retry() {
     assert_eq!(status, "failed", "the run fails with its workflow");
     assert_ne!(completed, "—", "and says when");
 
-    let hello: i64 = sqlx::query_scalar(&format!(
+    let hello: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {s}.ishikari_jobs WHERE workflow_id = $1 AND meta->>'ishikari_step' = 'hello'"
-    ))
+    )))
     .bind(workflow)
     .fetch_one(&db.pool)
     .await

@@ -44,22 +44,22 @@ async fn workflow(db: &TestDb, step: &str, workflow: &str) -> (i64, i64) {
         .run(&db.pool)
         .await
         .unwrap();
-    let step: i64 = sqlx::query_scalar(&format!(
+    let step: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_jobs SET state = $2::{s}.ishikari_job_state, attempt = 1, \
              attempted_at = now(), \
              discarded_at = CASE WHEN $2 = 'discarded' THEN now() END \
          WHERE workflow_id = $1 RETURNING id"
-    ))
+    )))
     .bind(wf.id)
     .bind(step)
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_workflows SET state = $2, \
              completed_at = CASE WHEN $2 = 'running' THEN NULL ELSE now() END \
          WHERE id = $1"
-    ))
+    )))
     .bind(wf.id)
     .bind(workflow)
     .execute(&db.pool)
@@ -69,10 +69,10 @@ async fn workflow(db: &TestDb, step: &str, workflow: &str) -> (i64, i64) {
 }
 
 async fn workflow_state(db: &TestDb, id: i64) -> String {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM {}.ishikari_workflows WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await
@@ -80,10 +80,10 @@ async fn workflow_state(db: &TestDb, id: i64) -> String {
 }
 
 async fn job_state(db: &TestDb, id: i64) -> String {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state::text FROM {}.ishikari_jobs WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await
@@ -115,10 +115,10 @@ async fn a_retried_workflow_completes_when_its_step_finishes_during_the_retry() 
 
     // Hold the workflow's row, so the retry stops at its update of the workflow.
     let mut holder = db.pool.begin().await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT 1 FROM {}.ishikari_workflows WHERE id = $1 FOR UPDATE",
         db.schema
-    ))
+    )))
     .bind(wf)
     .execute(&mut *holder)
     .await
@@ -162,17 +162,17 @@ async fn cancelling_a_workflow_as_its_last_step_completes_leaves_it_completed() 
 
     // The last step's completion, in flight: the step and the workflow completed, uncommitted.
     let mut completion = db.pool.begin().await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_jobs SET state = 'completed', completed_at = now() WHERE id = $1"
-    ))
+    )))
     .bind(step)
     .execute(&mut *completion)
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_workflows SET state = 'completed', completed_at = now() \
          WHERE id = $1"
-    ))
+    )))
     .bind(wf)
     .execute(&mut *completion)
     .await
@@ -204,25 +204,25 @@ async fn cancelling_a_workflow_releases_unique_keys_and_cancels_dependents() {
     };
     let s = &db.schema;
     let (wf, step) = workflow(&db, "available", "running").await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_jobs SET unique_key = 'only-one', \
              unique_states = '{{available,scheduled,executing,retryable}}' \
          WHERE id = $1"
-    ))
+    )))
     .bind(step)
     .execute(&db.pool)
     .await
     .unwrap();
     // A job outside the workflow, waiting on its step.
-    let outside: i64 = sqlx::query_scalar(&format!(
+    let outside: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {s}.ishikari_jobs (worker, state) VALUES ('Step', 'pending') RETURNING id"
-    ))
+    )))
     .fetch_one(&db.pool)
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {s}.ishikari_job_dependencies (job_id, depends_on_job_id) VALUES ($1, $2)"
-    ))
+    )))
     .bind(outside)
     .bind(step)
     .execute(&db.pool)
@@ -235,18 +235,18 @@ async fn cancelling_a_workflow_releases_unique_keys_and_cancels_dependents() {
 
     assert_eq!(workflow_state(&db, wf).await, "cancelled");
     assert_eq!(job_state(&db, step).await, "cancelled");
-    let key: Option<String> = sqlx::query_scalar(&format!(
+    let key: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT unique_key FROM {s}.ishikari_jobs WHERE id = $1"
-    ))
+    )))
     .bind(step)
     .fetch_one(&db.pool)
     .await
     .unwrap();
     assert_eq!(key, None, "the step's unique key is released");
     assert_eq!(job_state(&db, outside).await, "cancelled");
-    let dep: String = sqlx::query_scalar(&format!(
+    let dep: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM {s}.ishikari_job_dependencies WHERE job_id = $1"
-    ))
+    )))
     .bind(outside)
     .fetch_one(&db.pool)
     .await
@@ -258,11 +258,11 @@ async fn cancelling_a_workflow_releases_unique_keys_and_cancels_dependents() {
 
 /// A job's errors, and whether its discarded_at and cancelled_at are set.
 async fn errors_and_ends(db: &TestDb, id: i64) -> (Vec<serde_json::Value>, bool, bool) {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT errors, discarded_at IS NOT NULL, cancelled_at IS NOT NULL \
          FROM {}.ishikari_jobs WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await
@@ -281,9 +281,9 @@ async fn retrying_a_workflow_keeps_its_steps_errors() {
     let record = serde_json::json!({
         "attempt": 1, "at": "2026-10-17T12:00:00Z", "kind": "error", "error": "boom"
     });
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_jobs SET errors = ARRAY[$2::jsonb] WHERE id = $1"
-    ))
+    )))
     .bind(step)
     .bind(&record)
     .execute(&db.pool)

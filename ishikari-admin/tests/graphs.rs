@@ -31,10 +31,10 @@ async fn diamond(db: &TestDb) -> (i64, [i64; 4]) {
         .unwrap();
     let mut ids = [0; 4];
     for (i, step) in ["fetch", "left", "right", "merge"].iter().enumerate() {
-        ids[i] = sqlx::query_scalar(&format!(
+        ids[i] = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {}.ishikari_jobs WHERE workflow_id = $1 AND meta->>'ishikari_step' = $2",
             db.schema
-        ))
+        )))
         .bind(wf.id)
         .bind(step)
         .fetch_one(&db.pool)

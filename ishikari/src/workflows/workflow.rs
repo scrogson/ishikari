@@ -107,7 +107,7 @@ impl Workflow {
             table
         );
 
-        let row: WorkflowRow = sqlx::query_as(&query)
+        let row: WorkflowRow = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(name)
             .bind(&metadata)
             .fetch_one(pool)
@@ -139,7 +139,10 @@ impl Workflow {
             table
         );
 
-        let row: Option<WorkflowRow> = sqlx::query_as(&query).bind(id).fetch_optional(pool).await?;
+        let row: Option<WorkflowRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
 
         Ok(row.map(|r| Workflow {
             id: r.0,
@@ -164,10 +167,10 @@ impl Workflow {
     ) -> super::error::Result<bool> {
         let table = crate::engine::qualified(schema, "ishikari_workflows");
         let completed_at = if state.is_terminal() { "now()" } else { "NULL" };
-        let updated = sqlx::query(&format!(
+        let updated = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET state = $1, completed_at = {completed_at} \
              WHERE id = $2 AND state IN ('running', 'compensating')"
-        ))
+        )))
         .bind(state.as_str())
         .bind(id)
         .execute(pool)
@@ -262,7 +265,7 @@ impl Workflow {
         };
         let table = |t: &str| crate::engine::qualified(schema, t);
         let (jobs, deps) = (table("ishikari_jobs"), table("ishikari_job_dependencies"));
-        let steps = sqlx::query_as::<_, StepProgress>(&format!(
+        let steps = sqlx::query_as::<_, StepProgress>(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT coalesce(j.meta->>'ishikari_step', j.id::text) AS name,
                    j.id AS job_id, j.worker, j.state, j.attempt, j.max_attempts, j.errors,
@@ -277,7 +280,7 @@ impl Workflow {
             WHERE j.workflow_id = $1
             ORDER BY j.id
             "#
-        ))
+        )))
         .bind(id)
         .fetch_all(&mut *conn)
         .await?;

@@ -319,7 +319,7 @@ where
         qualified(schema, "ishikari_job_state"),
     );
     let col = |f: fn(&Row) -> String| rows.iter().map(f).collect::<Vec<_>>();
-    let inserted = sqlx::query_as::<_, Job>(&format!(
+    let inserted = sqlx::query_as::<_, Job>(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO {jobs} (queue, worker, args, max_attempts, priority, tags, meta, state,
                             scheduled_at, unique_key, unique_states)
@@ -332,7 +332,7 @@ where
         ON CONFLICT (unique_key) WHERE unique_key IS NOT NULL DO NOTHING
         RETURNING *
         "#
-    ))
+    )))
     .bind(col(|r| r.queue.clone()))
     .bind(col(|r| r.worker.to_string()))
     .bind(rows.iter().map(|r| r.args.clone()).collect::<Vec<_>>())
@@ -444,7 +444,7 @@ pub(crate) async fn insert_row(
     // A conflict with a job committed after this statement began isn't visible to it; trying
     // again sees it (or inserts, if it was released meanwhile).
     for _ in 0..3 {
-        let found: Option<(Job, bool)> = sqlx::query(&sql)
+        let found: Option<(Job, bool)> = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&row.queue)
             .bind(row.worker)
             .bind(&row.args)

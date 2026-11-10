@@ -96,11 +96,12 @@ async fn get_workflow_stats_api(pool: &PgPool, schema: Option<&str>) -> Workflow
         table
     );
 
-    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+    let row: Option<(i64, i64, i64, i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
 
     match row {
         Some((total, running, completed, failed, cancelled)) => {
@@ -219,7 +220,7 @@ async fn get_workflows(
         workflows_table, jobs_table, where_clause, limit, offset
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     for p in &params {
         count_q = count_q.bind(p);
     }
@@ -237,7 +238,7 @@ async fn get_workflows(
             i64,
             i64,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -362,7 +363,7 @@ async fn get_dependencies(
         deps_table, jobs_table, jobs_table, workflows_table, where_clause, limit, offset
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     if let Some(wf_id) = workflow_id {
         count_q = count_q.bind(wf_id);
     }
@@ -380,7 +381,7 @@ async fn get_dependencies(
             Option<i64>,
             Option<String>,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     if let Some(wf_id) = workflow_id {
         list_q = list_q.bind(wf_id);
     }
@@ -483,7 +484,7 @@ async fn get_sagas(
         workflows_table, saga_steps_table, where_clause, limit, offset
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     for p in &params {
         count_q = count_q.bind(p);
     }
@@ -502,7 +503,7 @@ async fn get_sagas(
             i64,
             i64,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -612,7 +613,7 @@ async fn get_definitions(
         table, where_clause, limit, offset
     );
 
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     for p in &params {
         count_q = count_q.bind(p);
     }
@@ -629,7 +630,7 @@ async fn get_definitions(
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -862,7 +863,7 @@ async fn fetch_definition(
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -959,7 +960,7 @@ async fn update_definition_in_db(
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
-    ) = sqlx::query_as(&query)
+    ) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(&def.name)
         .bind(&def.description)
         .bind(&inputs_json)
@@ -1017,10 +1018,10 @@ async fn save_new_definition(
     };
 
     // Get the next version number
-    let next_version: i32 = sqlx::query_scalar(&format!(
+    let next_version: i32 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE(MAX(version), 0) + 1 FROM {} WHERE name = $1",
         table
-    ))
+    )))
     .bind(&def.name)
     .fetch_one(pool)
     .await
@@ -1054,7 +1055,7 @@ async fn save_new_definition(
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
-    ) = sqlx::query_as(&query)
+    ) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(&def.name)
         .bind(next_version)
         .bind(&def.description)

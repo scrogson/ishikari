@@ -632,7 +632,7 @@ async fn get_definitions(
     );
 
     // Build count query
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     for p in &params {
         count_q = count_q.bind(p);
     }
@@ -653,7 +653,7 @@ async fn get_definitions(
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -742,7 +742,7 @@ async fn get_definition(
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
         chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -813,10 +813,10 @@ async fn save_definition(
     };
 
     // Get the next version number
-    let next_version: i32 = sqlx::query_scalar(&format!(
+    let next_version: i32 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE(MAX(version), 0) + 1 FROM {} WHERE name = $1",
         table
-    ))
+    )))
     .bind(&def.name)
     .fetch_one(pool)
     .await
@@ -830,14 +830,14 @@ async fn save_definition(
     let metadata_json =
         serde_json::to_value(&def.metadata).map_err(|e| format!("JSON error: {}", e))?;
 
-    let id: i64 = sqlx::query_scalar(&format!(
+    let id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO {} (name, version, description, input_schema, nodes, output_schema, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         "#,
         table
-    ))
+    )))
     .bind(&def.name)
     .bind(next_version)
     .bind(&def.description)
@@ -861,7 +861,7 @@ async fn delete_definition(pool: &PgPool, schema: Option<&str>, id: i64) -> Resu
 
     let query = format!("DELETE FROM {} WHERE id = $1", table);
 
-    sqlx::query(&query)
+    sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(id)
         .execute(pool)
         .await
@@ -956,10 +956,10 @@ async fn create_workflow_run(
         .map_err(|e| format!("Database error: {}", e))?;
 
     // The nodes carry the run's id and the run its workflow's, so take the id first.
-    let run_id: i64 = sqlx::query_scalar(&format!(
+    let run_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT nextval(pg_get_serial_sequence('{}', 'id'))",
         runs_table
-    ))
+    )))
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| format!("Failed to create workflow run: {}", e))?;
@@ -994,13 +994,13 @@ async fn create_workflow_run(
         .await
         .map_err(|e| format!("Failed to create workflow: {}", e))?;
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO {} (id, definition_id, definition_name, definition_version, workflow_id, inputs, status)
         VALUES ($1, $2, $3, $4, $5, $6, 'running')
         "#,
         runs_table
-    ))
+    )))
     .bind(run_id)
     .bind(definition_id)
     .bind(&def.name)
@@ -1067,7 +1067,7 @@ async fn get_definition_runs(
         Value,
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(definition_id)
         .bind(limit)
         .fetch_all(pool)

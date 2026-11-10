@@ -27,7 +27,7 @@ impl Postgres {
             self.name("ishikari_workflow_runs"),
             self.name("ishikari_node_executions"),
         );
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             WITH dead AS (
                 SELECT r.id AS run,
@@ -76,7 +76,7 @@ impl Postgres {
             FROM dead
             WHERE r.id = dead.run AND r.status = 'running'
             "#
-        ))
+        )))
         .bind(id)
         .bind(NodeJob::WORKER)
         .execute(&mut *tx)
@@ -103,7 +103,7 @@ impl Postgres {
             self.name("ishikari_jobs"),
             self.name("ishikari_workflow_runs"),
         );
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             UPDATE {runs} r
             SET status = 'running', error = NULL, outputs = NULL, completed_at = NULL
@@ -112,7 +112,7 @@ impl Postgres {
               AND r.workflow_id = j.workflow_id AND r.id::text = j.args->>'workflow_run_id'
               AND r.status = 'failed'
             "#
-        ))
+        )))
         .bind(id)
         .bind(NodeJob::WORKER)
         .execute(&mut *tx)

@@ -348,7 +348,7 @@ impl NodeModules for WasmModules {
                     Self::COLUMNS,
                     self.table()
                 );
-                sqlx::query_as::<_, ModuleRow>(&query)
+                sqlx::query_as::<_, ModuleRow>(sqlx::AssertSqlSafe(query.as_str()))
                     .bind(node_type)
                     .bind(as_of)
                     .fetch_optional(&self.pool)
@@ -360,7 +360,7 @@ impl NodeModules for WasmModules {
                     Self::COLUMNS,
                     self.table()
                 );
-                sqlx::query_as::<_, ModuleRow>(&query)
+                sqlx::query_as::<_, ModuleRow>(sqlx::AssertSqlSafe(query.as_str()))
                     .bind(node_type)
                     .bind(version)
                     .fetch_optional(&self.pool)
@@ -376,10 +376,10 @@ impl NodeModules for WasmModules {
         let guest = match self.runtime.cached(&module.sha256) {
             Some(guest) => guest,
             None => {
-                let bytes: Vec<u8> = sqlx::query_scalar(&format!(
+                let bytes: Vec<u8> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT bytes FROM {} WHERE id = $1",
                     self.table()
-                ))
+                )))
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await?;
@@ -409,7 +409,9 @@ impl NodeModules for WasmModules {
             Self::COLUMNS,
             self.table()
         );
-        let rows: Vec<ModuleRow> = sqlx::query_as(&query).fetch_all(&self.pool).await?;
+        let rows: Vec<ModuleRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().map(NodeModule::from).collect())
     }
 
@@ -439,11 +441,11 @@ impl NodeModules for WasmModules {
             .bind(format!("{}:{}", self.table(), spec.name))
             .execute(&mut *tx)
             .await?;
-        let latest: Option<ModuleRow> = sqlx::query_as(&format!(
+        let latest: Option<ModuleRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {} FROM {} WHERE name = $1 ORDER BY version DESC LIMIT 1",
             Self::COLUMNS,
             self.table()
-        ))
+        )))
         .bind(&spec.name)
         .fetch_optional(&mut *tx)
         .await?;
@@ -456,12 +458,12 @@ impl NodeModules for WasmModules {
         }
 
         let version = latest.map_or(1, |latest| latest.version + 1);
-        let uploaded_at: DateTime<Utc> = sqlx::query_scalar(&format!(
+        let uploaded_at: DateTime<Utc> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {} (name, version, sha256, spec, bytes, allowed_hosts, timeout_ms, \
              memory_limit_mb, secrets) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              RETURNING created_at",
             self.table()
-        ))
+        )))
         .bind(&spec.name)
         .bind(version)
         .bind(&sha256)

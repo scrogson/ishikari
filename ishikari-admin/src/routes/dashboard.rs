@@ -64,11 +64,12 @@ async fn get_workflow_stats(pool: &PgPool, schema: Option<&str>) -> WorkflowStat
         table
     );
 
-    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(&query)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+    let row: Option<(i64, i64, i64, i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
 
     match row {
         Some((total, running, completed, failed, cancelled)) => {
@@ -203,7 +204,7 @@ pub(crate) async fn count_by_state(
         "#,
         limit = EXACT_COUNT_LIMIT + 1
     );
-    let mut counts = sqlx::query_as::<_, (String, i64)>(&query);
+    let mut counts = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(query.as_str()));
     if let Some(queue) = queue {
         counts = counts.bind(queue);
     }
@@ -234,7 +235,7 @@ pub(crate) async fn count_rows(pool: &PgPool, from: &str, binds: &[&str]) -> i64
         "SELECT count(*) FROM (SELECT 1 {from} LIMIT {}) c",
         EXACT_COUNT_LIMIT + 1
     );
-    let mut count = sqlx::query_scalar::<_, i64>(&query);
+    let mut count = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(query.as_str()));
     for b in binds {
         count = count.bind(*b);
     }
@@ -252,7 +253,8 @@ pub(crate) async fn count_rows(pool: &PgPool, from: &str, binds: &[&str]) -> i64
 /// The planner's estimate of the rows `select` returns, with `binds` for its `$n`.
 pub(crate) async fn estimate_rows(pool: &PgPool, select: &str, binds: &[&str]) -> Option<i64> {
     let explain = format!("EXPLAIN (FORMAT JSON) {select}");
-    let mut plan = sqlx::query_scalar::<_, serde_json::Value>(&explain);
+    let mut plan =
+        sqlx::query_scalar::<_, serde_json::Value>(sqlx::AssertSqlSafe(explain.as_str()));
     for b in binds {
         plan = plan.bind(*b);
     }
@@ -316,7 +318,7 @@ async fn get_recent_failures(
         String,
         Option<String>,
         chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(limit)
         .fetch_all(pool)
         .await

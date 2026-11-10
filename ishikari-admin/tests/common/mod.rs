@@ -42,10 +42,10 @@ impl TestDb {
 
     /// A job of `worker` in `state`, written directly.
     pub async fn job(&self, worker: &str, state: &str) {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {s}.ishikari_jobs (worker, state) VALUES ($1, $2::{s}.ishikari_job_state)",
             s = self.schema
-        ))
+        )))
         .bind(worker)
         .bind(state)
         .execute(&self.pool)
@@ -58,11 +58,11 @@ impl TestDb {
         let record = serde_json::json!({
             "attempt": 1, "at": "2026-10-11T12:00:00Z", "kind": "error", "error": error
         });
-        sqlx::query_scalar(&format!(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {s}.ishikari_jobs (worker, state, attempt, max_attempts, errors, attempted_at, discarded_at)
              VALUES ($1, 'discarded', 1, 1, ARRAY[$2::jsonb], now(), now()) RETURNING id",
             s = self.schema
-        ))
+        )))
         .bind(worker)
         .bind(record)
         .fetch_one(&self.pool)
@@ -71,10 +71,13 @@ impl TestDb {
     }
 
     pub async fn drop(self) {
-        sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
-            .execute(&self.pool)
-            .await
-            .expect("drop the test schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA {} CASCADE",
+            self.schema
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("drop the test schema");
     }
 }
 

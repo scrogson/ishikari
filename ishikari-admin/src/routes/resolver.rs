@@ -128,7 +128,7 @@ async fn get_resolver_stats(pool: &PgPool, schema: Option<&str>) -> ResolverStat
         deps_table
     );
 
-    let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(&query)
+    let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .fetch_optional(pool)
         .await
         .ok()
@@ -182,10 +182,11 @@ async fn get_pending_releases(pool: &PgPool, schema: Option<&str>) -> Vec<Pendin
         jobs_table, deps_table, workflows_table
     );
 
-    let rows: Vec<(i64, String, Option<i64>, Option<String>, i64, i64)> = sqlx::query_as(&query)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let rows: Vec<(i64, String, Option<i64>, Option<String>, i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     rows.into_iter()
         .map(|row| PendingRelease {
@@ -236,10 +237,11 @@ async fn get_blocked_jobs(pool: &PgPool, schema: Option<&str>) -> Vec<BlockedJob
         jobs_table, deps_table, workflows_table
     );
 
-    let rows: Vec<(i64, String, Option<i64>, Option<String>, i64, i64)> = sqlx::query_as(&query)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let rows: Vec<(i64, String, Option<i64>, Option<String>, i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     rows.into_iter()
         .map(|row| BlockedJob {
@@ -281,10 +283,11 @@ async fn get_pending_dependencies(pool: &PgPool, schema: Option<&str>) -> Vec<Pe
         deps_table, jobs_table, jobs_table
     );
 
-    let rows: Vec<(i64, i64, Option<String>, Option<String>)> = sqlx::query_as(&query)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let rows: Vec<(i64, i64, Option<String>, Option<String>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     rows.into_iter()
         .map(|row| PendingDependency {
@@ -324,10 +327,11 @@ async fn get_compensating_sagas(pool: &PgPool, schema: Option<&str>) -> Vec<Comp
         workflows_table, saga_steps_table
     );
 
-    let rows: Vec<(i64, String, i64, i64, i64)> = sqlx::query_as(&query)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let rows: Vec<(i64, String, i64, i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     rows.into_iter()
         .map(|row| CompensatingSaga {

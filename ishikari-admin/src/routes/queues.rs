@@ -196,7 +196,7 @@ pub(crate) async fn queue_names(pool: &PgPool, schema: Option<&str>) -> Vec<Stri
         "#,
         jobs = jobs_table(schema)
     );
-    sqlx::query_scalar(&query)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
         .fetch_all(pool)
         .await
         .unwrap_or_else(|e| {
@@ -317,7 +317,7 @@ async fn read_queue_jobs(
             Option<chrono::DateTime<chrono::Utc>>,
             Option<String>,
         ),
-    >(&list_query)
+    >(sqlx::AssertSqlSafe(list_query.as_str()))
     .bind(queue_name);
     for b in binds {
         list_q = list_q.bind(b);

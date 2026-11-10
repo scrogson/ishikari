@@ -133,8 +133,9 @@ impl DependencyResolver {
             deps_table, jobs_table
         );
 
-        let completed_jobs: Vec<(i64,)> =
-            sqlx::query_as(&query).fetch_all(self.pool.as_ref()).await?;
+        let completed_jobs: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(self.pool.as_ref())
+            .await?;
 
         for (completed_job_id,) in completed_jobs {
             debug!(
@@ -148,7 +149,7 @@ impl DependencyResolver {
                 deps_table
             );
 
-            sqlx::query(&update_query)
+            sqlx::query(sqlx::AssertSqlSafe(update_query.as_str()))
                 .bind(completed_job_id)
                 .execute(self.pool.as_ref())
                 .await?;
@@ -166,7 +167,7 @@ impl DependencyResolver {
             deps_table, jobs_table
         );
 
-        let failed_jobs: Vec<(i64,)> = sqlx::query_as(&failed_query)
+        let failed_jobs: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(failed_query.as_str()))
             .fetch_all(self.pool.as_ref())
             .await?;
 
@@ -179,7 +180,7 @@ impl DependencyResolver {
                 deps_table
             );
 
-            sqlx::query(&update_query)
+            sqlx::query(sqlx::AssertSqlSafe(update_query.as_str()))
                 .bind(failed_job_id)
                 .execute(self.pool.as_ref())
                 .await?;
@@ -200,9 +201,10 @@ impl DependencyResolver {
             jobs_table, deps_table
         );
 
-        let ready_jobs: Vec<(i64,)> = sqlx::query_as(&ready_jobs_query)
-            .fetch_all(self.pool.as_ref())
-            .await?;
+        let ready_jobs: Vec<(i64,)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(ready_jobs_query.as_str()))
+                .fetch_all(self.pool.as_ref())
+                .await?;
 
         for (job_id,) in ready_jobs {
             info!(job_id = job_id, "releasing job with satisfied dependencies");
@@ -212,7 +214,7 @@ impl DependencyResolver {
                 jobs_table
             );
 
-            sqlx::query(&release_query)
+            sqlx::query(sqlx::AssertSqlSafe(release_query.as_str()))
                 .bind(job_id)
                 .execute(self.pool.as_ref())
                 .await?;
@@ -230,9 +232,10 @@ impl DependencyResolver {
             jobs_table, deps_table
         );
 
-        let failed_dep_jobs: Vec<(i64, Option<i64>)> = sqlx::query_as(&failed_dep_jobs_query)
-            .fetch_all(self.pool.as_ref())
-            .await?;
+        let failed_dep_jobs: Vec<(i64, Option<i64>)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(failed_dep_jobs_query.as_str()))
+                .fetch_all(self.pool.as_ref())
+                .await?;
 
         for (job_id, workflow_id) in failed_dep_jobs {
             info!(job_id = job_id, "cancelling job with failed dependencies");
@@ -242,7 +245,7 @@ impl DependencyResolver {
                 jobs_table
             );
 
-            sqlx::query(&cancel_query)
+            sqlx::query(sqlx::AssertSqlSafe(cancel_query.as_str()))
                 .bind(job_id)
                 .execute(self.pool.as_ref())
                 .await?;
@@ -275,7 +278,7 @@ impl DependencyResolver {
             table_name("ishikari_job_dependencies", schema),
             table_name("ishikari_workflow_runs", schema),
         );
-        let behind: Vec<i64> = sqlx::query_scalar(&format!(
+        let behind: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT j.id FROM {runs} r
             JOIN {jobs} j ON j.workflow_id = r.workflow_id
@@ -288,7 +291,7 @@ impl DependencyResolver {
                                        WHERE d.job_id = j.id AND d.state = 'failed')))
             ORDER BY j.id
             "#
-        ))
+        )))
         .bind(crate::execution::NodeJob::WORKER)
         .fetch_all(self.pool.as_ref())
         .await?;
@@ -321,7 +324,7 @@ impl DependencyResolver {
             table_name("ishikari_saga_steps", schema),
             table_name("ishikari_workflows", schema),
         );
-        let behind: Vec<i64> = sqlx::query_scalar(&format!(
+        let behind: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT w.id FROM {workflows} w
             WHERE w.state IN ('running', 'compensating')
@@ -346,7 +349,7 @@ impl DependencyResolver {
               )
             ORDER BY w.id
             "#
-        ))
+        )))
         .fetch_all(self.pool.as_ref())
         .await?;
         if behind.is_empty() {
@@ -379,7 +382,7 @@ impl DependencyResolver {
             "SELECT EXISTS(SELECT 1 FROM {} WHERE workflow_id = $1)",
             saga_steps_table
         );
-        let is_saga: (bool,) = sqlx::query_as(&is_saga_query)
+        let is_saga: (bool,) = sqlx::query_as(sqlx::AssertSqlSafe(is_saga_query.as_str()))
             .bind(workflow_id)
             .fetch_one(self.pool.as_ref())
             .await?;
@@ -400,7 +403,7 @@ impl DependencyResolver {
             jobs_table
         );
 
-        let count: (i64,) = sqlx::query_as(&query)
+        let count: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_id)
             .fetch_one(self.pool.as_ref())
             .await?;
@@ -441,8 +444,9 @@ impl DependencyResolver {
             steps = saga_steps_table,
         );
 
-        let finished: Vec<(i64, bool)> =
-            sqlx::query_as(&query).fetch_all(self.pool.as_ref()).await?;
+        let finished: Vec<(i64, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(self.pool.as_ref())
+            .await?;
 
         for (workflow_id, failed) in finished {
             if failed {

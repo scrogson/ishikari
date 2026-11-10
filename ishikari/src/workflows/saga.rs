@@ -351,7 +351,7 @@ async fn insert_saga_step(
         table
     );
 
-    sqlx::query(&query)
+    sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(workflow_id)
         .bind(job_id)
         .bind(compensation_job_id)

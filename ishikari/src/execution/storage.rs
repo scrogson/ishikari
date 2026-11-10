@@ -59,7 +59,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        let row: (i64,) = sqlx::query_as(&query)
+        let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(execution_id)
             .bind(definition_id)
             .bind(definition_name)
@@ -87,7 +87,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        sqlx::query_as(&query)
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(execution_id)
             .fetch_optional(&self.pool)
             .await
@@ -104,7 +104,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(status.to_string())
             .bind(workflow_run_id)
             .execute(&self.pool)
@@ -128,7 +128,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(outputs)
             .bind(workflow_run_id)
             .execute(&self.pool)
@@ -152,7 +152,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(error)
             .bind(workflow_run_id)
             .execute(&self.pool)
@@ -172,7 +172,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_runs")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .execute(&self.pool)
             .await?;
@@ -199,7 +199,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        let row: (i64,) = sqlx::query_as(&query)
+        let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(node_id)
             .bind(node_type)
@@ -225,7 +225,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(node_id)
             .execute(&self.pool)
@@ -251,7 +251,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(output)
             .bind(duration_ms)
             .bind(workflow_run_id)
@@ -279,7 +279,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(error)
             .bind(duration_ms)
             .bind(workflow_run_id)
@@ -306,7 +306,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(reason)
             .bind(workflow_run_id)
             .bind(node_id)
@@ -332,7 +332,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        let row: (i32,) = sqlx::query_as(&query)
+        let row: (i32,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(node_id)
             .fetch_one(&self.pool)
@@ -357,7 +357,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query_as(&query)
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .fetch_all(&self.pool)
             .await
@@ -376,7 +376,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        let row: Option<(Value,)> = sqlx::query_as(&query)
+        let row: Option<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(node_id)
             .fetch_optional(&self.pool)
@@ -395,7 +395,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        let rows: Vec<(String, Value)> = sqlx::query_as(&query)
+        let rows: Vec<(String, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .fetch_all(&self.pool)
             .await?;
@@ -425,7 +425,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_workflow_definitions")
         );
 
-        sqlx::query_as(&query)
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
             .await
@@ -445,7 +445,7 @@ impl ExecutionStorage {
              WHERE id = $1 RETURNING (module_versions->>$2)::int",
             self.table_name("ishikari_workflow_runs")
         );
-        sqlx::query_scalar(&query)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(module)
             .bind(version)
@@ -466,7 +466,7 @@ impl ExecutionStorage {
              WHERE id = $1 RETURNING (meta->>$2)::int",
             self.table_name("ishikari_jobs")
         );
-        sqlx::query_scalar(&query)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
             .bind(job_id)
             .bind(MODULE_VERSION)
             .bind(version)
@@ -505,7 +505,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(record.workflow_run_id)
             .bind(record.node_id)
             .bind(record.node_type)
@@ -532,7 +532,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        let rows: Vec<String> = sqlx::query_scalar(&query)
+        let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .fetch_all(&self.pool)
             .await?;
@@ -551,7 +551,7 @@ impl ExecutionStorage {
             self.table_name("ishikari_node_executions")
         );
 
-        sqlx::query_scalar(&query)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
             .bind(workflow_run_id)
             .bind(node_ids)
             .fetch_one(&self.pool)

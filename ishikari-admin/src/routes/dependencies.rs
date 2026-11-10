@@ -248,7 +248,7 @@ async fn get_dependencies(
     );
 
     // Execute count query
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     if let Some(wf_id) = workflow_id {
         count_q = count_q.bind(wf_id);
     }
@@ -267,7 +267,7 @@ async fn get_dependencies(
             Option<i64>,
             Option<String>,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     if let Some(wf_id) = workflow_id {
         list_q = list_q.bind(wf_id);
     }
@@ -323,7 +323,7 @@ async fn get_dependency_stats(pool: &PgPool, schema: Option<&str>) -> Dependency
         deps_table, jobs_table, deps_table, jobs_table, jobs_table
     );
 
-    let row: Option<(i64, i64, i64)> = sqlx::query_as(&query)
+    let row: Option<(i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .fetch_optional(pool)
         .await
         .ok()
@@ -381,7 +381,7 @@ async fn get_job_with_dependencies(
         Option<i64>,
         Option<String>,
         chrono::DateTime<chrono::Utc>,
-    )> = sqlx::query_as(&job_query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(job_query.as_str()))
         .bind(job_id)
         .fetch_optional(pool)
         .await
@@ -401,11 +401,12 @@ async fn get_job_with_dependencies(
         deps_table, jobs_table
     );
 
-    let dependencies: Vec<(i64, String, String)> = sqlx::query_as(&deps_query)
-        .bind(job_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let dependencies: Vec<(i64, String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(deps_query.as_str()))
+            .bind(job_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     // Get dependents (jobs that depend on this job)
     let dependents_query = format!(
@@ -419,11 +420,12 @@ async fn get_job_with_dependencies(
         deps_table, jobs_table
     );
 
-    let dependents: Vec<(i64, String, String)> = sqlx::query_as(&dependents_query)
-        .bind(job_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let dependents: Vec<(i64, String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(dependents_query.as_str()))
+            .bind(job_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
     Some(JobWithDependencies {
         id: job_row.0,

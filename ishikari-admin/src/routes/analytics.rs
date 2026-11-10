@@ -179,7 +179,9 @@ async fn fetch_workflow_stats(pool: &PgPool, table: &str) -> Result<WorkflowStat
         table
     );
 
-    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(&query).fetch_one(pool).await?;
+    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+        .fetch_one(pool)
+        .await?;
 
     let finished = row.2 + row.3; // completed + failed
     let success_rate = if finished > 0 {
@@ -219,7 +221,9 @@ async fn fetch_workflow_type_stats(
     );
 
     let rows: Vec<(String, i64, i64, i64, Option<f64>)> =
-        sqlx::query_as(&query).fetch_all(pool).await?;
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows
         .into_iter()
@@ -289,7 +293,9 @@ async fn fetch_worker_stats(pool: &PgPool, table: &str) -> Result<Vec<WorkerStat
     );
 
     let rows: Vec<(String, i64, i64, i64, Option<f64>, Option<f64>)> =
-        sqlx::query_as(&query).fetch_all(pool).await?;
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows
         .into_iter()
@@ -331,7 +337,9 @@ async fn fetch_failure_patterns(
     );
 
     let rows: Vec<(String, String, i64, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(&query).fetch_all(pool).await?;
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows
         .into_iter()
@@ -365,7 +373,9 @@ async fn fetch_dependency_stats(
         jobs = jobs_table
     );
 
-    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(&query).fetch_one(pool).await?;
+    let row: (i64, i64, i64, i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+        .fetch_one(pool)
+        .await?;
 
     Ok(DependencyStats {
         total_deps: row.0,

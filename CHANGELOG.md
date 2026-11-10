@@ -6,6 +6,10 @@ Migration **v10**. Modules no longer read secrets' values: see Upgrading.
 
 ### Upgrading
 
+- **sqlx 0.9**, in every crate (from 0.8): a host's `PgPool` must be sqlx 0.9's. The crates
+  other than `ishikari-wasm` now need Rust 1.94, sqlx's (from 1.83). sqlx 0.9 takes a query
+  built at run time only as `AssertSqlSafe(..)`, and no longer takes a connection's user from
+  the operating system: name it in the URL or `PGUSER`.
 - **Run v10** (`ishikari generate migration --database-url …`, or `migrations::migrate`). It
   adds `ishikari_jobs.claims`, `ishikari_secrets.hosts` and
   `ishikari_workflow_runs.module_versions`. Upgrade every node together: a node

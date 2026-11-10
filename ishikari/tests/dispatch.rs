@@ -135,10 +135,12 @@ async fn a_schema_upgraded_from_v5_wakes_queues() {
     };
     let schema = format!("{}_v5", db.schema);
     let admin = db.plain_pool().await;
-    sqlx::raw_sql(&ishikari::migrations::sql(&schema, 0, 5))
-        .execute(&admin)
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(ishikari::migrations::sql(
+        &schema, 0, 5,
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
     assert_eq!(
         ishikari::migrations::migrate(&admin, &schema)
             .await
@@ -170,9 +172,9 @@ async fn a_schema_upgraded_from_v5_wakes_queues() {
         .await
         .unwrap();
     eventually("both jobs ran", SOON, || async {
-        sqlx::query_scalar::<_, i64>(&format!(
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {schema}.ishikari_jobs WHERE state = 'completed'"
-        ))
+        )))
         .fetch_one(&admin)
         .await
         .unwrap()
@@ -181,7 +183,7 @@ async fn a_schema_upgraded_from_v5_wakes_queues() {
     .await;
 
     engine.shutdown(Duration::ZERO).await;
-    sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();

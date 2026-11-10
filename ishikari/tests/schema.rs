@@ -61,9 +61,9 @@ impl Worker for Cancels {
 }
 
 async fn row(pool: &PgPool, schema: &str, id: i64) -> (String, i32, i64) {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT state::text, attempt, cardinality(errors)::bigint FROM {schema}.ishikari_jobs WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_one(pool)
     .await

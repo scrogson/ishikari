@@ -79,11 +79,11 @@ fn engine(db: &TestDb) -> Engine {
 
 /// The (id, state, attempt) of the saga's job for `step`.
 async fn job(db: &TestDb, workflow: i64, step: &str) -> (i64, String, i32) {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, state::text, attempt FROM {}.ishikari_jobs \
          WHERE workflow_id = $1 AND meta->>'ishikari_step' = $2",
         db.schema
-    ))
+    )))
     .bind(workflow)
     .bind(step)
     .fetch_one(&db.pool)
@@ -92,10 +92,10 @@ async fn job(db: &TestDb, workflow: i64, step: &str) -> (i64, String, i32) {
 }
 
 async fn workflow_state(db: &TestDb, id: i64) -> String {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM {}.ishikari_workflows WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await
@@ -171,10 +171,10 @@ async fn retrying_a_saga_runs_only_its_failed_compensations_again() {
         .unwrap();
     let engine = engine(&db);
     assert_eq!(finished(&db, wf.id).await, "failed");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {s}.ishikari_jobs SET meta = meta || '{{\"fixed\": true}}' \
          WHERE workflow_id = $1 AND meta->>'ishikari_step' = 'compensate-1'"
-    ))
+    )))
     .bind(wf.id)
     .execute(&db.pool)
     .await

@@ -132,7 +132,7 @@ pub async fn migrate(pool: &PgPool, schema: &str) -> Result<i32, sqlx::Error> {
     let from = migrated_version(pool, schema).await?;
     if from < CURRENT_VERSION {
         let mut tx = pool.begin().await?;
-        sqlx::raw_sql(&sql(schema, from, CURRENT_VERSION))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql(schema, from, CURRENT_VERSION)))
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

@@ -605,7 +605,7 @@ async fn worker_names(pool: &PgPool, schema: Option<&str>) -> Vec<String> {
         "#,
         jobs = jobs_table(schema)
     );
-    sqlx::query_scalar(&query)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
         .bind(schema)
         .fetch_all(pool)
         .await
@@ -834,7 +834,7 @@ async fn read_enhanced_jobs(
             i64,
             Option<String>,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -930,7 +930,7 @@ async fn get_enhanced_job(
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
         Vec<serde_json::Value>,
-    )> = sqlx::query_as(&job_query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(job_query.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -957,11 +957,12 @@ async fn get_enhanced_job(
             deps_table, jobs_table
         );
 
-        let deps: Vec<(i64, String, String, String)> = sqlx::query_as(&deps_query)
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let deps: Vec<(i64, String, String, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(deps_query.as_str()))
+                .bind(id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
 
         // Get dependents
         let dependents_query = format!(
@@ -975,11 +976,12 @@ async fn get_enhanced_job(
             deps_table, jobs_table
         );
 
-        let dependents: Vec<(i64, String, String, String)> = sqlx::query_as(&dependents_query)
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let dependents: Vec<(i64, String, String, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(dependents_query.as_str()))
+                .bind(id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
 
         (deps, dependents)
     } else {
@@ -1103,7 +1105,7 @@ async fn fetch_saga_step(
         Option<String>,
         Option<String>,
         i64,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(job_id)
         .fetch_optional(pool)
         .await
@@ -1153,7 +1155,7 @@ async fn fetch_node_output(
         table
     );
 
-    sqlx::query_scalar::<_, serde_json::Value>(&query)
+    sqlx::query_scalar::<_, serde_json::Value>(sqlx::AssertSqlSafe(query.as_str()))
         .bind(workflow_run_id)
         .bind(node_id)
         .fetch_optional(pool)
@@ -1188,7 +1190,7 @@ async fn fetch_node_inputs(
         table
     );
 
-    sqlx::query_scalar::<_, serde_json::Value>(&query)
+    sqlx::query_scalar::<_, serde_json::Value>(sqlx::AssertSqlSafe(query.as_str()))
         .bind(workflow_run_id)
         .bind(node_id)
         .fetch_optional(pool)

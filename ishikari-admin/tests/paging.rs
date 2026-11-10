@@ -7,12 +7,12 @@ use ishikari_admin::AppState;
 
 /// `n` jobs of `worker` in `queue` and `state`, inserted in id order; their ids.
 async fn jobs(db: &TestDb, n: i64, queue: &str, state: &str) -> Vec<i64> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {s}.ishikari_jobs (worker, queue, state)
          SELECT 'app::workers::Work', $1, $2::{s}.ishikari_job_state FROM generate_series(1, $3)
          RETURNING id",
         s = db.schema
-    ))
+    )))
     .bind(queue)
     .bind(state)
     .bind(n)
@@ -176,10 +176,13 @@ async fn large_counts_are_estimated() {
     jobs(&db, 12_000, "mailers", "completed").await;
     jobs(&db, 3, "mailers", "available").await;
     jobs(&db, 2, "default", "available").await;
-    sqlx::query(&format!("ANALYZE {}.ishikari_jobs", db.schema))
-        .execute(&db.pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "ANALYZE {}.ishikari_jobs",
+        db.schema
+    )))
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let app = ishikari_admin::app(AppState::with_schema(db.pool.clone(), &db.schema));
 
     let stat = |html: &str, label: &str| {
@@ -247,19 +250,19 @@ async fn the_job_list_filters_by_workflow() {
     let Some(db) = TestDb::new().await else {
         return;
     };
-    let workflow: i64 = sqlx::query_scalar(&format!(
+    let workflow: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {}.ishikari_workflows (name) VALUES ('wf') RETURNING id",
         db.schema
-    ))
+    )))
     .fetch_one(&db.pool)
     .await
     .unwrap();
     let ids = jobs(&db, 3, "default", "completed").await;
     jobs(&db, 2, "default", "completed").await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {}.ishikari_jobs SET workflow_id = $1 WHERE id = ANY($2)",
         db.schema
-    ))
+    )))
     .bind(workflow)
     .bind(&ids)
     .execute(&db.pool)

@@ -7,11 +7,11 @@ use common::{body, get, post, TestDb};
 use ishikari_admin::AppState;
 
 async fn job(db: &TestDb, state: &str) -> i64 {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {s}.ishikari_jobs (worker, state) VALUES ('app::Step', $1::{s}.ishikari_job_state) \
          RETURNING id",
         s = db.schema
-    ))
+    )))
     .bind(state)
     .fetch_one(&db.pool)
     .await
@@ -19,10 +19,10 @@ async fn job(db: &TestDb, state: &str) -> i64 {
 }
 
 async fn state(db: &TestDb, id: i64) -> String {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state::text FROM {}.ishikari_jobs WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await

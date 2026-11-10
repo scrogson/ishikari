@@ -5,4 +5,6 @@ node = "22"
 
 [env]
 PGDATA = ".postgres"
+# sqlx 0.9 no longer takes the user from the OS, as psql does.
+PGUSER = "{{env.USER}}"
 DATABASE_URL = "postgres:///ishikari_dev?host={{config_root}}/.postgres"

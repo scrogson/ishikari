@@ -32,7 +32,7 @@ sha2 = "0.10"
 # Scripts' TypeScript: types stripped where they stand, keeping lines and columns
 swc_common = "26"
 swc_ts_fast_strip = "59"
-sqlx = { version = "0.8.6", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "chrono",
   "json",
   "postgres",

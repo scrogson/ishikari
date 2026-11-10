@@ -85,7 +85,7 @@ impl Postgres {
             return Ok(vec![]);
         }
         let jobs = self.name("ishikari_jobs");
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             WITH subset AS (
                 SELECT id
@@ -113,7 +113,7 @@ impl Postgres {
                 j.completed_at, j.discarded_at, j.cancelled_at, j.workflow_id, j.claims
             "#,
             release_executing = release("'executing'", "j."),
-        ))
+        )))
         .bind(queue)
         .bind(limit)
         .bind(node)
@@ -149,12 +149,12 @@ impl Postgres {
         let jobs = self.name("ishikari_jobs");
         let error = format!("its row couldn't be read as a job: {why}");
         let mut tx = self.pool.begin().await?;
-        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
+        let done: Option<Option<i64>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'discarded', discarded_at = now(), {release}, \
                  errors = errors || $3::jsonb \
              WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
             release = release("'discarded'", ""),
-        ))
+        )))
         .bind(id)
         .bind(claims)
         .bind(error_record(attempt, ErrorKind::Error, &error))
@@ -172,11 +172,11 @@ impl Postgres {
     pub(crate) async fn complete(&self, job: &Job) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let mut tx = self.pool.begin().await?;
-        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
+        let done: Option<Option<i64>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'completed', completed_at = now(), {release} \
              WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
             release = release("'completed'", ""),
-        ))
+        )))
         .bind(job.id)
         .bind(job.claims)
         .fetch_optional(&mut *tx)
@@ -201,7 +201,7 @@ impl Postgres {
     ) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let mut tx = self.pool.begin().await?;
-        let done: Option<(String, Option<i64>)> = sqlx::query_as(&format!(
+        let done: Option<(String, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             r#"
             UPDATE {jobs}
             SET state = CASE WHEN attempt >= max_attempts THEN 'discarded' ELSE 'retryable' END
@@ -218,7 +218,7 @@ impl Postgres {
                 "CASE WHEN attempt >= max_attempts THEN 'discarded' ELSE 'retryable' END",
                 ""
             ),
-        ))
+        )))
         .bind(job.id)
         .bind(job.claims)
         .bind(error_record(job.attempt, kind, error))
@@ -247,12 +247,12 @@ impl Postgres {
             .into_iter()
             .collect();
         let mut tx = self.pool.begin().await?;
-        let done: Option<Option<i64>> = sqlx::query_scalar(&format!(
+        let done: Option<Option<i64>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
                  errors = errors || $3::jsonb[] \
              WHERE id = $1 AND state = 'executing' AND claims = $2 RETURNING workflow_id",
             release = release("'cancelled'", ""),
-        ))
+        )))
         .bind(job.id)
         .bind(job.claims)
         .bind(reason)
@@ -271,12 +271,12 @@ impl Postgres {
     pub(crate) async fn snooze(&self, job: &Job, seconds: u64) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let seconds = seconds.min(crate::Backoff::MAX_DELAY.as_secs());
-        let done = sqlx::query(&format!(
+        let done = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'scheduled', {release}, \
                  scheduled_at = now() + $3 * interval '1 second', max_attempts = max_attempts + 1 \
              WHERE id = $1 AND state = 'executing' AND claims = $2",
             release = release("'scheduled'", ""),
-        ))
+        )))
         .bind(job.id)
         .bind(job.claims)
         .bind(seconds as i64)
@@ -300,27 +300,27 @@ impl Postgres {
             self.name("ishikari_jobs"),
             self.name("ishikari_job_dependencies"),
         );
-        let dependents: Vec<i64> = sqlx::query_scalar(&format!(
+        let dependents: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "UPDATE {deps} SET state = 'satisfied' \
              WHERE depends_on_job_id = $1 AND state = 'pending' RETURNING job_id"
-        ))
+        )))
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
         if !dependents.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT id FROM {jobs} WHERE id = ANY($1) ORDER BY id FOR UPDATE"
-            ))
+            )))
             .bind(&dependents)
             .execute(&mut *tx)
             .await?;
-            let released = sqlx::query(&format!(
+            let released = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {jobs} AS j SET state = 'available', scheduled_at = now(), {release} \
                  WHERE j.id = ANY($1) AND j.state IN ('pending', 'scheduled') \
                    AND NOT EXISTS (SELECT 1 FROM {deps} d \
                                    WHERE d.job_id = j.id AND d.state <> 'satisfied')",
                 release = release("'available'", "j."),
-            ))
+            )))
             .bind(&dependents)
             .execute(&mut *tx)
             .await?;
@@ -336,17 +336,17 @@ impl Postgres {
             let workflows = self.name("ishikari_workflows");
             // Taken last, after the job rows. The last steps' completions wait here for each
             // other, so the last one's check sees every other step completed.
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT 1 FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
-            ))
+            )))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {workflows} SET state = 'completed', completed_at = now() \
                  WHERE id = $1 AND state = 'running' \
                    AND NOT EXISTS (SELECT 1 FROM {jobs} WHERE workflow_id = $1 AND state <> 'completed')"
-            ))
+            )))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
@@ -369,7 +369,7 @@ impl Postgres {
             self.name("ishikari_jobs"),
             self.name("ishikari_job_dependencies"),
         );
-        let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+        let downstream: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             WITH RECURSIVE down(id) AS (
                 SELECT job_id FROM {deps} WHERE depends_on_job_id = $1
@@ -378,37 +378,37 @@ impl Postgres {
             )
             SELECT id FROM down ORDER BY id
             "#
-        ))
+        )))
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
         if !downstream.is_empty() {
             let mut failed = downstream.clone();
             failed.push(id);
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {deps} SET state = 'failed' \
                  WHERE depends_on_job_id = ANY($1) AND state = 'pending'"
-            ))
+            )))
             .bind(&failed)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release} \
                  WHERE id = ANY($1) AND state IN ('pending', 'scheduled')",
                 release = release("'cancelled'", ""),
-            ))
+            )))
             .bind(&downstream)
             .execute(&mut *tx)
             .await?;
         }
         if let Some(workflow_id) = workflow_id {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {workflows} SET state = 'failed', completed_at = now() \
                  WHERE id = $1 AND state = 'running' \
                    AND NOT EXISTS (SELECT 1 FROM {saga} WHERE workflow_id = $1)",
                 workflows = self.name("ishikari_workflows"),
                 saga = self.name("ishikari_saga_steps"),
-            ))
+            )))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
@@ -437,7 +437,7 @@ impl Postgres {
             self.name("ishikari_workflows"),
         );
         let mut tx = self.pool.begin().await?;
-        let found: Option<Option<i64>> = sqlx::query_scalar(&format!(
+        let found: Option<Option<i64>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             UPDATE {jobs} AS j
             SET state = CASE WHEN EXISTS (SELECT 1 FROM {deps} d
@@ -458,7 +458,7 @@ impl Postgres {
             RETURNING j.workflow_id
             "#,
             state = self.name("ishikari_job_state"),
-        ))
+        )))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
@@ -466,7 +466,7 @@ impl Postgres {
             return Ok(false);
         };
         // What its failure cancelled waits again.
-        let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+        let downstream: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             WITH RECURSIVE down(id) AS (
                 SELECT job_id FROM {deps} WHERE depends_on_job_id = $1
@@ -475,57 +475,57 @@ impl Postgres {
             )
             SELECT id FROM down
             "#
-        ))
+        )))
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
         if !downstream.is_empty() {
             let mut upstreams = downstream.clone();
             upstreams.push(id);
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {deps} SET state = 'pending' \
                  WHERE depends_on_job_id = ANY($1) AND state = 'failed'"
-            ))
+            )))
             .bind(&upstreams)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {jobs} SET state = 'pending', cancelled_at = NULL \
                  WHERE id = ANY($1) AND state = 'cancelled'"
-            ))
+            )))
             .bind(&downstream)
             .execute(&mut *tx)
             .await?;
         }
         if let Some(workflow_id) = workflow_id {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {workflows} SET state = 'running', completed_at = NULL \
                  WHERE id = $1 AND state IN ('failed', 'cancelled') \
                    AND NOT EXISTS (SELECT 1 FROM {steps} WHERE workflow_id = $1)"
-            ))
+            )))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
             self.revive_node_run(&mut tx, id).await?;
             // A failed compensation: its saga's rollback resumes.
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT 1 FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
-            ))
+            )))
             .bind(workflow_id)
             .execute(&mut *tx)
             .await?;
-            let resumed = sqlx::query(&format!(
+            let resumed = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {steps} SET state = 'compensating' \
                  WHERE compensation_job_id = $1 AND state = 'compensation_failed'"
-            ))
+            )))
             .bind(id)
             .execute(&mut *tx)
             .await?;
             if resumed.rows_affected() > 0 {
-                sqlx::query(&format!(
+                sqlx::query(sqlx::AssertSqlSafe(format!(
                     "UPDATE {workflows} SET state = 'compensating', completed_at = NULL \
                      WHERE id = $1 AND state = 'failed'"
-                ))
+                )))
                 .bind(workflow_id)
                 .execute(&mut *tx)
                 .await?;
@@ -543,11 +543,11 @@ impl Postgres {
     pub async fn cancel_job(&self, id: i64, reason: Option<&str>) -> Result<bool, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let mut tx = self.pool.begin().await?;
-        let found: Option<(i32, Option<i64>)> = sqlx::query_as(&format!(
+        let found: Option<(i32, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT attempt, workflow_id FROM {jobs} WHERE id = $1 \
                AND state IN ('pending', 'available', 'scheduled', 'retryable', 'executing') \
              FOR UPDATE"
-        ))
+        )))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
@@ -558,12 +558,12 @@ impl Postgres {
             .map(|r| error_record(attempt, ErrorKind::Cancelled, r))
             .into_iter()
             .collect();
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
                  errors = errors || $2::jsonb[] \
              WHERE id = $1",
             release = release("'cancelled'", ""),
-        ))
+        )))
         .bind(id)
         .bind(reason)
         .execute(&mut *tx)
@@ -588,7 +588,7 @@ impl Postgres {
             self.name("ishikari_workflows"),
         );
         let mut tx = self.pool.begin().await?;
-        let deleted: Vec<i64> = sqlx::query_scalar(&format!(
+        let deleted: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             r#"
             WITH doomed AS (
                 SELECT j.id FROM {jobs} j
@@ -605,23 +605,23 @@ impl Postgres {
             )
             DELETE FROM {jobs} WHERE id IN (SELECT id FROM doomed) RETURNING id
             "#
-        ))
+        )))
         .bind(older_than.as_millis() as i64)
         .bind(limit)
         .fetch_all(&mut *tx)
         .await?;
         if !deleted.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {deps} WHERE job_id = ANY($1) OR depends_on_job_id = ANY($1)"
-            ))
+            )))
             .bind(&deleted)
             .execute(&mut *tx)
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {workflows} w \
                  WHERE w.state IN ('completed', 'failed', 'cancelled', 'compensated') \
                    AND NOT EXISTS (SELECT 1 FROM {jobs} j WHERE j.workflow_id = w.id)"
-            ))
+            )))
             .execute(&mut *tx)
             .await?;
         }
@@ -632,7 +632,7 @@ impl Postgres {
     /// Make up to `limit` scheduled and retryable jobs that are due available. Returns how many.
     pub(crate) async fn stage(&self, limit: i32) -> Result<usize, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
-        let staged = sqlx::query(&format!(
+        let staged = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             WITH due AS (
                 SELECT id
@@ -654,7 +654,7 @@ impl Postgres {
             "#,
             deps = self.name("ishikari_job_dependencies"),
             release = release("'available'", "j."),
-        ))
+        )))
         .bind(limit)
         .execute(&*self.pool)
         .await?;
@@ -666,10 +666,10 @@ impl Postgres {
     /// Record that `node` is alive and which queues it runs.
     pub(crate) async fn heartbeat(&self, node: &str, queues: &[String]) -> Result<(), sqlx::Error> {
         let nodes = self.name("ishikari_nodes");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {nodes} (name, queues) VALUES ($1, $2) \
              ON CONFLICT (name) DO UPDATE SET heartbeat_at = now(), queues = EXCLUDED.queues"
-        ))
+        )))
         .bind(node)
         .bind(queues)
         .execute(&*self.pool)
@@ -682,12 +682,12 @@ impl Postgres {
     pub(crate) async fn give_back(&self, jobs: &[(i64, i64)]) -> Result<usize, sqlx::Error> {
         let table = self.name("ishikari_jobs");
         let (ids, claims): (Vec<i64>, Vec<i64>) = jobs.iter().copied().unzip();
-        let done = sqlx::query(&format!(
+        let done = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} AS j SET state = 'available', attempt = j.attempt - 1, {release} \
              FROM unnest($1::bigint[], $2::bigint[]) AS r(id, claims) \
              WHERE j.id = r.id AND j.state = 'executing' AND j.claims = r.claims",
             release = release("'available'", "j."),
-        ))
+        )))
         .bind(ids)
         .bind(claims)
         .execute(&*self.pool)
@@ -698,9 +698,9 @@ impl Postgres {
     /// Remove `node`'s row (it is shutting down), and rows of nodes silent for a day.
     pub(crate) async fn forget_node(&self, node: &str) -> Result<(), sqlx::Error> {
         let nodes = self.name("ishikari_nodes");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {nodes} WHERE name = $1 OR heartbeat_at < now() - interval '1 day'"
-        ))
+        )))
         .bind(node)
         .execute(&*self.pool)
         .await?;
@@ -719,7 +719,7 @@ impl Postgres {
     ) -> Result<Vec<(i64, String)>, sqlx::Error> {
         let jobs = self.name("ishikari_jobs");
         let nodes = self.name("ishikari_nodes");
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             r#"
             WITH lost AS (
                 SELECT j.id, coalesce(j.attempted_by[cardinality(j.attempted_by)], 'unknown') AS node
@@ -757,7 +757,7 @@ impl Postgres {
                 "CASE WHEN j.attempt >= j.max_attempts THEN 'discarded' ELSE 'retryable' END",
                 "j."
             ),
-        ))
+        )))
         .bind(node_timeout.as_millis() as i64)
         .bind(unowned_after.as_millis() as i64)
         .fetch_all(&*self.pool)

@@ -20,9 +20,9 @@ impl Worker for Done {
 }
 
 async fn exists(db: &TestDb, table: &str, id: i64) -> bool {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = $1)"
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await
@@ -30,7 +30,11 @@ async fn exists(db: &TestDb, table: &str, id: i64) -> bool {
 }
 
 async fn set(db: &TestDb, sql: &str, id: i64) {
-    sqlx::query(sql).bind(id).execute(&db.pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

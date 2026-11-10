@@ -35,10 +35,10 @@ async fn a_resolver_stopped_mid_sweep_lets_go_of_its_lock() {
 
     // Its sweep waits on the dependencies table, with its lock taken.
     let mut blocking = db.pool.begin().await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "LOCK TABLE {}.ishikari_job_dependencies IN ACCESS EXCLUSIVE MODE",
         db.schema
-    ))
+    )))
     .execute(&mut *blocking)
     .await
     .unwrap();

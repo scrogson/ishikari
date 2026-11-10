@@ -255,11 +255,11 @@ async fn start_run(
     order: &[&str],
     inputs: Value,
 ) -> i64 {
-    let definition_id: i64 = sqlx::query_scalar(&format!(
+    let definition_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {} (name, input_schema, nodes, output_schema) VALUES ('test', $1, $2, $3) \
          RETURNING id",
         table(schema, "ishikari_workflow_definitions")
-    ))
+    )))
     .bind(definition.get("inputs").cloned().unwrap_or(json!({})))
     .bind(&definition["nodes"])
     .bind(definition.get("outputs").cloned().unwrap_or(json!({})))
@@ -269,9 +269,9 @@ async fn start_run(
 
     let runs = table(schema, "ishikari_workflow_runs");
     let mut tx = pool.begin().await.unwrap();
-    let run: i64 = sqlx::query_scalar(&format!(
+    let run: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT nextval(pg_get_serial_sequence('{runs}', 'id'))"
-    ))
+    )))
     .fetch_one(&mut *tx)
     .await
     .unwrap();
@@ -299,10 +299,10 @@ async fn start_run(
         dag = dag.add_after(*id, job, upstreams);
     }
     let workflow = dag.run(&mut *tx).await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {runs} (id, definition_id, definition_name, definition_version, workflow_id, \
          inputs) VALUES ($1, $2, 'test', 1, $3, $4)"
-    ))
+    )))
     .bind(run)
     .bind(definition_id)
     .bind(workflow.id)
@@ -335,7 +335,7 @@ async fn finished(
     let start = std::time::Instant::now();
     loop {
         let (status, outputs, error): (String, Option<Value>, Option<String>) =
-            sqlx::query_as(&query)
+            sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
                 .bind(run)
                 .fetch_one(pool)
                 .await
@@ -365,11 +365,11 @@ async fn recorded(
     Option<String>,
     Option<i64>,
 ) {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT status, inputs, output, error, skip_reason, duration_ms FROM {} \
          WHERE workflow_run_id = $1 AND node_id = $2",
         table(schema, "ishikari_node_executions")
-    ))
+    )))
     .bind(run)
     .bind(node)
     .fetch_one(pool)

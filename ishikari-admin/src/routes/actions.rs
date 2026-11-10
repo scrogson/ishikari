@@ -213,7 +213,7 @@ async fn get_workflow_full(
     };
 
     let query = format!("SELECT name, metadata FROM {} WHERE id = $1", table);
-    sqlx::query_as(&query)
+    sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -281,10 +281,10 @@ async fn retry(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outcome, 
 }
 
 async fn is_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM {} WHERE workflow_id = $1)",
         qualified(schema, "ishikari_saga_steps")
-    ))
+    )))
     .bind(id)
     .fetch_one(pool)
     .await
@@ -295,10 +295,10 @@ async fn workflow_state(
     schema: Option<&str>,
     id: i64,
 ) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM {} WHERE id = $1",
         qualified(schema, "ishikari_workflows")
-    ))
+    )))
     .bind(id)
     .fetch_optional(pool)
     .await
@@ -327,12 +327,12 @@ async fn retry_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Result<Outc
         Some(state) if state != "failed" => return Ok(Outcome::Refused(state)),
         Some(_) => {}
     }
-    let compensations: Vec<i64> = sqlx::query_scalar(&format!(
+    let compensations: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT compensation_job_id FROM {} \
          WHERE workflow_id = $1 AND state = 'compensation_failed' \
          ORDER BY step_order DESC",
         qualified(schema, "ishikari_saga_steps")
-    ))
+    )))
     .bind(id)
     .fetch_all(pool)
     .await?;
@@ -356,9 +356,9 @@ async fn lock_workflow(
     id: i64,
 ) -> Result<Option<String>, sqlx::Error> {
     let workflows = qualified(schema, "ishikari_workflows");
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM {workflows} WHERE id = $1 FOR NO KEY UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await
@@ -388,7 +388,7 @@ async fn set_workflow_state(
         )
     };
 
-    sqlx::query(&query)
+    sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
         .bind(state)
         .bind(id)
         .execute(&mut *tx)
@@ -410,7 +410,7 @@ async fn cancel_workflow_jobs(
     );
 
     // Locked in id order, as the engine locks a step's dependents.
-    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+    let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT id FROM {jobs}
         WHERE workflow_id = $1
@@ -418,7 +418,7 @@ async fn cancel_workflow_jobs(
         ORDER BY id
         FOR UPDATE
         "#
-    ))
+    )))
     .bind(workflow_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -426,13 +426,13 @@ async fn cancel_workflow_jobs(
         return Ok(());
     }
     // Each with an error record of why, as the engine's error records are made.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release}, \
              errors = errors || jsonb_build_object('attempt', attempt, 'at', $2::jsonb, \
                                                    'kind', $3::text, 'error', $4::text) \
          WHERE id = ANY($1)",
         release = RELEASE_CANCELLED,
-    ))
+    )))
     .bind(&ids)
     .bind(serde_json::json!(chrono::Utc::now()))
     .bind(ishikari::ErrorKind::Cancelled.as_str())
@@ -440,7 +440,7 @@ async fn cancel_workflow_jobs(
     .execute(&mut *tx)
     .await?;
 
-    let downstream: Vec<i64> = sqlx::query_scalar(&format!(
+    let downstream: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         r#"
         WITH RECURSIVE down(id) AS (
             SELECT job_id FROM {deps} WHERE depends_on_job_id = ANY($1)
@@ -449,25 +449,25 @@ async fn cancel_workflow_jobs(
         )
         SELECT id FROM down ORDER BY id
         "#
-    ))
+    )))
     .bind(&ids)
     .fetch_all(&mut *tx)
     .await?;
     if !downstream.is_empty() {
         let mut failed = ids;
         failed.extend(&downstream);
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {deps} SET state = 'failed' \
              WHERE depends_on_job_id = ANY($1) AND state = 'pending'"
-        ))
+        )))
         .bind(&failed)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} SET state = 'cancelled', cancelled_at = now(), {release} \
              WHERE id = ANY($1) AND state IN ('pending', 'scheduled')",
             release = RELEASE_CANCELLED,
-        ))
+        )))
         .bind(&downstream)
         .execute(&mut *tx)
         .await?;
@@ -490,7 +490,7 @@ async fn retry_workflow_jobs(
     let enum_type = qualified(schema, "ishikari_job_state");
 
     // Locked in id order, as `cancel_workflow_jobs` does.
-    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+    let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT id FROM {}
         WHERE workflow_id = $1
@@ -499,7 +499,7 @@ async fn retry_workflow_jobs(
         FOR UPDATE
         "#,
         jobs_table
-    ))
+    )))
     .bind(workflow_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -523,7 +523,10 @@ async fn retry_workflow_jobs(
         jobs_table, deps_table, enum_type
     );
 
-    sqlx::query(&query).bind(&ids).execute(&mut *tx).await?;
+    sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
 
     // Also reset failed dependencies
     let reset_deps = format!(
@@ -538,7 +541,7 @@ async fn retry_workflow_jobs(
         deps_table, jobs_table
     );
 
-    sqlx::query(&reset_deps)
+    sqlx::query(sqlx::AssertSqlSafe(reset_deps.as_str()))
         .bind(workflow_id)
         .execute(&mut *tx)
         .await?;
@@ -566,7 +569,7 @@ async fn create_workflow(
         table
     );
 
-    let (id,): (i64,) = sqlx::query_as(&query)
+    let (id,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(name)
         .bind(metadata)
         .fetch_one(pool)
@@ -618,11 +621,12 @@ async fn clone_workflow_jobs(
         jobs_table, jobs_table, jobs_table
     );
 
-    let id_mapping: Vec<(i64, i64)> = sqlx::query_as(&clone_jobs_query)
-        .bind(original_id)
-        .bind(new_id)
-        .fetch_all(pool)
-        .await?;
+    let id_mapping: Vec<(i64, i64)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(clone_jobs_query.as_str()))
+            .bind(original_id)
+            .bind(new_id)
+            .fetch_all(pool)
+            .await?;
 
     // Clone dependencies using the mapping
     for (old_job_id, new_job_id) in &id_mapping {
@@ -631,7 +635,7 @@ async fn clone_workflow_jobs(
             deps_table
         );
 
-        let deps: Vec<(i64,)> = sqlx::query_as(&get_deps)
+        let deps: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(get_deps.as_str()))
             .bind(old_job_id)
             .fetch_all(pool)
             .await?;
@@ -643,7 +647,7 @@ async fn clone_workflow_jobs(
                     "INSERT INTO {} (job_id, depends_on_job_id, state) VALUES ($1, $2, 'pending')",
                     deps_table
                 );
-                sqlx::query(&insert_dep)
+                sqlx::query(sqlx::AssertSqlSafe(insert_dep.as_str()))
                     .bind(new_job_id)
                     .bind(new_dep_id)
                     .execute(pool)

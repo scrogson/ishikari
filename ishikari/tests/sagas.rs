@@ -589,10 +589,12 @@ async fn a_rollback_from_before_v07_carries_on_after_it() {
         .unwrap();
 
     // v07 brings it in line.
-    sqlx::raw_sql(&ishikari::migrations::sql(&db.schema, 6, 7))
-        .execute(&db.pool)
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(ishikari::migrations::sql(
+        &db.schema, 6, 7,
+    )))
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let _engine = engine(db.pool.clone());
 
     assert_eq!(

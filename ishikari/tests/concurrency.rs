@@ -70,10 +70,10 @@ async fn the_stager_keeps_going_after_errors() {
     ishikari::migrations::migrate(&admin, &missing)
         .await
         .unwrap();
-    let id: i64 = sqlx::query_scalar(&format!(
+    let id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {missing}.ishikari_jobs (worker, state, scheduled_at) \
          VALUES ('w', 'scheduled', $1) RETURNING id"
-    ))
+    )))
     .bind(Utc::now())
     .fetch_one(&admin)
     .await
@@ -86,9 +86,9 @@ async fn the_stager_keeps_going_after_errors() {
             let admin = admin.clone();
             let missing = missing.clone();
             async move {
-                let state: String = sqlx::query_scalar(&format!(
+                let state: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT state::text FROM {missing}.ishikari_jobs WHERE id = $1"
-                ))
+                )))
                 .bind(id)
                 .fetch_one(&admin)
                 .await
@@ -99,9 +99,11 @@ async fn the_stager_keeps_going_after_errors() {
     )
     .await;
 
-    sqlx::query(&format!("DROP SCHEMA {missing} CASCADE"))
-        .execute(&admin)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA {missing} CASCADE"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
     db.finish().await;
 }

@@ -284,7 +284,7 @@ async fn get_sagas(
     );
 
     // Execute count query
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+    let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
     for p in &params {
         count_q = count_q.bind(p);
     }
@@ -304,7 +304,7 @@ async fn get_sagas(
             i64,
             i64,
         ),
-    >(&list_query);
+    >(sqlx::AssertSqlSafe(list_query.as_str()));
     for p in &params {
         list_q = list_q.bind(p);
     }
@@ -352,7 +352,7 @@ async fn get_saga(pool: &PgPool, schema: Option<&str>, id: i64) -> Option<SagaDe
         serde_json::Value,
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -412,7 +412,7 @@ async fn get_saga_steps(
         Option<i64>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(&query)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(workflow_id)
         .fetch_all(pool)
         .await

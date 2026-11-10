@@ -68,7 +68,7 @@ async fn the_admin_runs_under_a_prefix_behind_the_hosts_auth() {
     let css = get("/jobs/assets/admin.css", Some("admin")).await.unwrap();
     assert_eq!(css.status(), StatusCode::OK);
 
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&pool)
         .await
         .unwrap();

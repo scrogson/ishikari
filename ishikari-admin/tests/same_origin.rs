@@ -22,20 +22,20 @@ async fn send(app: &Router, method: Method, path: &str, headers: &[(&str, &str)]
 }
 
 async fn available_job(db: &TestDb) -> i64 {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {}.ishikari_jobs (worker, state) VALUES ('app::Step', 'available') RETURNING id",
         db.schema
-    ))
+    )))
     .fetch_one(&db.pool)
     .await
     .unwrap()
 }
 
 async fn state(db: &TestDb, id: i64) -> String {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state::text FROM {}.ishikari_jobs WHERE id = $1",
         db.schema
-    ))
+    )))
     .bind(id)
     .fetch_one(&db.pool)
     .await

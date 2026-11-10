@@ -56,7 +56,7 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   (`src/typescript.rs`), on a thread of its own once `src/nesting.rs` has bounded how deep it
   nests, and it runs on `js-runtime.wasm`, a Boa component (`script-node`
   world) built from `js-runtime/` by `mise run wasm:js-runtime` and committed. Its own
-  workspace and lockfile: wasmtime needs Rust 1.96, the workspace's MSRV is 1.83. Its tests
+  workspace and lockfile: wasmtime needs Rust 1.96, the workspace's MSRV is 1.94 (sqlx 0.9's). Its tests
   upload `tests/fixtures/testkit-v*.wasm` (committed; rebuilt by `mise run wasm:fixtures`).
 
 ### Core components (`ishikari/src`)

@@ -12,4 +12,4 @@ exclude = ["ishikari-wasm"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.83"
+rust-version = "1.94"

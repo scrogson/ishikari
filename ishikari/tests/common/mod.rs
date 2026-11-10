@@ -71,7 +71,7 @@ impl TestDb {
             .after_connect(move |conn, _| {
                 let path = path.clone();
                 Box::pin(async move {
-                    conn.execute(path.as_str()).await?;
+                    conn.execute(sqlx::AssertSqlSafe(path)).await?;
                     Ok(())
                 })
             })
@@ -88,7 +88,10 @@ impl TestDb {
         let admin = PgPool::connect(&self.url).await.expect("connect");
         for attempt in 1.. {
             match admin
-                .execute(format!("DROP SCHEMA {} CASCADE", self.schema).as_str())
+                .execute(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA {} CASCADE",
+                    self.schema
+                )))
                 .await
             {
                 Ok(_) => break,

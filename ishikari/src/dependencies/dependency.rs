@@ -71,7 +71,7 @@ impl Dependencies {
             table
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(job_id)
             .bind(depends_on_job_id)
             .execute(pool)
@@ -96,8 +96,10 @@ impl Dependencies {
             table
         );
 
-        let rows: Vec<(i64, i64, String)> =
-            sqlx::query_as(&query).bind(job_id).fetch_all(pool).await?;
+        let rows: Vec<(i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(job_id)
+            .fetch_all(pool)
+            .await?;
 
         let deps = rows
             .into_iter()
@@ -127,7 +129,10 @@ impl Dependencies {
             table
         );
 
-        let count: (i64,) = sqlx::query_as(&query).bind(job_id).fetch_one(pool).await?;
+        let count: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(job_id)
+            .fetch_one(pool)
+            .await?;
 
         Ok(count.0 == 0)
     }
@@ -149,7 +154,7 @@ impl Dependencies {
             table
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(job_id)
             .bind(depends_on_job_id)
             .execute(pool)
@@ -175,7 +180,7 @@ impl Dependencies {
             table
         );
 
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(job_id)
             .bind(depends_on_job_id)
             .execute(pool)
@@ -197,7 +202,10 @@ impl Dependencies {
 
         let query = format!("SELECT job_id FROM {} WHERE depends_on_job_id = $1", table);
 
-        let rows: Vec<(i64,)> = sqlx::query_as(&query).bind(job_id).fetch_all(pool).await?;
+        let rows: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(job_id)
+            .fetch_all(pool)
+            .await?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }

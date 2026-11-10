@@ -36,32 +36,33 @@ impl Postgres {
             self.name("ishikari_saga_steps"),
             self.name("ishikari_workflows"),
         );
-        let state: Option<String> = sqlx::query_scalar(&format!(
+        let state: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT state FROM {workflows} w WHERE id = $1 \
                AND EXISTS (SELECT 1 FROM {steps} WHERE workflow_id = w.id) \
              FOR NO KEY UPDATE"
-        ))
+        )))
         .bind(workflow)
         .fetch_optional(&mut *tx)
         .await?;
         match state.as_deref() {
             Some("running") => {
                 self.settle_saga(tx, workflow).await?;
-                let (failed, waiting): (Option<bool>, Option<bool>) = sqlx::query_as(&format!(
-                    "SELECT bool_or(state = 'failed'), bool_or(state = 'pending') \
+                let (failed, waiting): (Option<bool>, Option<bool>) =
+                    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                        "SELECT bool_or(state = 'failed'), bool_or(state = 'pending') \
                      FROM {steps} WHERE workflow_id = $1"
-                ))
-                .bind(workflow)
-                .fetch_one(&mut *tx)
-                .await?;
+                    )))
+                    .bind(workflow)
+                    .fetch_one(&mut *tx)
+                    .await?;
                 if failed == Some(true) {
                     self.roll_back_saga(tx, workflow, None).await?;
                 } else if waiting != Some(true) {
                     self.drop_compensations(tx, workflow).await?;
-                    sqlx::query(&format!(
+                    sqlx::query(sqlx::AssertSqlSafe(format!(
                         "UPDATE {workflows} SET state = 'completed', completed_at = now() \
                          WHERE id = $1"
-                    ))
+                    )))
                     .bind(workflow)
                     .execute(&mut *tx)
                     .await?;
@@ -77,10 +78,10 @@ impl Postgres {
         self.settle_saga(tx, workflow).await?;
         loop {
             // A step still running, or a compensation: the rollback waits for it.
-            let busy: bool = sqlx::query_scalar(&format!(
+            let busy: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS (SELECT 1 FROM {steps} \
                                 WHERE workflow_id = $1 AND state IN ('pending', 'compensating'))"
-            ))
+            )))
             .bind(workflow)
             .fetch_one(&mut *tx)
             .await?;
@@ -88,12 +89,12 @@ impl Postgres {
                 return Ok(());
             }
             // The last completed step with something to undo.
-            let next: Option<(i64, i64)> = sqlx::query_as(&format!(
+            let next: Option<(i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "SELECT id, compensation_job_id FROM {steps} \
                  WHERE workflow_id = $1 AND state = 'completed' \
                    AND compensation_job_id IS NOT NULL \
                  ORDER BY step_order DESC LIMIT 1"
-            ))
+            )))
             .bind(workflow)
             .fetch_optional(&mut *tx)
             .await?;
@@ -101,21 +102,23 @@ impl Postgres {
                 break;
             };
             // Parked compensations are `pending` (`scheduled` far ahead, from before v07).
-            let released = sqlx::query(&format!(
+            let released = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {jobs} SET state = 'available', scheduled_at = now(), {release} \
                  WHERE id = $1 AND state IN ('pending', 'scheduled')",
                 release = release("'available'", ""),
-            ))
+            )))
             .bind(compensation)
             .execute(&mut *tx)
             .await?;
             let job: Option<String> = if released.rows_affected() == 1 {
                 Some("available".into())
             } else {
-                sqlx::query_scalar(&format!("SELECT state::text FROM {jobs} WHERE id = $1"))
-                    .bind(compensation)
-                    .fetch_optional(&mut *tx)
-                    .await?
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT state::text FROM {jobs} WHERE id = $1"
+                )))
+                .bind(compensation)
+                .fetch_optional(&mut *tx)
+                .await?
             };
             // One cancelled by hand before its turn can't undo its step.
             let undo = match job.as_deref() {
@@ -123,11 +126,13 @@ impl Postgres {
                 Some("discarded" | "cancelled") | None => "compensation_failed",
                 Some(_) => "compensating",
             };
-            sqlx::query(&format!("UPDATE {steps} SET state = $2 WHERE id = $1"))
-                .bind(step)
-                .bind(undo)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {steps} SET state = $2 WHERE id = $1"
+            )))
+            .bind(step)
+            .bind(undo)
+            .execute(&mut *tx)
+            .await?;
             if undo == "compensating" {
                 tracing::debug!(workflow, compensation, "released a compensation");
                 return Ok(());
@@ -136,13 +141,13 @@ impl Postgres {
 
         // Rolled back as far as it goes.
         self.drop_compensations(tx, workflow).await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {workflows} SET completed_at = now(), \
                  state = CASE WHEN EXISTS (SELECT 1 FROM {steps} \
                                            WHERE workflow_id = $1 AND state = 'compensation_failed') \
                               THEN 'failed' ELSE 'compensated' END \
              WHERE id = $1"
-        ))
+        )))
         .bind(workflow)
         .execute(&mut *tx)
         .await?;
@@ -152,24 +157,24 @@ impl Postgres {
     /// Record the saga's steps and compensations whose jobs have ended.
     async fn settle_saga(&self, tx: &mut PgConnection, workflow: i64) -> Result<(), sqlx::Error> {
         let (jobs, steps) = (self.name("ishikari_jobs"), self.name("ishikari_saga_steps"));
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {steps} s \
              SET state = CASE WHEN j.state = 'completed' THEN 'completed' ELSE 'failed' END \
              FROM {jobs} j \
              WHERE j.id = s.job_id AND s.workflow_id = $1 AND s.state = 'pending' \
                AND j.state IN {ENDED}"
-        ))
+        )))
         .bind(workflow)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {steps} s \
              SET state = CASE WHEN j.state = 'completed' THEN 'compensated' \
                               ELSE 'compensation_failed' END \
              FROM {jobs} j \
              WHERE j.id = s.compensation_job_id AND s.workflow_id = $1 \
                AND s.state = 'compensating' AND j.state IN {ENDED}"
-        ))
+        )))
         .bind(workflow)
         .execute(&mut *tx)
         .await?;
@@ -190,7 +195,7 @@ impl Postgres {
             self.name("ishikari_job_dependencies"),
             self.name("ishikari_saga_steps"),
         );
-        let cancelled: Vec<i64> = sqlx::query_scalar(&format!(
+        let cancelled: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} AS j SET state = 'cancelled', cancelled_at = now(), {release}, \
                  errors = CASE WHEN $2::text IS NULL THEN j.errors \
                                ELSE j.errors || jsonb_build_object('attempt', j.attempt, \
@@ -200,24 +205,24 @@ impl Postgres {
                AND j.state IN ('pending', 'available', 'scheduled', 'retryable') \
              RETURNING j.id",
             release = release("'cancelled'", "j."),
-        ))
+        )))
         .bind(workflow)
         .bind(reason)
         .fetch_all(&mut *tx)
         .await?;
         if !cancelled.is_empty() {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {deps} SET state = 'failed' \
                  WHERE depends_on_job_id = ANY($1) AND state = 'pending'"
-            ))
+            )))
             .bind(&cancelled)
             .execute(&mut *tx)
             .await?;
         }
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {workflows} SET state = 'compensating' WHERE id = $1 AND state = 'running'",
             workflows = self.name("ishikari_workflows"),
-        ))
+        )))
         .bind(workflow)
         .execute(&mut *tx)
         .await?;
@@ -232,13 +237,13 @@ impl Postgres {
         workflow: i64,
     ) -> Result<(), sqlx::Error> {
         let (jobs, steps) = (self.name("ishikari_jobs"), self.name("ishikari_saga_steps"));
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {jobs} AS j SET state = 'cancelled', cancelled_at = now(), {release} \
              FROM {steps} s \
              WHERE s.compensation_job_id = j.id AND s.workflow_id = $1 \
                AND s.state <> 'compensating' AND j.state IN ('pending', 'scheduled')",
             release = release("'cancelled'", "j."),
-        ))
+        )))
         .bind(workflow)
         .execute(&mut *tx)
         .await?;
@@ -253,21 +258,21 @@ impl Postgres {
         let mut tx = self.pool.begin().await?;
         // The steps it cancels are locked before the saga's row, the order a step's completion
         // takes them in (its dependents, then its workflow).
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT j.id FROM {jobs} j JOIN {steps} s ON s.job_id = j.id \
              WHERE s.workflow_id = $1 \
                AND j.state IN ('pending', 'available', 'scheduled', 'retryable') \
              ORDER BY j.id FOR UPDATE OF j"
-        ))
+        )))
         .bind(id)
         .execute(&mut *tx)
         .await?;
-        let running: Option<bool> = sqlx::query_scalar(&format!(
+        let running: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT state = 'running' FROM {workflows} w WHERE id = $1 \
                AND EXISTS (SELECT 1 FROM {steps} WHERE workflow_id = w.id) \
              FOR NO KEY UPDATE",
             workflows = self.name("ishikari_workflows"),
-        ))
+        )))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;

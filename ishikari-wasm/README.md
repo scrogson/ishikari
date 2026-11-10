@@ -159,7 +159,7 @@ grants again change nothing. A run uses the version uploaded last before it was 
 
 ## Development
 
-A workspace of its own, apart from ishikari's (whose MSRV is 1.83). Its tests upload
+A workspace of its own, apart from ishikari's (whose MSRV is 1.94). Its tests upload
 `tests/fixtures/testkit-v1.wasm` and `-v2.wasm`, built from `tests/fixtures/testkit` by
 `mise run wasm:fixtures` (needs the `wasm32-wasip2` target). The JavaScript runtime,
 `js-runtime.wasm`, is committed too, built from `js-runtime/` by `mise run wasm:js-runtime`.
