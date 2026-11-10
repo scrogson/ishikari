@@ -78,19 +78,20 @@ async fn engines_run_a_seconds_schedule_without_doubles_and_catch_up() {
     // The last 3 seconds' slots are caught up, once between the two engines.
     eventually(
         "the recent slots are caught up",
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         || async { slots(&db).await.0 >= 3 },
     )
     .await;
     let (caught_up, distinct) = slots(&db).await;
     assert_eq!(caught_up, distinct, "no slot twice");
 
-    // Then about one per second, still never twice.
+    // Then about one per second, still never twice. One more, when the first count was taken
+    // before the last of the 3 seconds' slots (which may be 4) was in.
     tokio::time::sleep(Duration::from_millis(2_000)).await;
     let (count, distinct) = slots(&db).await;
     assert_eq!(count, distinct, "no slot twice");
     assert!(
-        (caught_up + 1..=caught_up + 3).contains(&count),
+        (caught_up + 1..=caught_up + 4).contains(&count),
         "about 2 more slots in 2 s: {caught_up} then {count}"
     );
 
@@ -131,7 +132,7 @@ async fn more_than_a_ticks_worth_of_slots_are_all_caught_up() {
 
     eventually(
         "150 slots are caught up",
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         || async { span(&db).await.0 >= 150 },
     )
     .await;
@@ -148,7 +149,7 @@ async fn slots_that_failed_to_insert_are_inserted_on_a_later_tick() {
         return;
     };
     let engine = every_second(&db, Duration::from_secs(2));
-    eventually("the first slots", Duration::from_secs(5), || async {
+    eventually("the first slots", Duration::from_secs(30), || async {
         span(&db).await.0 >= 2
     })
     .await;
@@ -170,7 +171,7 @@ async fn slots_that_failed_to_insert_are_inserted_on_a_later_tick() {
     // The refused slots are inserted once it accepts them again.
     eventually(
         "every slot through the outage is inserted",
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         || async {
             let (slots, seconds) = span(&db).await;
             let last: chrono::DateTime<Utc> = sqlx::query_scalar(

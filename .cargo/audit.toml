@@ -1,5 +1,8 @@
 # cargo-audit reads this file from `.cargo/audit.toml`.
 [advisories]
-# RUSTSEC-2023-0071 (rsa, no fix): rsa is in Cargo.lock only through sqlx-mysql, which sqlx 0.8
-# locks even when the mysql feature is off. Nothing builds it: `cargo tree -i rsa` is empty.
-ignore = ["RUSTSEC-2023-0071"]
+# Both are in Cargo.lock only through sqlx's other databases, which sqlx locks even when their
+# features are off. Nothing builds them: `cargo tree -i rsa` and `-i libsqlite3-sys` are empty.
+# - RUSTSEC-2023-0071 (rsa, no fix), through sqlx-mysql.
+# - RUSTSEC-2026-0459 (libsqlite3-sys, fixed in 0.39), through sqlx-sqlite, which sqlx 0.9 keeps
+#   below 0.38.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0459"]
