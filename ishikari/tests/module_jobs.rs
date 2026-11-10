@@ -8,18 +8,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use common::{eventually, TestDb};
 use ishikari::execution::{
-    ModuleError, ModuleJob, ModuleUpload, NodeContext, NodeData, NodeError, NodeHandler, NodeJobs,
-    NodeModule, NodeModules, NodeSpec, NodeTypes, TestRun,
+    ModuleError, ModuleHandler, ModuleJob, ModuleUpload, ModuleVersion, NodeContext, NodeData,
+    NodeError, NodeHandler, NodeJobs, NodeModule, NodeModules, NodeSpec, NodeTypes, TestRun,
 };
 use ishikari::{insert_with, Engine, InsertOpts, Postgres, Queue};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
 /// What a module's node was asked to run: the module, as of when, and its node's context.
-type Asked = Arc<Mutex<Vec<(String, DateTime<Utc>, String, HashMap<String, Value>)>>>;
+type Asked = Arc<Mutex<Vec<(String, ModuleVersion, String, HashMap<String, Value>)>>>;
 
 /// The modules `send` (uploaded an hour ago) and `later` (in an hour). A node of either returns
 /// its input `out`, or fails when it has an input `fail`.
@@ -33,8 +33,8 @@ impl NodeModules for Modules {
     async fn handler(
         &self,
         node_type: &str,
-        as_of: DateTime<Utc>,
-    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
+        version: ModuleVersion,
+    ) -> Result<Option<ModuleHandler>, ModuleError> {
         let hour = chrono::Duration::hours(1);
         let uploaded_at = match node_type {
             "send" => Utc::now() - hour,
@@ -42,12 +42,17 @@ impl NodeModules for Modules {
             "broken" => return Err(ModuleError::Runtime("the module doesn't compile".into())),
             _ => return Ok(None),
         };
-        Ok((uploaded_at <= as_of).then(|| {
-            Arc::new(Returns {
+        let found = match version {
+            ModuleVersion::UploadedBy(as_of) => uploaded_at <= as_of,
+            ModuleVersion::Exactly(exactly) => exactly == 1,
+        };
+        Ok(found.then(|| ModuleHandler {
+            version: 1,
+            handler: Arc::new(Returns {
                 module: node_type.to_string(),
-                as_of,
+                version,
                 asked: self.asked.clone(),
-            }) as Arc<dyn NodeHandler>
+            }),
         }))
     }
 
@@ -74,7 +79,7 @@ impl NodeModules for Modules {
 
 struct Returns {
     module: String,
-    as_of: DateTime<Utc>,
+    version: ModuleVersion,
     asked: Asked,
 }
 
@@ -83,7 +88,7 @@ impl NodeHandler for Returns {
     async fn execute(&self, ctx: &NodeContext, _pool: &PgPool) -> Result<NodeData, NodeError> {
         self.asked.lock().unwrap().push((
             self.module.clone(),
-            self.as_of,
+            self.version,
             ctx.node_id.clone(),
             ctx.inputs.clone(),
         ));
@@ -149,10 +154,65 @@ async fn a_module_job_runs_its_module_with_its_args() {
         *asked.lock().unwrap(),
         [(
             "send".to_string(),
-            job.inserted_at,
+            ModuleVersion::UploadedBy(job.inserted_at),
             format!("job:{}", job.id),
             inputs
         )]
+    );
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A module job keeps the version of its module its first attempt ran, which its next ones run.
+#[tokio::test]
+async fn a_module_job_keeps_the_version_it_first_ran() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = Modules::default();
+    let asked = modules.asked.clone();
+    let types = NodeTypes::new(db.pool.clone()).modules(Arc::new(modules));
+    let engine = start_engine(&db.pool, types);
+
+    let job = insert_with(
+        ModuleJob::new("send", json!({ "fail": true })),
+        InsertOpts::new()
+            .max_attempts(2)
+            .meta(json!({ "mine": "kept" })),
+        &db.pool,
+    )
+    .await
+    .unwrap()
+    .into_job();
+    let (state, _) = settled(&db, job.id).await;
+    assert_eq!(state, "retryable");
+    sqlx::query("UPDATE ishikari_jobs SET scheduled_at = now() WHERE id = $1")
+        .bind(job.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    eventually("the job is discarded", Duration::from_secs(10), || async {
+        db.state(job.id).await == "discarded"
+    })
+    .await;
+
+    let versions: Vec<ModuleVersion> = asked.lock().unwrap().iter().map(|a| a.1).collect();
+    assert_eq!(
+        versions,
+        [
+            ModuleVersion::UploadedBy(job.inserted_at),
+            ModuleVersion::Exactly(1)
+        ]
+    );
+    let meta: Value = sqlx::query_scalar("SELECT meta FROM ishikari_jobs WHERE id = $1")
+        .bind(job.id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        meta,
+        json!({ "mine": "kept", "ishikari_module_version": 1 })
     );
 
     engine.shutdown(Duration::from_secs(1)).await;

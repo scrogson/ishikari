@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use axum::http::{header, StatusCode};
 use axum::Router;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use common::{body, get, post_form};
 use ishikari::execution::{
-    ModuleError, ModuleGrants, ModuleUpload, NodeHandler, NodeModule, NodeModules, NodeSpec,
-    TestRun,
+    ModuleError, ModuleGrants, ModuleHandler, ModuleUpload, ModuleVersion, NodeModule, NodeModules,
+    NodeSpec, TestRun,
 };
 use ishikari::secrets::{MemorySecrets, Secret, SecretStore, Secrets};
 use ishikari_admin::AppState;
@@ -26,8 +26,8 @@ impl NodeModules for Listed {
     async fn handler(
         &self,
         _node_type: &str,
-        _as_of: DateTime<Utc>,
-    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
+        _as_of: ModuleVersion,
+    ) -> Result<Option<ModuleHandler>, ModuleError> {
         Ok(None)
     }
 

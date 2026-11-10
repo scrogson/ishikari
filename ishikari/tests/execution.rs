@@ -6,9 +6,9 @@ mod common;
 use chrono::{DateTime, Utc};
 use common::TestDb;
 use ishikari::execution::{
-    ExecutionStorage, ModuleError, ModuleUpload, NodeContext, NodeData, NodeError, NodeHandler,
-    NodeJob, NodeJobs, NodeModule, NodeModules, NodeRunner, NodeSpec, NodeTypes, SchemaField,
-    TestRun,
+    ExecutionStorage, ModuleError, ModuleHandler, ModuleUpload, ModuleVersion, NodeContext,
+    NodeData, NodeError, NodeHandler, NodeJob, NodeJobs, NodeModule, NodeModules, NodeRunner,
+    NodeSpec, NodeTypes, SchemaField, TestRun,
 };
 use ishikari::prelude::*;
 use ishikari::secrets::MemorySecrets;
@@ -702,8 +702,11 @@ async fn a_node_failing_its_last_attempt_fails_the_run() {
 #[derive(Default)]
 struct Uploaded {
     versions: Vec<(DateTime<Utc>, &'static str, Value)>,
+    /// The versions that show only once the modules were asked: uploads that started before a
+    /// run and were kept after it.
+    late: Vec<(DateTime<Utc>, &'static str, Value)>,
     broken: bool,
-    asked: Mutex<Vec<(String, DateTime<Utc>)>>,
+    asked: Mutex<Vec<(String, ModuleVersion)>>,
 }
 
 #[async_trait::async_trait]
@@ -711,20 +714,32 @@ impl NodeModules for Uploaded {
     async fn handler(
         &self,
         node_type: &str,
-        as_of: DateTime<Utc>,
-    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
-        self.asked
-            .lock()
-            .unwrap()
-            .push((node_type.to_string(), as_of));
+        version: ModuleVersion,
+    ) -> Result<Option<ModuleHandler>, ModuleError> {
+        let first = {
+            let mut asked = self.asked.lock().unwrap();
+            asked.push((node_type.to_string(), version));
+            asked.len() == 1
+        };
         if self.broken {
             return Err(ModuleError::Runtime("the module doesn't compile".into()));
         }
+        let late = if first { &[][..] } else { &self.late[..] };
         Ok(self
             .versions
             .iter()
-            .rfind(|(at, name, _)| *name == node_type && *at <= as_of)
-            .map(|(_, _, output)| Arc::new(Fixed(output.clone())) as Arc<dyn NodeHandler>))
+            .chain(late)
+            .filter(|(_, name, _)| *name == node_type)
+            .zip(1..)
+            .filter(|((at, _, _), number)| match version {
+                ModuleVersion::UploadedBy(as_of) => *at <= as_of,
+                ModuleVersion::Exactly(exactly) => *number == exactly,
+            })
+            .last()
+            .map(|((_, _, output), version)| ModuleHandler {
+                version,
+                handler: Arc::new(Fixed(output.clone())),
+            }))
     }
 
     async fn modules(&self) -> Result<Vec<NodeModule>, ModuleError> {
@@ -805,7 +820,60 @@ async fn a_type_not_registered_runs_from_the_hosts_modules() {
     let created_at = created_at(&db.pool, run).await;
     assert_eq!(
         *modules.asked.lock().unwrap(),
-        [("slack/post".to_string(), created_at)]
+        [(
+            "slack/post".to_string(),
+            ModuleVersion::UploadedBy(created_at)
+        )]
+    );
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A run keeps the version of a module its first node of it ran: a version that shows later,
+/// though uploaded before the run, isn't what its other nodes and retries run.
+#[tokio::test]
+async fn a_run_keeps_the_version_of_a_module_it_first_ran() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let run = start_run(
+        &db.pool,
+        None,
+        json!({
+            "nodes": {
+                "a": { "type": "slack/post" },
+                "b": { "type": "slack/post", "depends_on": ["a"] }
+            },
+            "outputs": { "a": "{{nodes.a.version}}", "b": "{{nodes.b.version}}" }
+        }),
+        &["a", "b"],
+        json!({}),
+    )
+    .await;
+
+    let hour = chrono::Duration::hours(1);
+    let modules = Arc::new(Uploaded {
+        versions: vec![(Utc::now() - hour, "slack/post", json!({ "version": 1 }))],
+        late: vec![(Utc::now() - hour, "slack/post", json!({ "version": 2 }))],
+        ..Uploaded::default()
+    });
+    let types = NodeTypes::new(db.pool.clone()).modules(modules.clone());
+    let engine = start_engine(Postgres::new(db.pool.clone()), types);
+
+    let (status, outputs, error) = finished(&db.pool, None, run).await;
+    assert_eq!((status.as_str(), error), ("completed", None));
+    assert_eq!(outputs, json!({ "a": 1, "b": 1 }));
+    let created_at = created_at(&db.pool, run).await;
+    assert_eq!(
+        *modules.asked.lock().unwrap(),
+        [
+            (
+                "slack/post".to_string(),
+                ModuleVersion::UploadedBy(created_at)
+            ),
+            ("slack/post".to_string(), ModuleVersion::Exactly(1)),
+        ]
     );
 
     engine.shutdown(Duration::from_secs(1)).await;

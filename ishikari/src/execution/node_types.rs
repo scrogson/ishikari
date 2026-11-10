@@ -16,8 +16,8 @@ use super::executor::{skip_reason, NodeHandler};
 use super::interpolation::{InterpolationError, Interpolator};
 use super::module_job::ModuleJob;
 use super::node_job::{NodeJob, NodeRunner};
-use super::node_modules::{ModuleError, NodeModules};
-use super::storage::{ExecutionStorage, NodeRecord, RunDefinition};
+use super::node_modules::{ModuleError, ModuleVersion, NodeModules};
+use super::storage::{ExecutionStorage, NodeRecord, RunDefinition, MODULE_VERSION};
 use super::types::{NodeData, NodeStatus, SchemaField};
 use crate::secrets::Secrets;
 use crate::{Cancel, Complete, Context, PerformResult};
@@ -103,7 +103,8 @@ impl NodeSpec {
 ///   skipped, and fails it when a node fails its last attempt.
 ///
 /// A node of a type not registered is looked up in the host's [`modules`](Self::modules), at
-/// the version uploaded last before its run was created. One of neither fails, and fails its
+/// the version uploaded last before its run was created, which the run keeps for its other
+/// nodes and its retries. One of neither fails, and fails its
 /// run, without retrying. A [`ModuleJob`] runs by the modules too. A node whose job ends where
 /// its handler can't see it (see [`NodeJob`]) also fails its run.
 ///
@@ -204,20 +205,24 @@ impl NodeTypes {
         self.types.iter().map(|(spec, _)| spec.clone()).collect()
     }
 
-    /// The handler of the type `name`: the one registered here, else its module's version for a
-    /// run created at `as_of`.
+    /// The handler of the type `name` for the run `run_id`: the one registered here, else its
+    /// module's, at the version the run keeps.
     async fn handler(
         &self,
         name: &str,
-        as_of: DateTime<Utc>,
+        run_id: i64,
+        run: &RunDefinition,
+        storage: &ExecutionStorage,
     ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
         if let Some((_, handler)) = self.types.iter().find(|(spec, _)| spec.name == name) {
             return Ok(Some(handler.clone()));
         }
-        match &self.modules {
-            Some(modules) => modules.handler(name, as_of).await,
-            None => Ok(None),
-        }
+        let Some(modules) = &self.modules else {
+            return Ok(None);
+        };
+        let kept = run.module_versions.get(name).and_then(Value::as_i64);
+        let pin = |version| storage.pin_run_module(run_id, name, version);
+        kept_version(modules.as_ref(), name, kept, run.created_at, pin).await
     }
 
     fn storage(&self) -> ExecutionStorage {
@@ -245,7 +250,10 @@ impl NodeRunner for NodeTypes {
             .run_definition(job.workflow_run_id)
             .await?
             .ok_or_else(|| format!("no workflow run {}", job.workflow_run_id))?;
-        let handler = match self.handler(&job.node_type, run.created_at).await {
+        let handler = match self
+            .handler(&job.node_type, job.workflow_run_id, &run, &node.storage)
+            .await
+        {
             Ok(Some(handler)) => handler,
             Ok(None) => {
                 let error = format!("Unknown node type '{}'", job.node_type);
@@ -326,7 +334,22 @@ impl NodeRunner for NodeTypes {
             return Cancel::default().message(why).into();
         };
         let attempt = ctx.job();
-        let Some(handler) = modules.handler(&job.module, attempt.inserted_at).await? else {
+        let kept = attempt
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MODULE_VERSION))
+            .and_then(Value::as_i64);
+        let storage = self.storage();
+        let pin = |version| storage.pin_job_module(attempt.id, version);
+        let handler = kept_version(
+            modules.as_ref(),
+            &job.module,
+            kept,
+            attempt.inserted_at,
+            pin,
+        )
+        .await?;
+        let Some(handler) = handler else {
             let why = format!(
                 "no module {} was uploaded before the job was inserted",
                 job.module
@@ -496,6 +519,41 @@ fn resolve(
         .collect()
 }
 
+/// The handler of the module `name` at the version `kept`; without one, at its latest uploaded
+/// by `as_of`, which `pin` keeps. `pin` gives the version kept: another, when another node or
+/// attempt kept one first, and then that's the handler given.
+async fn kept_version<F, Fut>(
+    modules: &dyn NodeModules,
+    name: &str,
+    kept: Option<i64>,
+    as_of: DateTime<Utc>,
+    pin: F,
+) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError>
+where
+    F: FnOnce(i32) -> Fut,
+    Fut: std::future::Future<Output = Result<i32, sqlx::Error>>,
+{
+    let exactly = |version| async move {
+        let found = modules
+            .handler(name, ModuleVersion::Exactly(version))
+            .await?;
+        Ok(found.map(|module| module.handler))
+    };
+    if let Some(kept) = kept.and_then(|kept| i32::try_from(kept).ok()) {
+        return exactly(kept).await;
+    }
+    let Some(found) = modules
+        .handler(name, ModuleVersion::UploadedBy(as_of))
+        .await?
+    else {
+        return Ok(None);
+    };
+    match pin(found.version).await? {
+        kept if kept == found.version => Ok(Some(found.handler)),
+        kept => exactly(kept).await,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +619,7 @@ mod tests {
             execution_id: None,
             created_at: Utc::now(),
             inputs: json!({ "name": "ada" }),
+            module_versions: json!({}),
             input_schema: json!({
                 "name": { "type": "string" },
                 "times": { "type": "integer", "default": 3 },

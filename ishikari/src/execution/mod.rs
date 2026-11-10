@@ -45,7 +45,10 @@ pub use executor::{is_truthy, ExecutionError, NodeError, NodeHandler, WorkflowEx
 pub use interpolation::{InterpolationError, Interpolator};
 pub use module_job::ModuleJob;
 pub use node_job::{NodeJob, NodeJobs, NodeRunner};
-pub use node_modules::{ModuleError, ModuleGrants, ModuleUpload, NodeModule, NodeModules, TestRun};
+pub use node_modules::{
+    ModuleError, ModuleGrants, ModuleHandler, ModuleUpload, ModuleVersion, NodeModule, NodeModules,
+    TestRun,
+};
 pub use node_types::{NodeSpec, NodeTypes};
 pub use storage::{ExecutionStorage, NodeExecutionRow, WorkflowRunRow};
 pub use types::*;

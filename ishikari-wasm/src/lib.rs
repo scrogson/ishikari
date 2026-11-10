@@ -72,8 +72,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use ishikari::execution::{
-    ModuleError, ModuleGrants, ModuleUpload, NodeContext, NodeData, NodeError, NodeHandler,
-    NodeModule, NodeModules, NodeSpec, TestRun,
+    ModuleError, ModuleGrants, ModuleHandler, ModuleUpload, ModuleVersion, NodeContext, NodeData,
+    NodeError, NodeHandler, NodeModule, NodeModules, NodeSpec, TestRun,
 };
 use ishikari::secrets::{self, Secrets};
 use sha2::{Digest, Sha256};
@@ -338,20 +338,36 @@ impl NodeModules for WasmModules {
     async fn handler(
         &self,
         node_type: &str,
-        as_of: DateTime<Utc>,
-    ) -> Result<Option<Arc<dyn NodeHandler>>, ModuleError> {
-        let query = format!(
-            "SELECT {} FROM {} WHERE name = $1 AND created_at <= $2 \
-             ORDER BY version DESC LIMIT 1",
-            Self::COLUMNS,
-            self.table()
-        );
-        let Some(row) = sqlx::query_as::<_, ModuleRow>(&query)
-            .bind(node_type)
-            .bind(as_of)
-            .fetch_optional(&self.pool)
-            .await?
-        else {
+        version: ModuleVersion,
+    ) -> Result<Option<ModuleHandler>, ModuleError> {
+        let row = match version {
+            ModuleVersion::UploadedBy(as_of) => {
+                let query = format!(
+                    "SELECT {} FROM {} WHERE name = $1 AND created_at <= $2 \
+                     ORDER BY version DESC LIMIT 1",
+                    Self::COLUMNS,
+                    self.table()
+                );
+                sqlx::query_as::<_, ModuleRow>(&query)
+                    .bind(node_type)
+                    .bind(as_of)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+            ModuleVersion::Exactly(version) => {
+                let query = format!(
+                    "SELECT {} FROM {} WHERE name = $1 AND version = $2",
+                    Self::COLUMNS,
+                    self.table()
+                );
+                sqlx::query_as::<_, ModuleRow>(&query)
+                    .bind(node_type)
+                    .bind(version)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+        };
+        let Some(row) = row else {
             return Ok(None);
         };
         let id = row.id;
@@ -377,11 +393,14 @@ impl NodeModules for WasmModules {
                     })?
             }
         };
-        Ok(Some(Arc::new(WasmNode {
-            modules: self.clone(),
-            guest,
-            module,
-        })))
+        Ok(Some(ModuleHandler {
+            version: module.version,
+            handler: Arc::new(WasmNode {
+                modules: self.clone(),
+                guest,
+                module,
+            }),
+        }))
     }
 
     async fn modules(&self) -> Result<Vec<NodeModule>, ModuleError> {

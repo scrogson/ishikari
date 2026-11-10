@@ -7,7 +7,8 @@ Migration **v10**. Modules no longer read secrets' values: see Upgrading.
 ### Upgrading
 
 - **Run v10** (`ishikari generate migration --database-url …`, or `migrations::migrate`). It
-  adds `ishikari_jobs.claims` and `ishikari_secrets.hosts`. Upgrade every node together: a node
+  adds `ishikari_jobs.claims`, `ishikari_secrets.hosts` and
+  `ishikari_workflow_runs.module_versions`. Upgrade every node together: a node
   that doesn't count claims writes outcomes the others' fence refuses.
 - **A module is never given a secret's value.** `secret(name)` in a script, and `host.secret`
   in a component, give a placeholder, `{{secret:NAME}}`. `fetch` replaces it with the value
@@ -21,6 +22,8 @@ Migration **v10**. Modules no longer read secrets' values: see Upgrading.
   Hosts; set with no value, only the hosts change), with `SecretStore::bind`, or for
   `EnvSecrets` in `{PREFIX}{NAME}_HOSTS`, split by commas. A secret kept before v10 is bound
   to none.
+- `NodeModules::handler` takes a `ModuleVersion` (the latest uploaded by a time, or exactly
+  one) and gives a `ModuleHandler`, the handler with its version.
 - `SecretStore::set` takes the secret's hosts, and an implementation of `SecretStore` needs
   `bind`. `SecretInfo` has `hosts`; `SecretError` has `InvalidHost`. A `Secrets` backend of
   your own binds its secrets to no host unless it overrides `Secrets::get_bound`.
@@ -50,6 +53,10 @@ Migration **v10**. Modules no longer read secrets' values: see Upgrading.
 
 ### Fixed
 
+- A run keeps the version of each module its nodes first ran
+  (`ishikari_workflow_runs.module_versions`), and a `ModuleJob` its module's, in its `meta`:
+  an upload that started before a run and was kept after it no longer changes what the run's
+  later nodes and retries run.
 - A job's outcome is fenced on its claim (`claims`, counted on each), not its attempt, which a
   retry, give-back or cancel and retry reuses.
 - An outcome that can't be written after retrying is replaced by an error, so its job doesn't

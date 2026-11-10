@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use chrono::Utc;
-use ishikari::execution::{NodeContext, NodeError, NodeModules};
+use ishikari::execution::{ModuleVersion, NodeContext, NodeError, NodeModules};
 use ishikari_wasm::WasmModules;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
@@ -84,10 +84,11 @@ pub async fn run(
     inputs: Value,
 ) -> Result<Value, NodeError> {
     let handler = modules
-        .handler(node_type, Utc::now())
+        .handler(node_type, ModuleVersion::UploadedBy(Utc::now()))
         .await
         .unwrap()
-        .expect("the module");
+        .expect("the module")
+        .handler;
     let mut ctx = NodeContext::new(uuid::Uuid::new_v4(), "node", node_type);
     ctx.inputs = serde_json::from_value(inputs).unwrap();
     handler

@@ -7,8 +7,8 @@ mod common;
 use chrono::Utc;
 use common::{failure, pong, TestDb};
 use ishikari::execution::{
-    ModuleError, ModuleGrants, ModuleUpload, NodeError, NodeJob, NodeJobs, NodeModule, NodeModules,
-    NodeTypes,
+    ModuleError, ModuleGrants, ModuleUpload, ModuleVersion, NodeError, NodeJob, NodeJobs,
+    NodeModule, NodeModules, NodeTypes,
 };
 use ishikari::workflows::Dag;
 use ishikari::{Engine, Postgres, Queue};
@@ -154,7 +154,11 @@ async fn uploads_that_arent_node_modules_are_refused() {
     assert!(why.contains("timeout"), "{why}");
 
     assert!(modules.modules().await.unwrap().is_empty());
-    assert!(modules.handler(KIT, Utc::now()).await.unwrap().is_none());
+    assert!(modules
+        .handler(KIT, ModuleVersion::UploadedBy(Utc::now()))
+        .await
+        .unwrap()
+        .is_none());
 
     db.finish().await;
 }
@@ -439,6 +443,36 @@ async fn runs_use_the_version_uploaded_before_them() {
     assert_eq!(outputs, json!({ "text": "AFTER", "version": 2 }));
 
     engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+/// A module's handler is asked for by version too: the one a run keeps.
+#[tokio::test]
+async fn a_version_is_found_exactly() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let modules = WasmModules::new(db.pool.clone());
+    for bytes in [V1, V2] {
+        modules
+            .upload(upload(bytes, ModuleGrants::default()))
+            .await
+            .unwrap();
+    }
+    let modules = &modules;
+    let version = |version| async move {
+        let found = modules.handler(KIT, version).await.unwrap();
+        found.map(|module| module.version)
+    };
+
+    assert_eq!(version(ModuleVersion::Exactly(1)).await, Some(1));
+    assert_eq!(version(ModuleVersion::Exactly(2)).await, Some(2));
+    assert_eq!(version(ModuleVersion::Exactly(3)).await, None);
+    assert_eq!(
+        version(ModuleVersion::UploadedBy(Utc::now())).await,
+        Some(2)
+    );
+
     db.finish().await;
 }
 

@@ -154,7 +154,8 @@ A module is at most 32 MiB (`MAX_MODULE_BYTES`). The modules uploaded or run lat
 them) stay compiled; one only described or test-run isn't kept.
 
 Uploading a name again makes its next version, with the grants given then; the same bytes and
-grants again change nothing. A run uses the version uploaded last before it was created.
+grants again change nothing. A run uses the version uploaded last before it was created, and keeps it
+(`ishikari_workflow_runs.module_versions`) for all its nodes and retries.
 
 ## Development
 

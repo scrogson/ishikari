@@ -415,7 +415,8 @@ impl ExecutionStorage {
     ) -> Result<Option<RunDefinition>, sqlx::Error> {
         let query = format!(
             r#"
-            SELECT r.execution_id, r.created_at, r.inputs, d.input_schema, d.nodes, d.output_schema
+            SELECT r.execution_id, r.created_at, r.inputs, r.module_versions, d.input_schema,
+                   d.nodes, d.output_schema
             FROM {} r
             JOIN {} d ON d.id = r.definition_id
             WHERE r.id = $1
@@ -427,6 +428,49 @@ impl ExecutionStorage {
         sqlx::query_as(&query)
             .bind(workflow_run_id)
             .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Keep `version` as the version of the module `module` the run's nodes run, unless it
+    /// keeps one already: the version it keeps.
+    pub(crate) async fn pin_run_module(
+        &self,
+        workflow_run_id: i64,
+        module: &str,
+        version: i32,
+    ) -> Result<i32, sqlx::Error> {
+        let query = format!(
+            "UPDATE {} SET module_versions = CASE WHEN jsonb_exists(module_versions, $2) \
+             THEN module_versions ELSE module_versions || jsonb_build_object($2, $3::int) END \
+             WHERE id = $1 RETURNING (module_versions->>$2)::int",
+            self.table_name("ishikari_workflow_runs")
+        );
+        sqlx::query_scalar(&query)
+            .bind(workflow_run_id)
+            .bind(module)
+            .bind(version)
+            .fetch_one(&self.pool)
+            .await
+    }
+
+    /// Keep `version` as the version of its module the job `job_id` runs, in its `meta`
+    /// ([`MODULE_VERSION`]), unless it keeps one already: the version it keeps.
+    pub(crate) async fn pin_job_module(
+        &self,
+        job_id: i64,
+        version: i32,
+    ) -> Result<i32, sqlx::Error> {
+        let query = format!(
+            "UPDATE {} SET meta = CASE WHEN jsonb_exists(COALESCE(meta, '{{}}'), $2) THEN meta \
+             ELSE COALESCE(meta, '{{}}') || jsonb_build_object($2, $3::int) END \
+             WHERE id = $1 RETURNING (meta->>$2)::int",
+            self.table_name("ishikari_jobs")
+        );
+        sqlx::query_scalar(&query)
+            .bind(job_id)
+            .bind(MODULE_VERSION)
+            .bind(version)
+            .fetch_one(&self.pool)
             .await
     }
 
@@ -515,12 +559,17 @@ impl ExecutionStorage {
     }
 }
 
+/// The key in a module job's `meta` of the version of its module it runs.
+pub(crate) const MODULE_VERSION: &str = "ishikari_module_version";
+
 /// A run, with the parts of its definition its nodes need.
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct RunDefinition {
     pub execution_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub inputs: Value,
+    /// The version of each module the run's nodes ran first, by name.
+    pub module_versions: Value,
     pub input_schema: Value,
     pub nodes: Value,
     pub output_schema: Value,

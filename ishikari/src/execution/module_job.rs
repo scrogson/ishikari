@@ -9,7 +9,8 @@ use crate::{Cancel, Complete, Context, PerformResult, Snooze, Worker};
 /// A job whose code is a module the host's operators uploaded (one of its
 /// [`NodeModules`](super::NodeModules)), not a worker written in Rust: the module's node runs with
 /// the job's `args` as its inputs, and `job:<id>` as its id. It runs the version of the module
-/// uploaded last before the job was inserted, so its retries run the same code.
+/// uploaded last before the job was inserted, kept in its `meta` (`ishikari_module_version`)
+/// by its first attempt, so its retries run the same code.
 ///
 /// What the node returns completes the job, unless it's `{"snooze": seconds}`, which snoozes it,
 /// or `{"cancel": "why"}`, which cancels it. A node that fails fails the attempt, retried as any

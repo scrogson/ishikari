@@ -96,8 +96,9 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   workflows, sagas and definition runs a job left behind (one rescued and discarded).
 - **`execution/`**: workflow definitions run by the admin (YAML/JSON node graphs): `NodeTypes`
   runs their nodes by the host's registered types, then its `NodeModules` (uploaded types, at
-  the version uploaded last before the run was created). `ModuleJob` runs a module as a plain
-  job, through `NodeJobs`.
+  the version uploaded last before the run was created, kept in the run's `module_versions`
+  once a node first runs it). `ModuleJob` runs a module as a plain job, through `NodeJobs`,
+  keeping its version in its job's `meta`.
 - **`secrets/`**: the host's secrets, read by name from a backend it picks (`Secrets`;
   `SecretStore` for one the admin writes to): `PostgresSecrets` (encrypted with the host's key,
   `ishikari_secrets`), `EnvSecrets`, `MemorySecrets`, each kept with the hosts it's bound to.
@@ -136,7 +137,8 @@ it creates.
 - v07: saga rollbacks in progress moved off dependency chains (data only)
 - v08: node modules (node types uploaded through the admin)
 - v09: secrets (kept encrypted, and those modules are granted)
-- v10: jobs' claims, counted, which fence a run's outcome; the hosts secrets are bound to
+- v10: jobs' claims, counted, which fence a run's outcome; the hosts secrets are bound to; the
+  versions of modules runs keep
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

@@ -291,7 +291,7 @@ let state = ishikari_admin::AppState::new(pool.clone())
 The Node types page uploads a module with the hosts it may reach and its timeout and memory
 limit, or writes a script in its editor, test-running it before saving it. The palette offers
 the modules after your registered types. Uploading a name again makes its next version; a run
-uses the version uploaded last before it was created.
+uses the version uploaded last before it was created, and keeps it for all its nodes and retries.
 
 A module also runs as a plain job, `ModuleJob::new("send-invoice", json!({ .. }))`, its args the
 module's inputs, in the `modules` queue of an engine whose state is the `NodeJobs` of those node
