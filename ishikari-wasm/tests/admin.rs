@@ -215,10 +215,10 @@ export function run() {
 }
 "#;
 
-/// An operator sets a secret on the Secrets page, which a script granted it reads, its value
-/// redacted from what the test run shows; the page lists the module as granted it.
+/// An operator sets a secret on the Secrets page, with its hosts, and a script granted it is
+/// given its placeholder, never its value; the page lists the module as granted it.
 #[tokio::test]
-async fn an_operator_sets_a_secret_a_script_reads() {
+async fn an_operator_sets_a_secret_a_script_is_given() {
     let Some(db) = TestDb::new().await else {
         return;
     };
@@ -235,7 +235,9 @@ async fn an_operator_sets_a_secret_a_script_reads() {
 
     let set = Request::post("/admin/secrets")
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from("name=stripe%2Fapi-key&value=sk_live_0123456789"))
+        .body(Body::from(
+            "name=stripe%2Fapi-key&value=sk_live_0123456789&hosts=api.stripe.com",
+        ))
         .unwrap();
     let (status, _, location) = send(&app, set).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -255,8 +257,7 @@ async fn an_operator_sets_a_secret_a_script_reads() {
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     for text in [
-        "[redacted]",
-        "info: paying with [redacted]",
+        "info: paying with {{secret:stripe/api-key}}",
         "Secrets read",
         "stripe/api-key",
     ] {
@@ -277,6 +278,7 @@ async fn an_operator_sets_a_secret_a_script_reads() {
     let (status, page, _) = send(&app, get("/admin/secrets")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("test/pays"), "{page}");
+    assert!(page.contains("api.stripe.com"), "{page}");
     assert!(!page.contains("0123456789"), "{page}");
 
     db.finish().await;

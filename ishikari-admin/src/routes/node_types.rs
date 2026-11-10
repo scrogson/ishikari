@@ -31,7 +31,7 @@ pub struct ModuleInfo {
     pub category: String,
     pub description: Option<String>,
     pub allowed_hosts: Vec<String>,
-    /// The names of the secrets it may read.
+    /// The names of the secrets it may send.
     pub secrets: Vec<String>,
     /// Its timeout, or `None` for the runtime's.
     pub timeout: Option<String>,
@@ -79,7 +79,7 @@ pub async fn list(State(state): State<AppState>, Query(query): Query<UploadedQue
 }
 
 /// Upload a module, a `multipart/form-data` form of `module` (its bytes), `allowed_hosts` and
-/// `secrets` (the names of those it may read; each one per line or comma-separated),
+/// `secrets` (the names of those it may send; each one per line or comma-separated),
 /// `timeout_seconds` and `memory_limit_mb` (blank for the runtime's defaults).
 pub async fn upload(
     State(state): State<AppState>,
@@ -297,7 +297,8 @@ fn bytes(size: i64) -> String {
 const EXAMPLE: &str = r#"// A node type: `spec` is what the workflow builder offers, and `run` what a node of it does.
 // `run` takes the node's `inputs` (with its `node_id`, `node_type` and `workflow_inputs`) and
 // returns its output, as JSON. `console` writes to the node's logs; `fetch` reaches the hosts
-// granted here, and no others; `secret(name)` reads the host's secrets granted here.
+// granted here, and no others; `secret(name)` is a placeholder for a secret granted here, which
+// `fetch` sends as its value in a request's headers to the hosts the secret is bound to.
 
 export const spec = {
   name: "example/greet",

@@ -31,8 +31,9 @@ interface host {
     /// time. A redirect is returned, not followed.
     fetch: func(request: request) -> result<response, string>;
 
-    /// The host's secret `name`, if the module was granted it. Its value is redacted from what
-    /// the node returns, fails with and logs.
+    /// A placeholder for the host's secret `name`, `{{secret:name}}`, if the module was granted
+    /// it; never its value. `fetch` replaces it with the value in a request's headers, to the
+    /// hosts the secret is bound to, and fails a request carrying it anywhere else.
     secret: func(name: string) -> result<string, string>;
 }
 

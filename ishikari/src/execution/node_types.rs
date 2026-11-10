@@ -192,7 +192,7 @@ impl NodeTypes {
     }
 
     /// Give the nodes of the types registered here `secrets`, which they read from their
-    /// context ([`NodeContext::secret`]). Modules read theirs from their runtime
+    /// context ([`NodeContext::secret`]). Modules are given placeholders for theirs by their runtime
     /// (`ishikari-wasm`'s `WasmModules::secrets`), and only those they were granted.
     pub fn secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
         self.secrets = Some(secrets);

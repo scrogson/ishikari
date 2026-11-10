@@ -8,7 +8,8 @@
 //! the language it has boa_runtime's web APIs: `console` (the node's logs), `fetch` (through
 //! `host.fetch`), `URL`, `TextEncoder` and `TextDecoder`, `atob` and `btoa`, `structuredClone`,
 //! `queueMicrotask`, `setTimeout` and `setInterval`, and `AbortController`; and `secret(name)`,
-//! the host's secret of that name (`host.secret`), which throws when the module may read none.
+//! a placeholder for the host's secret of that name (`host.secret`), which `fetch` sends as its
+//! value in a request's headers and which throws when the module may send none.
 
 mod executor;
 
@@ -202,8 +203,8 @@ impl Logger for HostLogger {
     }
 }
 
-/// `secret(name)`, through `host.secret`: the host's secret `name`, if the module was granted
-/// it.
+/// `secret(name)`, through `host.secret`: a placeholder for the host's secret `name`, if the
+/// module was granted it.
 fn secret(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let name = args.first().cloned().unwrap_or_default();
     let name = name.to_string(context)?.to_std_string_escaped();

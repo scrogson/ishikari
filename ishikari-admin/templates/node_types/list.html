@@ -56,7 +56,7 @@
             <label class="ik-field sm:col-span-2">
                 <span class="ik-label">Secrets</span>
                 <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
-                <span class="ik-hint">One per line: the names of the host's secrets it may read, with <code class="ik-code-inline">secret(name)</code> in a script or <code class="ik-code-inline">host.secret</code> in a component. Their values are redacted from what it returns and logs. None by default.</span>
+                <span class="ik-hint">One per line: the names of the host's secrets it may send, with <code class="ik-code-inline">secret(name)</code> in a script or <code class="ik-code-inline">host.secret</code> in a component, each a placeholder its requests' headers carry as the value to the hosts the secret is bound to. None by default.</span>
             </label>
             <label class="ik-field">
                 <span class="ik-label">Timeout (seconds)</span>

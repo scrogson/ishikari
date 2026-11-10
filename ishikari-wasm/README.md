@@ -34,7 +34,8 @@ A component of the `ishikari:node` world ([`wit/node.wit`](wit/node.wit)):
   `node_type`, `inputs` (resolved against the run) and `workflow_inputs`; the result is the
   node's output as JSON, or why it failed.
 - It may call `host.log(level, message)`, `host.fetch(request)` for HTTP to the hosts it was
-  granted, and `host.secret(name)` for the host's secrets it was granted.
+  granted, and `host.secret(name)` for a placeholder for a secret it was granted, which
+  `host.fetch` replaces with the secret's value (see the sandbox, below).
 
 In Rust, with [wit-bindgen](https://crates.io/crates/wit-bindgen) and `crate-type = ["cdylib"]`:
 
@@ -92,8 +93,8 @@ Its types are stripped where they stand (swc's type stripper), so what it throws
 its TypeScript: `Error: no text (script:12:11)`; an `enum` or `namespace` is transformed
 instead. It runs on the JavaScript runtime this crate ships, a component built from
 [`js-runtime/`](js-runtime) with [Boa](https://boajs.dev), in the same sandbox as a component:
-`console` goes to the node's logs, `fetch` through `host.fetch`, `secret(name)` (which throws when
-there's none it may read) is `host.secret`, and it has `URL`, `TextEncoder`/`TextDecoder`,
+`console` goes to the node's logs, `fetch` through `host.fetch`, `secret(name)` (a placeholder,
+which throws when there's no secret it may send) is `host.secret`, and it has `URL`, `TextEncoder`/`TextDecoder`,
 `atob`/`btoa`, `structuredClone`, timers and `AbortController`. It can't import other modules.
 
 The editor's Test run runs the script once as a node, with test inputs and the grants in the
@@ -134,10 +135,14 @@ Each call gets a fresh instance. A module reaches only what its upload granted:
 
 - HTTP through `host.fetch` to its allowed hosts: `api.example.com` (any port),
   `127.0.0.1:8080` (that port), `*.example.com` (its subdomains). Redirects aren't followed.
-- The host's secrets it was granted, by name, through `host.secret`, from the backend given to
+- The host's secrets it was granted, by name, from the backend given to
   `WasmModules::secrets` (an `ishikari::secrets::Secrets`: `PostgresSecrets`, `EnvSecrets` or
-  your own). They're read before each call, and their values are redacted (`[redacted]`) from
-  its output, error and logs.
+  your own), read before each call. It's never given a value: `host.secret` gives a
+  placeholder, `{{secret:NAME}}`, which `host.fetch` replaces with the value in a request's
+  headers, when the request is to one of the hosts the secret is bound to (kept with it:
+  `SecretStore::bind`). A placeholder in a request to another host, or in its URL or body,
+  fails the request, and what a bound host sends back has the value replaced by the
+  placeholder. Values are redacted (`[redacted]`) from its output, error and logs too.
 - WASI without files, environment, arguments or sockets. stdout and stderr go to the node's
   logs, and the last lines of them to a failed node's error.
 - Its timeout and memory limit, by default 30s and 64 MiB (`WasmModules::timeout`,

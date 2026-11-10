@@ -411,6 +411,8 @@ pub struct SecretsTemplate {
     pub error: Option<String>,
     /// The name the form was given, to show again when it's refused; never its value.
     pub name: String,
+    /// The hosts the form was given, to show again when it's refused.
+    pub hosts: String,
 }
 
 /// Workflow definition run form template.

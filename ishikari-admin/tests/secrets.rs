@@ -214,3 +214,70 @@ async fn without_secrets_there_is_no_page() {
     let page = body(get(&app, "/admin/", &[]).await).await;
     assert!(!page.contains(r#"href="/admin/secrets""#), "{page}");
 }
+
+/// A secret is set with the hosts modules may send it to, split by commas or whitespace and
+/// listed with it; set with no value, only its hosts change.
+#[tokio::test]
+async fn a_secrets_hosts_are_set() {
+    let secrets = Arc::new(MemorySecrets::new());
+    let app = admin(Some(secrets.clone()));
+    let names = ["api/key".to_string()];
+
+    let res = post_form(
+        &app,
+        "/admin/secrets",
+        &[
+            ("name", "api/key"),
+            ("value", "v_0123456789"),
+            ("hosts", "api.example.com,\r\n*.example.org"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let bound = secrets.get_bound(&names).await.unwrap();
+    assert_eq!(bound["api/key"].hosts, ["*.example.org", "api.example.com"]);
+    let page = body(get(&app, "/admin/secrets", &[]).await).await;
+    assert!(page.contains("api.example.com"), "{page}");
+    assert!(page.contains("*.example.org"), "{page}");
+
+    let res = post_form(
+        &app,
+        "/admin/secrets",
+        &[
+            ("name", "api/key"),
+            ("value", ""),
+            ("hosts", "127.0.0.1:8080"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), "/admin/secrets?bound=api%2Fkey");
+    let bound = secrets.get_bound(&names).await.unwrap();
+    assert_eq!(bound["api/key"].hosts, ["127.0.0.1:8080"]);
+    assert_eq!(bound["api/key"].value, Secret::from("v_0123456789"));
+    let page = body(get(&app, &location(&res), &[]).await).await;
+    assert!(page.contains("Set the hosts of api/key"), "{page}");
+
+    let res = post_form(
+        &app,
+        "/admin/secrets",
+        &[
+            ("name", "api/key"),
+            ("value", "v_9876543210"),
+            ("hosts", "https://api.example.com/v1"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let page = body(res).await;
+    assert!(page.contains("isn&#39;t a host"), "{page}");
+    assert!(!page.contains("9876543210"), "{page}");
+    assert!(
+        page.contains("https://api.example.com/v1"),
+        "the form keeps the hosts: {page}"
+    );
+    assert_eq!(
+        secrets.get("api/key").await.unwrap(),
+        Some(Secret::from("v_0123456789"))
+    );
+}

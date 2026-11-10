@@ -125,3 +125,29 @@ pub async fn pong() -> u16 {
     });
     port
 }
+
+/// A server on a local port answering every request with `sent` when its `Authorization` was
+/// `Bearer {key}`, else `not sent`.
+pub async fn keyed(key: &'static str) -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut request = [0u8; 4096];
+                let read = socket.read(&mut request).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+                let sent = request.contains(&format!("\r\nauthorization: bearer {key}\r\n"));
+                let body = if sent { "sent" } else { "not sent" };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    port
+}

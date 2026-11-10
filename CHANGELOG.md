@@ -1,14 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
-Migration **v10**.
+Migration **v10**. Modules no longer read secrets' values: see Upgrading.
 
 ### Upgrading
 
 - **Run v10** (`ishikari generate migration --database-url …`, or `migrations::migrate`). It
-  only adds `ishikari_jobs.claims`. Upgrade every node together: a node that doesn't count
-  claims writes outcomes the others' fence refuses.
+  adds `ishikari_jobs.claims` and `ishikari_secrets.hosts`. Upgrade every node together: a node
+  that doesn't count claims writes outcomes the others' fence refuses.
+- **A module is never given a secret's value.** `secret(name)` in a script, and `host.secret`
+  in a component, give a placeholder, `{{secret:NAME}}`. `fetch` replaces it with the value
+  in a request's headers, and only in a request to a host the secret is bound to; a
+  placeholder in a request to another host, or in its URL or body, fails the request. What a
+  bound host sends back has the value replaced by the placeholder again. A module that used a
+  value otherwise (in a URL or body, to sign a request, …) can't any longer: a Rust node,
+  which reads values (`NodeContext::secret`), can.
+- **Bind each secret to the hosts it's for** (`api.stripe.com`, `127.0.0.1:8080`,
+  `*.example.com`), or modules can send it nowhere: on the dashboard's Secrets page (its
+  Hosts; set with no value, only the hosts change), with `SecretStore::bind`, or for
+  `EnvSecrets` in `{PREFIX}{NAME}_HOSTS`, split by commas. A secret kept before v10 is bound
+  to none.
+- `SecretStore::set` takes the secret's hosts, and an implementation of `SecretStore` needs
+  `bind`. `SecretInfo` has `hosts`; `SecretError` has `InvalidHost`. A `Secrets` backend of
+  your own binds its secrets to no host unless it overrides `Secrets::get_bound`.
 - `Job` has a new public field, `claims`: a struct literal of it needs it too.
 - A schema name given to any of the crates (`Postgres::with_schema`, each builder's
   `schema`, the migrations) must be lowercase ASCII letters, digits and
@@ -30,6 +45,8 @@ Migration **v10**.
   `ishikari-admin` binary and the examples use it.
 - `WasmModules::max_timeout` and `WasmModules::max_memory_mb`.
 - `migrations::is_valid_schema` and `migrations::checked_schema`.
+- `Secrets::get_bound` and `BoundSecret` (a secret's value with its hosts),
+  `SecretStore::bind`, `secrets::check_hosts`, and `MemorySecrets::with_hosts`.
 
 ### Fixed
 

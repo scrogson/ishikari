@@ -302,7 +302,7 @@ types; operators insert one from the Node types page too (Run as job). What it r
 
 Nodes read your secrets (API keys, tokens) by name rather than in their inputs, which are stored
 with their runs and jobs. The backend is yours to pick, an `ishikari::secrets::Secrets`:
-`PostgresSecrets` keeps them beside your jobs (schema v09), each value encrypted with your key
+`PostgresSecrets` keeps them beside your jobs (schemas v09 and v10), each value encrypted with your key
 (XChaCha20-Poly1305), which isn't stored; `EnvSecrets` reads environment variables; Vault,
 OpenBao or a cloud's secret manager is an implementation of the trait.
 
@@ -323,10 +323,21 @@ let state = ishikari_admin::AppState::new(pool.clone())
 ```
 
 A node registered in Rust reads any of them, `ctx.secret("stripe/api-key").await?`. A module
-reads only those it was granted on upload, and their values are redacted from what it returns,
-fails with and logs. The dashboard's Secrets page sets and deletes them, never showing a value,
-with the modules granted each. To change keys, give the new key and the old one
-(`.old_key(old)`), then `secrets.rotate().await?`.
+never reads a value. It's given a placeholder for each secret it was granted on upload,
+`secret("stripe/api-key")` is `{{secret:stripe/api-key}}`, and the host puts the value in its
+place in a request's headers, only in a request to one of the hosts the secret is bound to
+(`api.stripe.com`); anywhere else, the request fails.
+
+```js
+const response = await fetch("https://api.stripe.com/v1/charges", {
+  headers: { authorization: `Bearer ${secret("stripe/api-key")}` },
+});
+```
+
+The dashboard's Secrets page sets and deletes them, and the hosts each is bound to, never
+showing a value, with the modules granted each (`SecretStore::set` and `SecretStore::bind`;
+for `EnvSecrets`, `{PREFIX}{NAME}_HOSTS`, split by commas). To change keys, give the new key
+and the old one (`.old_key(old)`), then `secrets.rotate().await?`.
 
 ### Theming
 

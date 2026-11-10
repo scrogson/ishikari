@@ -7,7 +7,9 @@ use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::{check_name, Secret, SecretError, SecretInfo, SecretStore, Secrets};
+use super::{
+    check_hosts, check_name, BoundSecret, Secret, SecretError, SecretInfo, SecretStore, Secrets,
+};
 
 /// A key secrets are encrypted with: 32 bytes the host keeps (not in the database), and an id,
 /// kept with each secret encrypted with it. Debugging one prints its id only.
@@ -50,7 +52,7 @@ impl fmt::Debug for SecretKey {
     }
 }
 
-/// Secrets kept in Postgres (`ishikari_secrets`, schema v09), each value encrypted with the
+/// Secrets kept in Postgres (`ishikari_secrets`, schemas v09 and v10), each value encrypted with the
 /// host's key (XChaCha20-Poly1305, with a random nonce, bound to the secret's name). The admin
 /// can set and delete them.
 ///
@@ -221,19 +223,38 @@ impl Secrets for PostgresSecrets {
     }
 
     async fn get_all(&self, names: &[String]) -> Result<HashMap<String, Secret>, SecretError> {
+        let bound = self.get_bound(names).await?;
+        Ok(bound
+            .into_iter()
+            .map(|(name, bound)| (name, bound.value))
+            .collect())
+    }
+
+    async fn get_bound(
+        &self,
+        names: &[String],
+    ) -> Result<HashMap<String, BoundSecret>, SecretError> {
         for name in names {
             check_name(name)?;
         }
-        let sealed: Vec<Sealed> = sqlx::query_as(&format!(
-            "SELECT name, ciphertext, nonce, key_id FROM {} WHERE name = ANY($1)",
+        let rows: Vec<(String, Vec<u8>, Vec<u8>, String, Vec<String>)> = sqlx::query_as(&format!(
+            "SELECT name, ciphertext, nonce, key_id, hosts FROM {} WHERE name = ANY($1)",
             self.table()
         ))
         .bind(names)
         .fetch_all(&self.pool)
         .await?;
-        sealed
-            .iter()
-            .map(|sealed| Ok((sealed.name.clone(), self.open(sealed)?)))
+        rows.into_iter()
+            .map(|(name, ciphertext, nonce, key_id, hosts)| {
+                let sealed = Sealed {
+                    name,
+                    ciphertext,
+                    nonce,
+                    key_id,
+                };
+                let value = self.open(&sealed)?;
+                Ok((sealed.name, BoundSecret { value, hosts }))
+            })
             .collect()
     }
 }
@@ -241,34 +262,55 @@ impl Secrets for PostgresSecrets {
 #[async_trait::async_trait]
 impl SecretStore for PostgresSecrets {
     async fn list(&self) -> Result<Vec<SecretInfo>, SecretError> {
-        let rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(&format!(
-            "SELECT name, updated_at FROM {} ORDER BY name",
+        let rows: Vec<(String, Vec<String>, DateTime<Utc>)> = sqlx::query_as(&format!(
+            "SELECT name, hosts, updated_at FROM {} ORDER BY name",
             self.table()
         ))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(name, updated_at)| SecretInfo { name, updated_at })
+            .map(|(name, hosts, updated_at)| SecretInfo {
+                name,
+                hosts,
+                updated_at,
+            })
             .collect())
     }
 
-    async fn set(&self, name: &str, value: Secret) -> Result<(), SecretError> {
+    async fn set(&self, name: &str, value: Secret, hosts: &[String]) -> Result<(), SecretError> {
         let name = check_name(name)?;
+        let hosts = check_hosts(hosts)?;
         let (ciphertext, nonce) = self.seal(name, &value)?;
         sqlx::query(&format!(
-            "INSERT INTO {} (name, ciphertext, nonce, key_id) VALUES ($1, $2, $3, $4) \
+            "INSERT INTO {} (name, ciphertext, nonce, key_id, hosts) VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (name) DO UPDATE SET ciphertext = EXCLUDED.ciphertext, \
-             nonce = EXCLUDED.nonce, key_id = EXCLUDED.key_id, updated_at = now()",
+             nonce = EXCLUDED.nonce, key_id = EXCLUDED.key_id, hosts = EXCLUDED.hosts, \
+             updated_at = now()",
             self.table()
         ))
         .bind(name)
         .bind(ciphertext)
         .bind(nonce)
         .bind(&self.key.id)
+        .bind(hosts)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn bind(&self, name: &str, hosts: &[String]) -> Result<bool, SecretError> {
+        let name = check_name(name)?;
+        let hosts = check_hosts(hosts)?;
+        let bound = sqlx::query(&format!(
+            "UPDATE {} SET hosts = $2 WHERE name = $1",
+            self.table()
+        ))
+        .bind(name)
+        .bind(hosts)
+        .execute(&self.pool)
+        .await?;
+        Ok(bound.rows_affected() > 0)
     }
 
     async fn delete(&self, name: &str) -> Result<bool, SecretError> {

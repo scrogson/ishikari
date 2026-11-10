@@ -108,7 +108,7 @@
                 <label class="ik-field">
                     <span class="ik-label">Secrets</span>
                     <textarea name="secrets" rows="2" class="ik-textarea ik-mono text-xs" spellcheck="false" placeholder="stripe/api-key">{{ form.secrets }}</textarea>
-                    <span class="ik-hint">One per line: the host's secrets <code class="ik-code-inline">secret(name)</code> may read. Their values are redacted from what it returns and logs.</span>
+                    <span class="ik-hint">One per line: the host's secrets <code class="ik-code-inline">secret(name)</code> may send. It's given a placeholder, which <code class="ik-code-inline">fetch</code> replaces with the value in a request's headers, to the hosts the secret is bound to on the Secrets page.</span>
                 </label>
                 <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                     <label class="ik-field">

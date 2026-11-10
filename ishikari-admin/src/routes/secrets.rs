@@ -1,5 +1,6 @@
 //! The Secrets page: the host's secrets (`AppState::with_secrets`), set and deleted by name,
-//! their values never shown, with the modules granted each.
+//! their values never shown, with the hosts modules may send each to and the modules granted
+//! each.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +20,8 @@ use crate::AppState;
 #[derive(Debug, Clone)]
 pub struct SecretRow {
     pub name: String,
+    /// The hosts modules may send it to.
+    pub hosts: Vec<String>,
     /// When its value was last set; `None` when it isn't.
     pub updated_at: Option<DateTime<Utc>>,
     /// The modules whose latest version was granted it.
@@ -29,15 +32,18 @@ pub struct SecretRow {
 #[derive(Debug, Deserialize)]
 pub struct ChangedQuery {
     pub set: Option<String>,
+    pub bound: Option<String>,
     pub deleted: Option<String>,
 }
 
-/// The form setting a secret.
+/// The form setting a secret: with no value, only its hosts change.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct SetForm {
     pub name: String,
     pub value: String,
+    /// The hosts modules may send it to, split by commas or whitespace.
+    pub hosts: String,
 }
 
 /// The form deleting a secret.
@@ -54,9 +60,10 @@ pub async fn list(State(state): State<AppState>, Query(query): Query<ChangedQuer
     let Some(store) = state.secrets.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let notice = match (query.set, query.deleted) {
-        (Some(name), _) => Some(format!("Set {name}")),
-        (_, Some(name)) => Some(format!("Deleted {name}")),
+    let notice = match (query.set, query.bound, query.deleted) {
+        (Some(name), _, _) => Some(format!("Set {name}")),
+        (_, Some(name), _) => Some(format!("Set the hosts of {name}")),
+        (_, _, Some(name)) => Some(format!("Deleted {name}")),
         _ => None,
     };
     page(
@@ -65,13 +72,13 @@ pub async fn list(State(state): State<AppState>, Query(query): Query<ChangedQuer
         StatusCode::OK,
         notice,
         None,
-        String::new(),
+        Kept::default(),
     )
     .await
 }
 
 /// Set a secret, an `application/x-www-form-urlencoded` [`SetForm`]: its value without the
-/// whitespace around it.
+/// whitespace around it, or with none, only its hosts.
 pub async fn set(
     State(state): State<AppState>,
     form: Result<Form<SetForm>, FormRejection>,
@@ -84,23 +91,48 @@ pub async fn set(
         Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
     };
     let name = form.name.trim().to_string();
-    match setting(store.as_ref(), &name, &form.value).await {
-        Ok(()) => changed(&state, "set", &name),
-        Err((status, error)) => page(&state, store.as_ref(), status, None, Some(error), name).await,
+    let hosts: Vec<String> = form
+        .hosts
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::to_string)
+        .collect();
+    match setting(store.as_ref(), &name, &form.value, &hosts).await {
+        Ok(done) => changed(&state, done, &name),
+        Err((status, error)) => {
+            let kept = Kept {
+                name,
+                hosts: form.hosts,
+            };
+            page(&state, store.as_ref(), status, None, Some(error), kept).await
+        }
     }
 }
 
-async fn setting(store: &dyn SecretStore, name: &str, value: &str) -> Result<(), Refused> {
+/// Set the secret `name`, or with no `value`, its hosts: which was done.
+async fn setting(
+    store: &dyn SecretStore,
+    name: &str,
+    value: &str,
+    hosts: &[String],
+) -> Result<&'static str, Refused> {
     let bad = |why: String| (StatusCode::BAD_REQUEST, why);
     if name.is_empty() {
         return Err(bad("Name the secret".into()));
     }
     secrets::check_name(name).map_err(|e| bad(e.to_string()))?;
+    let hosts = secrets::check_hosts(hosts).map_err(|e| bad(e.to_string()))?;
     let value = value.trim();
     if value.is_empty() {
-        return Err(bad("Enter its value".into()));
+        return match store.bind(name, &hosts).await.map_err(refused)? {
+            true => Ok("bound"),
+            false => Err(bad("Enter its value".into())),
+        };
     }
-    store.set(name, Secret::from(value)).await.map_err(refused)
+    store
+        .set(name, Secret::from(value), &hosts)
+        .await
+        .map_err(refused)?;
+    Ok("set")
 }
 
 /// Delete a secret, an `application/x-www-form-urlencoded` [`DeleteForm`].
@@ -129,7 +161,7 @@ pub async fn delete(
                 status,
                 None,
                 Some(error),
-                String::new(),
+                Kept::default(),
             )
             .await
         }
@@ -138,7 +170,9 @@ pub async fn delete(
 
 fn refused(error: SecretError) -> Refused {
     match error {
-        SecretError::InvalidName(_) => (StatusCode::BAD_REQUEST, error.to_string()),
+        SecretError::InvalidName(_) | SecretError::InvalidHost(_) => {
+            (StatusCode::BAD_REQUEST, error.to_string())
+        }
         other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
     }
 }
@@ -151,13 +185,20 @@ fn changed(state: &AppState, done: &str, name: &str) -> Response {
     }
 }
 
+/// What the form keeps when it's refused: never the value.
+#[derive(Default)]
+struct Kept {
+    name: String,
+    hosts: String,
+}
+
 async fn page(
     state: &AppState,
     store: &dyn SecretStore,
     status: StatusCode,
     notice: Option<String>,
     mut error: Option<String>,
-    name: String,
+    kept: Kept,
 ) -> Response {
     let mut rows = BTreeMap::new();
     match store.list().await {
@@ -165,6 +206,7 @@ async fn page(
             for info in kept {
                 let row = SecretRow {
                     name: info.name.clone(),
+                    hosts: info.hosts,
                     updated_at: Some(info.updated_at),
                     granted_to: Vec::new(),
                 };
@@ -182,6 +224,7 @@ async fn page(
                     for granted in module.grants.secrets {
                         let row = rows.entry(granted.clone()).or_insert_with(|| SecretRow {
                             name: granted,
+                            hosts: Vec::new(),
                             updated_at: None,
                             granted_to: Vec::new(),
                         });
@@ -201,7 +244,8 @@ async fn page(
         modules: state.node_modules.is_some(),
         notice,
         error,
-        name,
+        name: kept.name,
+        hosts: kept.hosts,
     };
     (status, template).into_response()
 }

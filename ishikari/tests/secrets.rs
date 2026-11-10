@@ -40,7 +40,7 @@ async fn names_are_checked() {
     ] {
         let got = secrets.get(name).await;
         assert!(matches!(got, Err(SecretError::InvalidName(_))), "{name:?}");
-        let set = secrets.set(name, Secret::from("x")).await;
+        let set = secrets.set(name, Secret::from("x"), &[]).await;
         assert!(matches!(set, Err(SecretError::InvalidName(_))), "{name:?}");
     }
     for name in ["stripe/api-key", "A_B.c-1", "a/.b/c..", &"a".repeat(200)] {
@@ -69,8 +69,8 @@ async fn env_secrets_are_variables() {
 #[tokio::test]
 async fn memory_secrets_are_kept() {
     let secrets = MemorySecrets::new().with("b", "2");
-    secrets.set("a", Secret::from("1")).await.unwrap();
-    secrets.set("b", Secret::from("3")).await.unwrap();
+    secrets.set("a", Secret::from("1"), &[]).await.unwrap();
+    secrets.set("b", Secret::from("3"), &[]).await.unwrap();
     let names: Vec<String> = secrets
         .list()
         .await
@@ -106,11 +106,11 @@ async fn postgres_secrets_are_kept_encrypted() {
     let secrets = PostgresSecrets::new(db.pool.clone(), key("k1", 1));
 
     secrets
-        .set("stripe/api-key", Secret::from("sk_live_0123456789"))
+        .set("stripe/api-key", Secret::from("sk_live_0123456789"), &[])
         .await
         .unwrap();
     secrets
-        .set("slack/token", Secret::from("xoxb"))
+        .set("slack/token", Secret::from("xoxb"), &[])
         .await
         .unwrap();
     assert_eq!(
@@ -145,7 +145,7 @@ async fn postgres_secrets_are_kept_encrypted() {
     assert_eq!(found["slack/token"].expose(), "xoxb");
 
     secrets
-        .set("slack/token", Secret::from("xoxp"))
+        .set("slack/token", Secret::from("xoxp"), &[])
         .await
         .unwrap();
     assert_eq!(
@@ -159,7 +159,7 @@ async fn postgres_secrets_are_kept_encrypted() {
     assert!(!secrets.delete("slack/token").await.unwrap());
     assert_eq!(secrets.get("slack/token").await.unwrap(), None);
     assert!(matches!(
-        secrets.set("not a name", Secret::from("x")).await,
+        secrets.set("not a name", Secret::from("x"), &[]).await,
         Err(SecretError::InvalidName(_))
     ));
 
@@ -173,8 +173,8 @@ async fn a_secret_is_bound_to_its_name() {
         return;
     };
     let secrets = PostgresSecrets::new(db.pool.clone(), key("k1", 1));
-    secrets.set("a", Secret::from("for a")).await.unwrap();
-    secrets.set("b", Secret::from("for b")).await.unwrap();
+    secrets.set("a", Secret::from("for a"), &[]).await.unwrap();
+    secrets.set("b", Secret::from("for b"), &[]).await.unwrap();
 
     sqlx::query(
         "UPDATE ishikari_secrets SET (ciphertext, nonce) = \
@@ -198,8 +198,8 @@ async fn keys_are_rotated() {
         return;
     };
     let before = PostgresSecrets::new(db.pool.clone(), key("k1", 1));
-    before.set("a", Secret::from("1")).await.unwrap();
-    before.set("b", Secret::from("2")).await.unwrap();
+    before.set("a", Secret::from("1"), &[]).await.unwrap();
+    before.set("b", Secret::from("2"), &[]).await.unwrap();
 
     let without = PostgresSecrets::new(db.pool.clone(), key("k2", 2));
     let why = backend_error(without.get("a").await);
@@ -213,7 +213,7 @@ async fn keys_are_rotated() {
 
     let during = PostgresSecrets::new(db.pool.clone(), key("k2", 2)).old_key(key("k1", 1));
     assert_eq!(during.get("a").await.unwrap(), Some(Secret::from("1")));
-    during.set("c", Secret::from("3")).await.unwrap();
+    during.set("c", Secret::from("3"), &[]).await.unwrap();
     assert_eq!(during.rotate().await.unwrap(), 2);
     assert_eq!(during.rotate().await.unwrap(), 0);
 
@@ -246,7 +246,7 @@ async fn postgres_secrets_are_kept_in_a_schema() {
         return;
     };
     let secrets = PostgresSecrets::new(db.plain_pool().await, key("k1", 1)).schema(&db.schema);
-    secrets.set("a", Secret::from("1")).await.unwrap();
+    secrets.set("a", Secret::from("1"), &[]).await.unwrap();
     let in_schema = PostgresSecrets::new(db.pool.clone(), key("k1", 1));
     assert_eq!(in_schema.get("a").await.unwrap(), Some(Secret::from("1")));
 
@@ -261,4 +261,108 @@ async fn a_key_id_is_given_once() {
     let _ = PostgresSecrets::new(pool, key("k2", 2))
         .old_key(key("k1", 1))
         .old_key(key("k1", 9));
+}
+
+fn hosts(hosts: &[&str]) -> Vec<String> {
+    hosts.iter().map(|h| h.to_string()).collect()
+}
+
+/// A secret is kept with the hosts a module may send it to: listed with it, read with its value,
+/// and changed without it. A secret set without hosts may be sent to none.
+async fn hosts_are_kept_by(secrets: &dyn SecretStore) {
+    secrets
+        .set(
+            "a",
+            Secret::from("1"),
+            &hosts(&[" api.example.com ", "", "*.example.org"]),
+        )
+        .await
+        .unwrap();
+    secrets.set("b", Secret::from("2"), &[]).await.unwrap();
+
+    let listed = secrets.list().await.unwrap();
+    assert_eq!(listed[0].hosts, ["*.example.org", "api.example.com"]);
+    assert!(listed[1].hosts.is_empty());
+
+    let names = hosts(&["a", "b", "nope"]);
+    let bound = secrets.get_bound(&names).await.unwrap();
+    assert_eq!(bound.len(), 2);
+    assert_eq!(bound["a"].value, Secret::from("1"));
+    assert_eq!(bound["a"].hosts, ["*.example.org", "api.example.com"]);
+    assert!(bound["b"].hosts.is_empty());
+
+    assert!(secrets
+        .bind("b", &hosts(&["127.0.0.1:8080"]))
+        .await
+        .unwrap());
+    assert!(!secrets.bind("nope", &hosts(&["x.example"])).await.unwrap());
+    let bound = secrets.get_bound(&names).await.unwrap();
+    assert_eq!(bound["b"].hosts, ["127.0.0.1:8080"]);
+    assert_eq!(bound["b"].value, Secret::from("2"));
+
+    for bad in ["https://api.example.com", "a b", "a,b", "a/b"] {
+        let set = secrets.set("c", Secret::from("3"), &hosts(&[bad])).await;
+        assert!(matches!(set, Err(SecretError::InvalidHost(_))), "{bad:?}");
+        let bind = secrets.bind("a", &hosts(&[bad])).await;
+        assert!(matches!(bind, Err(SecretError::InvalidHost(_))), "{bad:?}");
+    }
+    assert_eq!(secrets.get("c").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn memory_secrets_keep_their_hosts() {
+    hosts_are_kept_by(&MemorySecrets::new()).await;
+}
+
+#[tokio::test]
+async fn postgres_secrets_keep_their_hosts() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    hosts_are_kept_by(&PostgresSecrets::new(db.pool.clone(), key("k1", 1))).await;
+    db.finish().await;
+}
+
+/// A secret of the environment's hosts are its variable's, with `_HOSTS`, split by commas.
+#[tokio::test]
+async fn env_secrets_hosts_are_variables() {
+    std::env::set_var("ISHIKARI_TEST_HOSTS_API_KEY", "k");
+    std::env::set_var(
+        "ISHIKARI_TEST_HOSTS_API_KEY_HOSTS",
+        "api.example.com, *.example.org",
+    );
+    std::env::set_var("ISHIKARI_TEST_HOSTS_OTHER", "o");
+    std::env::set_var("ISHIKARI_TEST_HOSTS_BAD", "b");
+    std::env::set_var("ISHIKARI_TEST_HOSTS_BAD_HOSTS", "https://x.example");
+    let secrets = EnvSecrets::new("ISHIKARI_TEST_HOSTS_");
+
+    let bound = secrets
+        .get_bound(&hosts(&["api/key", "other", "nope"]))
+        .await
+        .unwrap();
+    assert_eq!(bound.len(), 2);
+    assert_eq!(bound["api/key"].value, Secret::from("k"));
+    assert_eq!(bound["api/key"].hosts, ["*.example.org", "api.example.com"]);
+    assert!(bound["other"].hosts.is_empty());
+    assert!(matches!(
+        secrets.get_bound(&hosts(&["bad"])).await,
+        Err(SecretError::InvalidHost(_))
+    ));
+}
+
+/// A backend that keeps no hosts binds its secrets to none.
+#[tokio::test]
+async fn a_backend_without_hosts_binds_none() {
+    struct Plain;
+
+    #[async_trait::async_trait]
+    impl Secrets for Plain {
+        async fn get(&self, name: &str) -> Result<Option<Secret>, SecretError> {
+            Ok(Some(Secret::from(name)))
+        }
+    }
+
+    let bound = Plain.get_bound(&hosts(&["a"])).await.unwrap();
+    assert_eq!(bound["a"].value, Secret::from("a"));
+    assert!(bound["a"].hosts.is_empty());
 }

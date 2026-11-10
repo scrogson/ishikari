@@ -25,9 +25,12 @@
 //! A module is a component of the `ishikari:node` world (`wit/node.wit`, [`WIT`]): it exports
 //! `spec`, the node type as JSON, and `run`, which takes a node's inputs as JSON and gives its
 //! output. It reaches nothing but what its upload granted ([`ModuleGrants`]): the hosts it may
-//! send HTTP requests to through `host.fetch`, and the host's secrets it may read through
-//! `host.secret` (from the backend given to [`WasmModules::secrets`]; their values are redacted
-//! from what its nodes return, fail with and log), within its time and memory limits. WASI is
+//! send HTTP requests to through `host.fetch`, and the host's secrets it may send (from the
+//! backend given to [`WasmModules::secrets`]), within its time and memory limits. It never reads
+//! a secret's value: `host.secret` gives it a placeholder, `{{secret:NAME}}`, which `host.fetch`
+//! replaces with the value in a request's headers, and only in a request to one of the hosts the
+//! secret is bound to ([`BoundSecret::hosts`]); sent anywhere else, the request fails. Values
+//! are redacted from what its nodes return, fail with and log all the same. WASI is
 //! linked for guests' standard libraries, with no files, environment, arguments or sockets;
 //! stdout and stderr go to the node's logs with `host.log`.
 //!
@@ -36,8 +39,8 @@
 //! promise of it), run by the JavaScript runtime this crate ships (a component of the
 //! `script-node` world, with Boa) in the same sandbox. Its types are stripped where they stand,
 //! so what it throws is placed in its TypeScript. `console` goes to the node's logs, `fetch`
-//! through `host.fetch`, and `secret(name)` (which throws when there's none it may read) is
-//! `host.secret`.
+//! through `host.fetch`, and `secret(name)` (a placeholder, which throws when there's no secret
+//! it may send) is `host.secret`.
 //!
 //! ```js
 //! export const spec = {
@@ -53,6 +56,7 @@
 //! ```
 //!
 //! [`NodeModules`]: ishikari::execution::NodeModules
+//! [`BoundSecret::hosts`]: ishikari::secrets::BoundSecret::hosts
 //! [`NodeTypes::modules`]: ishikari::execution::NodeTypes::modules
 
 mod nesting;
@@ -263,8 +267,9 @@ impl WasmModules {
     }
 
     /// Run `guest` as a node, on a blocking thread, with the secrets `grants` grants read
-    /// first: `input` is what its `run` takes. Its output is JSON; the secrets' values are
-    /// redacted from it, its error and its logs.
+    /// first, and the hosts each may be sent to: `input` is what its `run` takes. Its output is
+    /// JSON; the secrets' values, which it's never given, are redacted from it, its error and
+    /// its logs all the same.
     async fn run(
         &self,
         guest: Guest,
@@ -274,7 +279,7 @@ impl WasmModules {
         let secrets = match &self.secrets {
             Some(secrets) if !grants.secrets.is_empty() => Some(
                 secrets
-                    .get_all(&grants.secrets)
+                    .get_bound(&grants.secrets)
                     .await
                     .map_err(|e| format!("its secrets couldn't be read: {e}"))?,
             ),
@@ -282,7 +287,9 @@ impl WasmModules {
             None => None,
         };
         let redact = Arc::new(Redact::new(
-            secrets.iter().flat_map(|secrets| secrets.values()),
+            secrets
+                .iter()
+                .flat_map(|secrets| secrets.values().map(|bound| &bound.value)),
         ));
         let sandbox = Sandbox::new(
             grants.allowed_hosts.clone(),

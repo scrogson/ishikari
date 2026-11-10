@@ -1,5 +1,6 @@
-//! A module reads the host's secrets it was granted, by name, from the backend its
-//! `WasmModules` was given; their values are redacted from its output, errors and logs.
+//! A module is given a placeholder for each of the host's secrets it was granted, never its
+//! value: the host puts the value in a request's headers, to the hosts the secret is bound to.
+//! What would carry a value out is redacted all the same.
 
 mod common;
 
@@ -15,30 +16,51 @@ const SCRIPT: &str = "test/script";
 
 const KEY: &str = "sk_live_0123456789";
 
+/// `KEY` as base64.
+const ENCODED_KEY: &str = "c2tfbGl2ZV8wMTIzNDU2Nzg5";
+
 /// The test component, which prints its `text` for `op: "print"`.
 const KIT: &[u8] = include_bytes!("fixtures/testkit-v1.wasm");
 
-/// A script named `test/script` reading secrets as `inputs.op` says.
+/// A script named `test/script` using secrets as `inputs.op` says.
 const READS: &str = r#"
 export const spec = { name: "test/script", category: "test" };
-export function run({ inputs }) {
+export async function run({ inputs }) {
   switch (inputs.op) {
     case "read":
-      return { length: secret(inputs.name).length };
+      return { value: secret(inputs.name) };
     case "leak":
       console.log(`the key is ${secret("api/key")}`);
-      return { key: secret("api/key"), nested: [`Bearer ${secret("api/key")}`] };
+      return {
+        key: secret("api/key"),
+        nested: [`Bearer ${secret("api/key")}`],
+        encoded: btoa(secret("api/key")),
+        reversed: [...secret("api/key")].reverse().join(""),
+      };
     case "throw":
       throw new Error(`refused ${secret("api/key")}`);
+    case "send": {
+      const response = await fetch(inputs.url, {
+        method: inputs.body ? "POST" : "GET",
+        headers: { authorization: `Bearer ${secret("api/key")}` },
+        body: inputs.body ?? undefined,
+      });
+      return await response.text();
+    }
   }
 }
 "#;
 
 fn upload(secrets: &[&str]) -> ModuleUpload {
+    upload_reaching(secrets, vec![])
+}
+
+fn upload_reaching(secrets: &[&str], allowed_hosts: Vec<String>) -> ModuleUpload {
     ModuleUpload {
         bytes: READS.as_bytes().to_vec(),
         grants: ModuleGrants {
             secrets: secrets.iter().map(|name| name.to_string()).collect(),
+            allowed_hosts,
             ..ModuleGrants::default()
         },
     }
@@ -47,15 +69,15 @@ fn upload(secrets: &[&str]) -> ModuleUpload {
 fn host_secrets() -> Arc<MemorySecrets> {
     Arc::new(
         MemorySecrets::new()
-            .with("api/key", KEY)
+            .with_hosts("api/key", KEY, &["127.0.0.1"])
             .with("api/other", "not granted"),
     )
 }
 
-/// A script's `secret(name)` is the host's secret of that name when its module was granted it:
-/// one it wasn't, or the host has none of, throws.
+/// A script's `secret(name)` is a placeholder for the host's secret of that name, when its
+/// module was granted it: one it wasn't, or the host has none of, throws.
 #[tokio::test]
-async fn a_script_reads_the_secrets_it_was_granted() {
+async fn a_script_is_given_placeholders_for_its_secrets() {
     let Some(db) = TestDb::new().await else {
         return;
     };
@@ -75,7 +97,7 @@ async fn a_script_reads_the_secrets_it_was_granted() {
 
     assert_eq!(
         read("api/key").await.unwrap(),
-        json!({ "length": KEY.len() })
+        json!({ "value": "{{secret:api/key}}" })
     );
     let error = failure(read("api/other").await);
     assert!(
@@ -88,9 +110,10 @@ async fn a_script_reads_the_secrets_it_was_granted() {
     db.finish().await;
 }
 
-/// The values of a module's secrets are redacted from what its node returns, throws and logs.
+/// What a node returns, throws and logs, however it's encoded, holds no secret's value: its
+/// script never had one.
 #[tokio::test]
-async fn secrets_are_redacted() {
+async fn a_script_never_has_a_secrets_value() {
     let Some(db) = TestDb::new().await else {
         return;
     };
@@ -98,25 +121,76 @@ async fn secrets_are_redacted() {
     modules.upload(upload(&["api/key"])).await.unwrap();
     let run = |op: &str| common::run(&modules, &db.pool, SCRIPT, json!({ "op": op }));
 
-    assert_eq!(
-        run("leak").await.unwrap(),
-        json!({ "key": "[redacted]", "nested": ["Bearer [redacted]"] })
-    );
+    let output = run("leak").await.unwrap();
+    assert_eq!(output["key"], "{{secret:api/key}}");
+    assert_eq!(output["nested"], json!(["Bearer {{secret:api/key}}"]));
+    let text = output.to_string();
+    for value in [KEY, ENCODED_KEY, "9876543210_evil_ks"] {
+        assert!(!text.contains(value), "{text}");
+    }
     let error = failure(run("throw").await);
-    assert!(error.contains("refused [redacted]"), "{error}");
-    assert!(!error.contains(KEY), "{error}");
+    assert!(error.contains("refused {{secret:api/key}}"), "{error}");
 
     let inputs: HashMap<_, _> = [("op".to_string(), json!("leak"))].into();
     let run = modules
         .test_run(upload(&["api/key"]), inputs)
         .await
         .unwrap();
-    assert_eq!(
-        run.output,
-        Ok(json!({ "key": "[redacted]", "nested": ["Bearer [redacted]"] }))
+    let output = run.output.unwrap().to_string();
+    assert!(
+        !output.contains(KEY) && !output.contains(ENCODED_KEY),
+        "{output}"
     );
-    assert_eq!(run.logs, ["info: the key is [redacted]"]);
+    assert_eq!(run.logs, ["info: the key is {{secret:api/key}}"]);
     assert_eq!(run.secrets, ["api/key"]);
+
+    db.finish().await;
+}
+
+/// A script's request carries a secret's value in its headers to a host the secret is bound
+/// to; to a host the module may reach that the secret isn't bound to, or in its body, it fails.
+#[tokio::test]
+async fn a_script_sends_a_secret_to_its_hosts_only() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let port = common::keyed(KEY).await;
+    let modules = WasmModules::new(db.pool.clone()).secrets(host_secrets());
+    let reaching = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    modules
+        .upload(upload_reaching(&["api/key"], reaching))
+        .await
+        .unwrap();
+    let send = |url: String, body: Option<&str>| {
+        common::run(
+            &modules,
+            &db.pool,
+            SCRIPT,
+            json!({ "op": "send", "url": url, "body": body }),
+        )
+    };
+
+    let sent = send(format!("http://127.0.0.1:{port}/"), None)
+        .await
+        .unwrap();
+    assert_eq!(sent, json!("sent"));
+
+    let error = failure(send(format!("http://localhost:{port}/"), None).await);
+    assert!(
+        error.contains("the secret api/key may not be sent to localhost"),
+        "{error}"
+    );
+    let error = failure(
+        send(
+            format!("http://127.0.0.1:{port}/"),
+            Some("key={{secret:api/key}}"),
+        )
+        .await,
+    );
+    assert!(
+        error.contains("a secret is sent only in a request's headers"),
+        "{error}"
+    );
 
     db.finish().await;
 }
@@ -180,7 +254,7 @@ async fn a_test_run_says_which_secrets_it_read() {
         .test_run(upload(&["api/key", "api/other"]), inputs("api/other"))
         .await
         .unwrap();
-    assert_eq!(run.output, Ok(json!({ "length": 11 })));
+    assert_eq!(run.output, Ok(json!({ "value": "{{secret:api/other}}" })));
     assert_eq!(run.secrets, ["api/other"]);
     let run = modules
         .test_run(upload(&["api/key"]), inputs("api/other"))
