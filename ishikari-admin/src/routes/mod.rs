@@ -13,6 +13,7 @@ pub mod node_types;
 pub mod queues;
 pub mod resolver;
 pub mod sagas;
+pub mod schedules;
 pub mod secrets;
 pub mod workflows;
 

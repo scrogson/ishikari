@@ -124,7 +124,7 @@ let engine = Engine::builder("my-app")
     .start(Postgres::new(pool.clone()));
 
 // Schedules made at run time, kept in the database (schema v11): every engine picks them up on
-// its next cron check, with no restart.
+// its next cron check, with no restart. The admin's Schedules page lists and deletes them.
 let crons = ishikari::Crons::new(pool.clone());
 crons.put(&ishikari::CronEntry::new("team-7-digest", "30 8 * * 1-5", &DailyDigest)?)
     .await?;

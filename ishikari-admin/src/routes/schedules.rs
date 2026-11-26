@@ -1,0 +1,366 @@
+//! The Schedules page: the cron entries kept in the database (`ishikari::Crons`), put by the host
+//! or its agents while its engines run, each with its next and last run. Operators delete them
+//! here, and, with the host's modules (`AppState::with_node_modules`), schedule a module.
+//! Entries given to an engine in code aren't kept there, so they aren't listed.
+
+use std::collections::HashMap;
+use std::str::FromStr;
+
+use axum::extract::rejection::FormRejection;
+use axum::extract::{Form, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Redirect, Response};
+use chrono::{DateTime, Utc};
+use ishikari::chrono_tz::Tz;
+use ishikari::execution::ModuleJob;
+use ishikari::{CronEntry, Crons, StoredCron};
+use serde::Deserialize;
+
+use crate::templates::SchedulesTemplate;
+use crate::AppState;
+
+/// A schedule, as the page lists it.
+#[derive(Debug, Clone)]
+pub struct ScheduleRow {
+    pub name: String,
+    pub pattern: String,
+    pub timezone: String,
+    /// What it runs: a module job's module, else the job's type.
+    pub job: String,
+    /// Whether `job` is a module.
+    pub module: bool,
+    /// The job's type, as its jobs are stored.
+    pub worker: String,
+    pub queue: String,
+    pub priority: i32,
+    pub max_attempts: i32,
+    pub tags: Vec<String>,
+    /// Its next slot, if the pattern has one.
+    pub next: Option<DateTime<Utc>>,
+    /// The job of its latest slot, while it's kept.
+    pub last: Option<LastRun>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The job of a schedule's latest slot.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LastRun {
+    pub id: i64,
+    pub state: String,
+    pub scheduled_at: DateTime<Utc>,
+}
+
+impl LastRun {
+    /// The badge class for its state.
+    pub fn state_class(&self) -> &'static str {
+        match self.state.as_str() {
+            "available" => "ik-tone-primary",
+            "scheduled" => "ik-tone-violet",
+            "executing" => "ik-tone-info ik-live",
+            "completed" => "ik-tone-success",
+            "discarded" => "ik-tone-danger",
+            "retryable" => "ik-tone-warning",
+            _ => "ik-tone-neutral",
+        }
+    }
+}
+
+/// A schedule whose pattern or timezone can't be read (edited by hand): it never runs.
+#[derive(Debug, Clone)]
+pub struct UnreadableRow {
+    pub name: String,
+    pub error: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// What the page says after a change.
+#[derive(Debug, Deserialize)]
+pub struct ChangedQuery {
+    pub put: Option<String>,
+    pub deleted: Option<String>,
+}
+
+/// The form scheduling a module.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ScheduleForm {
+    pub name: String,
+    pub module: String,
+    pub pattern: String,
+    /// An IANA timezone, as `America/Chicago`; UTC when empty.
+    pub timezone: String,
+    /// The module's inputs: a JSON object, `{}` when empty.
+    pub args: String,
+    /// The queue, `modules` when empty.
+    pub queue: String,
+    /// How many times each job is attempted, the job's own when empty.
+    pub max_attempts: String,
+}
+
+/// The form deleting a schedule.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct DeleteForm {
+    pub name: String,
+}
+
+type Refused = (StatusCode, String);
+
+/// The Schedules page.
+pub async fn list(State(state): State<AppState>, Query(query): Query<ChangedQuery>) -> Response {
+    let notice = match (query.put, query.deleted) {
+        (Some(name), _) => Some(format!("Scheduled {name}")),
+        (_, Some(name)) => Some(format!("Deleted {name}")),
+        _ => None,
+    };
+    let form = ScheduleForm {
+        pattern: "0 * * * *".into(),
+        timezone: "UTC".into(),
+        args: "{}".into(),
+        ..ScheduleForm::default()
+    };
+    page(&state, StatusCode::OK, notice, None, form).await
+}
+
+/// Schedule a module, an `application/x-www-form-urlencoded` [`ScheduleForm`]: a
+/// [`ModuleJob`] of it, put under the form's name (replacing the schedule of that name).
+pub async fn put(
+    State(state): State<AppState>,
+    form: Result<Form<ScheduleForm>, FormRejection>,
+) -> Response {
+    if state.node_modules.is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let form = match form {
+        Ok(Form(form)) => form,
+        Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
+    };
+    match putting(&state, &form).await {
+        Ok(name) => changed(&state, "put", &name),
+        Err((status, error)) => page(&state, status, None, Some(error), form).await,
+    }
+}
+
+/// Put the form's schedule: its name, or why it can't be put.
+async fn putting(state: &AppState, form: &ScheduleForm) -> Result<String, Refused> {
+    let bad = |why: String| (StatusCode::BAD_REQUEST, why);
+    let name = form.name.trim();
+    if name.is_empty() {
+        return Err(bad("Name the schedule".into()));
+    }
+    let module = form.module.trim();
+    let modules = state.node_modules.as_ref().expect("checked by the handler");
+    let known = modules
+        .modules()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .iter()
+        .any(|m| m.spec.name == module);
+    if !known {
+        return Err(bad(format!("No module {module}")));
+    }
+    let args = super::node_types::object_args(&form.args).map_err(|why| bad(why.into()))?;
+    let max_attempts =
+        super::node_types::max_attempts(&form.max_attempts).map_err(|why| bad(why.into()))?;
+    let timezone = match form.timezone.trim() {
+        "" => Tz::UTC,
+        tz => Tz::from_str(tz).map_err(|_| bad(format!("Unknown timezone {tz}")))?,
+    };
+    let job = ModuleJob::new(module, args);
+    let mut entry = CronEntry::new(name, form.pattern.trim(), &job)
+        .map_err(|e| bad(e.to_string()))?
+        .timezone(timezone);
+    if let Some(attempts) = max_attempts {
+        entry = entry.max_attempts(attempts);
+    }
+    match form.queue.trim() {
+        "" => {}
+        queue => entry = entry.queue(queue),
+    }
+    crons(state).put(&entry).await.map_err(|e| {
+        let why = format!("Couldn't put the schedule: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, why)
+    })?;
+    Ok(name.to_string())
+}
+
+/// Delete a schedule, an `application/x-www-form-urlencoded` [`DeleteForm`]. No slot of it is
+/// inserted once it's deleted; a job already inserted still runs.
+pub async fn delete(
+    State(state): State<AppState>,
+    form: Result<Form<DeleteForm>, FormRejection>,
+) -> Response {
+    let name = match form {
+        Ok(Form(form)) => form.name.trim().to_string(),
+        Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
+    };
+    let error = match crons(&state).delete(&name).await {
+        Ok(true) => return changed(&state, "deleted", &name),
+        Ok(false) => (StatusCode::NOT_FOUND, format!("No schedule {name}")),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Couldn't delete {name}: {e}"),
+        ),
+    };
+    page(
+        &state,
+        error.0,
+        None,
+        Some(error.1),
+        ScheduleForm::default(),
+    )
+    .await
+}
+
+/// The schedules of the admin's schema.
+fn crons(state: &AppState) -> Crons {
+    let crons = Crons::new(state.pool.clone());
+    match state.schema() {
+        Some(schema) => crons.schema(schema),
+        None => crons,
+    }
+}
+
+/// Back to the page, which says what was `done` to `name`.
+fn changed(state: &AppState, done: &str, name: &str) -> Response {
+    match serde_urlencoded::to_string([(done, name)]) {
+        Ok(query) => {
+            Redirect::to(&format!("{}/schedules?{query}", state.base_path)).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// The job of each schedule's latest slot, by schedule name, in one query.
+async fn last_runs(
+    state: &AppState,
+    names: &[String],
+) -> Result<HashMap<String, LastRun>, sqlx::Error> {
+    if names.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let jobs = match state.schema() {
+        Some(schema) => format!("{schema}.ishikari_jobs"),
+        None => "ishikari_jobs".to_string(),
+    };
+    // `meta @>` is what the GIN index on `meta` serves.
+    let rows: Vec<(String, i64, String, DateTime<Utc>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT c.name, j.id, j.state::text, j.scheduled_at
+             FROM unnest($1::text[]) AS c(name)
+             CROSS JOIN LATERAL (
+                 SELECT id, state, scheduled_at FROM {jobs}
+                 WHERE meta @> jsonb_build_object('cron', c.name)
+                 ORDER BY scheduled_at DESC, id DESC LIMIT 1
+             ) j"
+        )))
+        .bind(names)
+        .fetch_all(&state.pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, id, state, scheduled_at)| {
+            (
+                name,
+                LastRun {
+                    id,
+                    state,
+                    scheduled_at,
+                },
+            )
+        })
+        .collect())
+}
+
+fn row(cron: StoredCron, now: DateTime<Utc>, last: Option<LastRun>) -> ScheduleRow {
+    let module = (cron.worker() == ModuleJob::WORKER)
+        .then(|| cron.args().get("module").and_then(|m| m.as_str()))
+        .flatten();
+    let job = match module {
+        Some(module) => module.to_string(),
+        None => cron
+            .worker()
+            .rsplit("::")
+            .next()
+            .unwrap_or(cron.worker())
+            .to_string(),
+    };
+    ScheduleRow {
+        name: cron.name().to_string(),
+        pattern: cron.pattern().to_string(),
+        timezone: cron.timezone().name().to_string(),
+        job,
+        module: module.is_some(),
+        worker: cron.worker().to_string(),
+        queue: cron.queue().to_string(),
+        priority: cron.priority(),
+        max_attempts: cron.max_attempts(),
+        tags: cron.tags().to_vec(),
+        next: cron.next(now),
+        last,
+        updated_at: cron.updated_at(),
+    }
+}
+
+async fn page(
+    state: &AppState,
+    status: StatusCode,
+    notice: Option<String>,
+    mut error: Option<String>,
+    form: ScheduleForm,
+) -> Response {
+    let now = Utc::now();
+    let mut schedules = Vec::new();
+    let mut unreadable = Vec::new();
+    match crons(state).list_all().await {
+        Ok(all) => {
+            let names: Vec<String> = all
+                .iter()
+                .filter_map(|c| c.as_ref().ok().map(|c| c.name().to_string()))
+                .collect();
+            let mut last = last_runs(state, &names).await.unwrap_or_else(|e| {
+                error.get_or_insert(format!("Couldn't find the schedules' last runs: {e}"));
+                HashMap::new()
+            });
+            for cron in all {
+                match cron {
+                    Ok(cron) => {
+                        let last = last.remove(cron.name());
+                        schedules.push(row(cron, now, last));
+                    }
+                    Err(u) => unreadable.push(UnreadableRow {
+                        name: u.name().to_string(),
+                        error: u.error().to_string(),
+                        updated_at: u.updated_at(),
+                    }),
+                }
+            }
+        }
+        Err(e) => {
+            error.get_or_insert(format!(
+                "Couldn't list the schedules (is the schema at v11?): {e}"
+            ));
+        }
+    }
+    let modules = match &state.node_modules {
+        Some(modules) => match modules.modules().await {
+            Ok(modules) => Some(modules.into_iter().map(|m| m.spec.name).collect()),
+            Err(e) => {
+                error.get_or_insert(format!("Couldn't list the modules: {e}"));
+                Some(Vec::new())
+            }
+        },
+        None => None,
+    };
+    let template = SchedulesTemplate {
+        base_path: state.base_path.to_string(),
+        nav_items: state.nav_items.to_vec(),
+        schedules,
+        unreadable,
+        modules,
+        notice,
+        error,
+        form,
+    };
+    (status, template).into_response()
+}

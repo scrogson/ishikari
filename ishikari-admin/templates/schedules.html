@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% import "partials/ui.html" as ui %}
+
+{% block title %}Schedules{% endblock %}
+
+{% block content %}
+<header class="ik-page-header">
+    <div>
+        <h1 class="ik-title">Schedules</h1>
+        <p class="ik-subtitle">Cron entries kept in the database, put and deleted while the engines run: each engine reads them again on every cron check and inserts each slot once. Entries an engine is given in code aren't listed here.</p>
+    </div>
+</header>
+
+{% if let Some(notice) = notice %}
+<div role="status" class="ik-alert">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+    <p>{{ notice }}</p>
+</div>
+{% endif %}
+
+{% if let Some(e) = error %}
+<div role="alert" class="ik-alert ik-alert-error">
+    {% call ui::error_icon() %}
+    <div class="min-w-0">
+        <p class="ik-alert-title">Error</p>
+        <p class="break-words whitespace-pre-line">{{ e }}</p>
+    </div>
+</div>
+{% endif %}
+
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Schedules</h2>
+            <p class="ik-card-desc">By name, with the next slot and the job of the latest</p>
+        </div>
+    </div>
+    {% if schedules.is_empty() && unreadable.is_empty() %}
+    {% call ui::empty("No schedules") %}
+    {% else %}
+    <div class="ik-table-wrap">
+        <table class="ik-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Pattern</th>
+                    <th>Runs</th>
+                    <th>Queue</th>
+                    <th>Next run</th>
+                    <th>Last run</th>
+                    <th><span class="sr-only">Actions</span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schedules %}
+                <tr>
+                    <td>
+                        <span class="font-medium ik-mono">{{ s.name }}</span>
+                        {% if !s.tags.is_empty() %}
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            {% for tag in s.tags %}<span class="ik-badge ik-badge-sm ik-tone-neutral">{{ tag }}</span>{% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="whitespace-nowrap">
+                        <code class="ik-code-inline">{{ s.pattern }}</code>
+                        <div class="ik-muted text-xs mt-1">{{ s.timezone }}</div>
+                    </td>
+                    <td class="ik-mono text-xs" title="{{ s.worker }}">
+                        {{ s.job }}
+                        {% if s.module %}<div class="ik-muted">module</div>{% endif %}
+                    </td>
+                    <td class="ik-mono text-xs whitespace-nowrap">
+                        {{ s.queue }}
+                        <div class="ik-muted">{{ s.max_attempts }} attempts{% if s.priority > 0 %} · priority {{ s.priority }}{% endif %}</div>
+                    </td>
+                    <td class="whitespace-nowrap tabular-nums">
+                        {% if let Some(next) = s.next %}{{ next.format("%Y-%m-%d %H:%M") }} <span class="ik-muted text-xs">UTC</span>{% else %}<span class="ik-none">none</span>{% endif %}
+                    </td>
+                    <td class="whitespace-nowrap">
+                        {% if let Some(last) = s.last %}
+                        <a href="{{ base_path }}/jobs/{{ last.id }}" class="ik-link tabular-nums">#{{ last.id }}</a>
+                        <span class="ik-badge ik-badge-sm ik-dot {{ last.state_class() }}">{{ last.state }}</span>
+                        <div class="ik-muted text-xs mt-1 tabular-nums">{{ last.scheduled_at.format("%Y-%m-%d %H:%M") }}</div>
+                        {% else %}<span class="ik-none">none yet</span>{% endif %}
+                    </td>
+                    <td class="text-right whitespace-nowrap">
+                        <form method="post" action="{{ base_path }}/schedules/delete" class="inline">
+                            <input type="hidden" name="name" value="{{ s.name }}">
+                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" onclick="return confirm('Delete this schedule? No slot of it is inserted after this; a job already inserted still runs.')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% for u in unreadable %}
+                <tr>
+                    <td><span class="font-medium ik-mono">{{ u.name }}</span></td>
+                    <td colspan="3" class="text-xs">
+                        <span class="ik-badge ik-badge-sm ik-tone-danger">Never runs</span>
+                        <div class="ik-muted mt-1 break-words">{{ u.error }}</div>
+                    </td>
+                    <td><span class="ik-none">none</span></td>
+                    <td><span class="ik-none">none</span></td>
+                    <td class="text-right whitespace-nowrap">
+                        <form method="post" action="{{ base_path }}/schedules/delete" class="inline">
+                            <input type="hidden" name="name" value="{{ u.name }}">
+                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" onclick="return confirm('Delete this schedule?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+
+{% if let Some(modules) = modules %}
+<section class="ik-card">
+    <div class="ik-card-header">
+        <div>
+            <h2 class="ik-card-title">Schedule a module</h2>
+            <p class="ik-card-desc">A job of the module on each slot of the pattern. A schedule of the same name is replaced, and runs from now.</p>
+        </div>
+    </div>
+    <form method="post" action="{{ base_path }}/schedules" autocomplete="off">
+        <div class="ik-card-body grid gap-4 sm:grid-cols-2">
+            <label class="ik-field">
+                <span class="ik-label">Name</span>
+                <input type="text" name="name" value="{{ form.name }}" required maxlength="200" class="ik-input ik-mono" placeholder="nightly-report" spellcheck="false" autocapitalize="off">
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Module</span>
+                <select name="module" required class="ik-select ik-mono">
+                    {% for m in modules %}<option value="{{ m }}"{% if *m == form.module %} selected{% endif %}>{{ m }}</option>{% endfor %}
+                </select>
+                {% if modules.is_empty() %}<span class="ik-hint">No modules uploaded yet.</span>{% endif %}
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Pattern</span>
+                <input type="text" name="pattern" value="{{ form.pattern }}" required class="ik-input ik-mono" placeholder="0 * * * *" spellcheck="false" autocapitalize="off">
+                <span class="ik-hint">Five fields (minute hour day month weekday), or six with seconds first, as <code class="ik-code-inline">0 9 * * MON-FRI</code>.</span>
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Timezone</span>
+                <input type="text" name="timezone" value="{{ form.timezone }}" class="ik-input ik-mono" placeholder="UTC" spellcheck="false" autocapitalize="off">
+                <span class="ik-hint">The pattern's, an IANA name as <code class="ik-code-inline">America/Chicago</code>.</span>
+            </label>
+            <label class="ik-field sm:col-span-2">
+                <span class="ik-label">Args</span>
+                <textarea name="args" rows="3" class="ik-textarea ik-mono text-xs" spellcheck="false" autocapitalize="off">{{ form.args }}</textarea>
+                <span class="ik-hint">The module's inputs, a JSON object.</span>
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Queue</span>
+                <input type="text" name="queue" value="{{ form.queue }}" class="ik-input ik-mono" placeholder="modules" spellcheck="false" autocapitalize="off">
+            </label>
+            <label class="ik-field">
+                <span class="ik-label">Max attempts</span>
+                <input type="text" name="max_attempts" value="{{ form.max_attempts }}" inputmode="numeric" class="ik-input ik-mono" placeholder="the job's own">
+            </label>
+        </div>
+        <div class="ik-card-footer flex justify-end">
+            <button type="submit" class="ik-btn ik-btn-primary"{% if modules.is_empty() %} disabled{% endif %}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                Schedule
+            </button>
+        </div>
+    </form>
+</section>
+{% endif %}
+{% endblock %}

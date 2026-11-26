@@ -49,7 +49,9 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   (`/node-types/script`) writes, test-runs and saves scripts, and its job form
   (`/node-types/job`) inserts a module's `ModuleJob`. Its Secrets page sets and deletes the
   host's secrets and the hosts each is bound to (`AppState::with_secrets`), never showing a
-  value.
+  value. Its Schedules page lists the cron entries kept in the database
+  (`ishikari::Crons`), with their next and last run, deletes them and, with node modules,
+  schedules a module.
 - `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
   the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
   in a sandbox with its module's grants and limits. A script's types are stripped by swc

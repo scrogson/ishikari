@@ -594,16 +594,34 @@ pub async fn insert_job(
     }
 }
 
-/// Insert the form's job, in the admin's schema: its id, or why it can't be inserted.
-async fn insert(state: &AppState, form: &JobForm) -> Result<i64, Refused> {
-    let bad = |why: &str| (StatusCode::BAD_REQUEST, why.to_string());
-    let args = match form.args.trim() {
-        "" => serde_json::Value::Object(Default::default()),
+/// A module job's args, as a form gives them: a JSON object, or `{}` when empty.
+pub(crate) fn object_args(args: &str) -> Result<serde_json::Value, &'static str> {
+    match args.trim() {
+        "" => Ok(serde_json::Value::Object(Default::default())),
         args => serde_json::from_str(args)
             .ok()
             .filter(serde_json::Value::is_object)
-            .ok_or_else(|| bad("The args must be a JSON object"))?,
-    };
+            .ok_or("The args must be a JSON object"),
+    }
+}
+
+/// Max attempts, as a form gives them: a whole number above 0, or none when empty.
+pub(crate) fn max_attempts(attempts: &str) -> Result<Option<i32>, &'static str> {
+    match attempts.trim() {
+        "" => Ok(None),
+        attempts => attempts
+            .parse::<i32>()
+            .ok()
+            .filter(|n| *n > 0)
+            .map(Some)
+            .ok_or("Max attempts must be a whole number above 0"),
+    }
+}
+
+/// Insert the form's job, in the admin's schema: its id, or why it can't be inserted.
+async fn insert(state: &AppState, form: &JobForm) -> Result<i64, Refused> {
+    let bad = |why: &str| (StatusCode::BAD_REQUEST, why.to_string());
+    let args = object_args(&form.args).map_err(bad)?;
     let mut opts = InsertOpts::new();
     if let Some(schema) = state.schema() {
         opts = opts.schema(schema);
@@ -612,16 +630,8 @@ async fn insert(state: &AppState, form: &JobForm) -> Result<i64, Refused> {
         "" => {}
         queue => opts = opts.queue(queue),
     }
-    match form.max_attempts.trim() {
-        "" => {}
-        attempts => {
-            let attempts = attempts
-                .parse::<i32>()
-                .ok()
-                .filter(|n| *n > 0)
-                .ok_or_else(|| bad("Max attempts must be a whole number above 0"))?;
-            opts = opts.max_attempts(attempts);
-        }
+    if let Some(attempts) = max_attempts(&form.max_attempts).map_err(bad)? {
+        opts = opts.max_attempts(attempts);
     }
     match form.delay_seconds.trim() {
         "" => {}

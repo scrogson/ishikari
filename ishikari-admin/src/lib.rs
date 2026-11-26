@@ -7,6 +7,8 @@
 //! - Dashboard with job statistics
 //! - Job listing with dependency information
 //! - Queue management
+//! - Schedules: cron entries kept in the database, listed with their next and last run,
+//!   deleted, and (with node modules) a module scheduled
 //! - Workflow listing and details
 //! - Workflow definition builder (a canvas of HTML nodes and SVG edges, no build step)
 //! - Pipeline/DAG/Saga visualization
@@ -291,6 +293,7 @@ impl AppState {
             NavItem::new("Dashboard", p("/")).icon("M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"),
             NavItem::new("Jobs", p("/jobs")).icon("M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"),
             NavItem::new("Queues", p("/queues")).icon("M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"),
+            NavItem::new("Schedules", p("/schedules")).icon("M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"),
             NavItem::new("Definitions", p("/definitions")).icon("M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"),
             NavItem::new("Workflows", p("/workflows")).icon("M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6a1.125 1.125 0 01-1.125-1.125v-3.75zM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-8.25zM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-2.25z"),
             NavItem::new("Sagas", p("/sagas")).icon("M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3"),
@@ -425,6 +428,12 @@ fn routes() -> Router<AppState> {
             get(routes::secrets::list).post(routes::secrets::set),
         )
         .route("/secrets/delete", post(routes::secrets::delete))
+        // Schedules: cron entries kept in the database, put by the host or its agents
+        .route(
+            "/schedules",
+            get(routes::schedules::list).post(routes::schedules::put),
+        )
+        .route("/schedules/delete", post(routes::schedules::delete))
         // API endpoints for htmx
         .route("/api/jobs", get(routes::api::enhanced_jobs_table))
         .route("/api/stats", get(routes::api::stats_or_counts))

@@ -20,6 +20,12 @@ Migration **v11**.
   entries. An entry's slots start when it's put (none from before is caught up); a change
   applies to the slots after it; once `delete` returns, no slot of the entry is inserted. An
   entry named as one of an engine's own is ignored by it.
+- `StoredCron::next(after)`, an entry's next slot; `Crons::list_all`, every entry with those
+  whose pattern or timezone can't be read (edited by hand) as `UnreadableCron`s, so they can be
+  found and deleted (`list` skips them).
+- The admin's Schedules page lists the entries kept in the database, with their next slot and the
+  job of their latest, deletes them, and, with the host's modules
+  (`AppState::with_node_modules`), schedules a module (a `ModuleJob` per slot).
 
 ## 0.6.1
 
