@@ -15,7 +15,9 @@ transaction as your own writes, and they survive restarts, deploys and crashed n
   period. Duplicates return the existing job.
 - **Cron** runs jobs on a crontab schedule in any time zone, each slot exactly once however
   many nodes run, with no leader election. Entries given to the engine are fixed; `Crons` keeps
-  others in the database, put and deleted while it runs (by your users, or your agents).
+  others in the database, put, paused, run now and deleted while it runs (by your users, or
+  your agents), in your own transaction if you like. Each picks what's caught up after an
+  outage: every missed slot, the latest, or none.
 - **Workflows:**
   - pipelines, DAGs and sagas with compensation;
   - each is inserted atomically;
@@ -126,9 +128,11 @@ let engine = Engine::builder("my-app")
 // Schedules made at run time, kept in the database (schema v11): every engine picks them up on
 // its next cron check, with no restart. The admin's Schedules page lists and deletes them.
 let crons = ishikari::Crons::new(pool.clone());
-crons.put(&ishikari::CronEntry::new("team-7-digest", "30 8 * * 1-5", &DailyDigest)?)
+crons.put(&ishikari::CronEntry::new("team-7:digest", "30 8 * * 1-5", &DailyDigest)?
+    .catch_up(ishikari::CatchUp::Latest)) // after downtime, one late digest, not one per slot
     .await?;
-crons.delete("team-7-digest").await?;
+crons.pause("team-7:digest").await?; // or put_in / delete_in in your own transaction
+crons.delete("team-7:digest").await?;
 
 // On SIGTERM: wait up to 25 s for running jobs, give the rest back.
 let report = engine.shutdown(Duration::from_secs(25)).await;

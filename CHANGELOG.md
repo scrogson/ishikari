@@ -15,17 +15,29 @@ Migration **v11**.
 - Cron entries kept in the database, put and deleted while engines run, with no restart: for
   schedules a host's users, or its agents, make. `Crons::new(pool)` `put`s a `CronEntry`
   (`CronEntry::new(name, pattern, &job)`, its name without surrounding whitespace or control
-  characters, with `timezone`, `queue`, `priority`, `max_attempts`
-  and `tag`), and `get`s, `list`s and `delete`s them as `StoredCron`s. Every node picks a change
-  up on its next check (`cron_interval`) and inserts each slot once, as for the engine's own
-  entries. An entry's slots start when it's put (none from before is caught up); a change
-  applies to the slots after it; once `delete` returns, no slot of the entry is inserted. An
-  entry named as one of an engine's own is ignored by it.
-- `StoredCron::next(after)`, an entry's next slot; `Crons::list_all`, every entry with those
-  whose pattern or timezone can't be read (edited by hand) as `UnreadableCron`s, so they can be
-  found and deleted (`list` skips them).
+  characters, with `timezone`, `queue`, `priority`, `max_attempts`, `tag` and `catch_up`), and
+  `get`s, `list`s and `delete`s them as `StoredCron`s. Every node picks a change up on its next
+  check (`cron_interval`) and inserts each slot once, as for the engine's own entries. An
+  entry's slots start when it's put (none from before is caught up); a change applies to the
+  slots after it; once `delete` returns, no slot of the entry is inserted. An entry named as one
+  of an engine's own is ignored by it. Also:
+  - `put_in`, `delete_in`, `pause_in`, `resume_in` and `run_now_in` take the caller's
+    transaction (`&mut tx`), so an entry is kept or dropped with the host's own rows. An open
+    transaction holds up only its own entry's slots.
+  - `pause` and `resume`: a paused entry is kept and listed, but inserts no slot (none after
+    `pause` returns); it resumes from then, with none of the paused slots back-filled.
+  - `run_now` inserts an entry's job outside its schedule, marked `run_now` in its meta.
+  - `list_by_prefix` (one owner's entries, as `"tenant-42:"`) and `list_by_tag`, each served by
+    an index; `list_all`, every entry with those whose pattern or timezone can't be read (edited
+    by hand) as `UnreadableCron`s, so they can be found and deleted (`list` skips them).
+  - `StoredCron::next(after)`, an entry's next slot, and `paused()`.
+- `CatchUp` for each cron entry, the engine's own (`Cron::catch_up`) and those kept in the
+  database: what a node does with the slots missed while none ran, within `cron_catch_up`.
+  `All` (the default, as before) inserts them all; `Latest` only the newest; `None` none. A slot
+  a node couldn't insert (the database refused it) is tried again on its next check; under
+  `Latest` and `None` only while it's the newest late one and no slot falls due on time.
 - The admin's Schedules page lists the entries kept in the database, with their next slot and the
-  job of their latest, deletes them, and, with the host's modules
+  job of their latest; pauses, resumes, runs now and deletes them; and, with the host's modules
   (`AppState::with_node_modules`), schedules a module (a `ModuleJob` per slot).
 
 ## 0.6.1

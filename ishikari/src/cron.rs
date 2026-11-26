@@ -3,7 +3,8 @@
 //! Each [`Cron`] entry inserts a job on a schedule. Every node of an application runs the cron
 //! check, and each slot's job is inserted with a unique key naming the entry and the slot, so it
 //! runs exactly once however many nodes are up, with no leader election. Slots missed while no
-//! node was running are caught up within [`EngineBuilder::cron_catch_up`](crate::EngineBuilder::cron_catch_up).
+//! node was running are caught up within [`EngineBuilder::cron_catch_up`](crate::EngineBuilder::cron_catch_up):
+//! all of them, the latest or none, by each entry's [`CatchUp`].
 //!
 //! ```rust,no_run
 //! use ishikari::{Cron, Engine, Postgres, Queue};
@@ -627,9 +628,77 @@ impl CronRow {
 /// ```
 ///
 /// An entry's slots start when it's put: none from before is caught up. A change to it applies
-/// to the slots after the change, and once [`delete`](Crons::delete) returns, no node inserts
-/// another of its slots. An entry named as one of an engine's own is ignored by that engine,
-/// which runs its own.
+/// to the slots after the change, and once [`delete`](Crons::delete) (or
+/// [`pause`](Crons::pause)) returns, no node inserts another of its slots. An entry named as one
+/// of an engine's own is ignored by that engine, which runs its own.
+///
+/// # Names
+///
+/// A name is unique in the schema, across every owner of entries. Where entries belong to
+/// tenants or users, start each name with its owner's (`"tenant-42:digest"`), so two never
+/// collide, and [`list_by_prefix`](Crons::list_by_prefix) lists one owner's.
+///
+/// # With the caller's own rows
+///
+/// [`put_in`](Crons::put_in), [`delete_in`](Crons::delete_in), [`pause_in`](Crons::pause_in),
+/// [`resume_in`](Crons::resume_in) and [`run_now_in`](Crons::run_now_in) take the caller's
+/// transaction, so an entry is kept or dropped with the rows it belongs to (a subscription and
+/// its renewal):
+///
+/// ```rust,no_run
+/// # use ishikari::{CronEntry, Crons};
+/// # use ishikari::prelude::*;
+/// # #[ishikari::job] struct Renew { subscription: i64 }
+/// # #[ishikari::worker] impl Worker for Renew {
+/// #     async fn perform(&self, _: Context) -> PerformResult { Complete::default().into() }
+/// # }
+/// # async fn example(pool: sqlx::PgPool, crons: Crons) -> Result<(), Box<dyn std::error::Error>> {
+/// let mut tx = pool.begin().await?;
+/// let id: i64 = sqlx::query_scalar("INSERT INTO subscriptions (plan) VALUES ('monthly') RETURNING id")
+///     .fetch_one(&mut *tx)
+///     .await?;
+/// let renew = CronEntry::new(format!("subscription-{id}:renew"), "0 9 1 * *", &Renew { subscription: id })?;
+/// crons.put_in(&mut tx, &renew).await?;
+/// tx.commit().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # A job already inserted still runs
+///
+/// A slot's job inserted just before a delete or a pause (it may be waiting for a free slot in its
+/// queue) still runs. A worker for whom that matters checks its entry first; the job's meta names
+/// it (`"cron"`), unless it was [run now](Crons::run_now):
+///
+/// ```rust,no_run
+/// use ishikari::Crons;
+/// # use ishikari::prelude::*;
+/// # #[ishikari::job] struct Digest { team: i64 }
+///
+/// #[ishikari::worker]
+/// impl Worker for Digest {
+///     async fn perform(&self, ctx: Context) -> PerformResult {
+///         let job = ctx.job();
+///         let meta = job.meta.as_ref();
+///         let entry = meta.and_then(|meta| meta["cron"].as_str());
+///         let run_now = meta.is_some_and(|meta| meta["run_now"] == true);
+///         if let (Some(name), false) = (entry, run_now) {
+///             let crons = ctx.state::<Crons>()?;
+///             match crons.get(name).await? {
+///                 Some(entry) if !entry.paused() => {}
+///                 _ => return Cancel(Some(format!("{name} was deleted or paused"))).into(),
+///             }
+///         }
+///         // ... send the digest
+///         Complete::default().into()
+///     }
+/// }
+/// ```
+///
+/// # Cost
+///
+/// Every node reads every entry on each check, and each slot it inserts is a transaction of its
+/// own: fine for thousands of entries.
 #[derive(Clone, Debug)]
 pub struct Crons {
     pool: PgPool,
