@@ -90,8 +90,8 @@ pub struct ChangedQuery {
     pub paused: Option<String>,
     pub resumed: Option<String>,
     pub ran: Option<String>,
-    /// The job "Run now" inserted.
-    pub job: Option<i64>,
+    /// The job "Run now" inserted (said only if it's an id: the query can be edited).
+    pub job: Option<String>,
 }
 
 impl ChangedQuery {
@@ -103,7 +103,7 @@ impl ChangedQuery {
             .or_else(|| said("Resumed", self.resumed))
             .or_else(|| {
                 let ran = said("Ran", self.ran)?;
-                Some(match self.job {
+                Some(match self.job.and_then(|job| job.parse::<i64>().ok()) {
                     Some(id) => format!("{ran}: job #{id}"),
                     None => ran,
                 })

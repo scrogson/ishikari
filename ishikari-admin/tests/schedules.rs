@@ -580,5 +580,11 @@ async fn a_schedule_is_run_now_and_its_job_is_its_last_run() {
     );
     assert!(html.contains("· run now"));
 
+    // An edited query is no error.
+    let res = get(&app, "/admin/schedules?ran=now&job=abc", &[]).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("Ran now") && !html.contains("job #abc"));
+
     db.drop().await;
 }

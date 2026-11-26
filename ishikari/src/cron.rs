@@ -112,12 +112,16 @@ impl Schedule {
 /// What an entry does with the slots it missed: those that fell due while no node was checking it
 /// (all down, or not yet started), within
 /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up). A slot that falls due while a node is
-/// up isn't missed, however many fall due between two checks.
+/// up isn't missed, however many fall due between two checks. Nor is one of an entry kept in the
+/// database ([`Crons`]) that a running node sees late: put, changed or resumed in a transaction
+/// that committed after the node's check, its slots from when it was put run on that node's next.
 ///
-/// A slot a node tried to insert and couldn't (the database refused it, or the entry's row was
-/// held by a transaction) is tried again on its next check: with [`All`](CatchUp::All) as it is,
-/// with the others only while it's the newest late slot and no slot falls due on time, so an
-/// outage of the database inserts at most one late slot.
+/// A slot a node tried to insert and couldn't (the database refused it, the entry's row was
+/// held by a transaction, or the stored entries couldn't be read, so the node ran those it read
+/// last) is tried again on its next check: with [`All`](CatchUp::All) as it is, with the others
+/// only while it's the newest late slot and no slot falls due on time, so an outage of the
+/// database inserts at most one late slot. Once an entry is changed, the slots of its old version
+/// still to insert never are: the new version runs from its change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CatchUp {
     /// Insert every missed slot, in order: for cheap, idempotent jobs, where each run counts.
@@ -667,8 +671,8 @@ impl CronRow {
 /// # A job already inserted still runs
 ///
 /// A slot's job inserted just before a delete or a pause (it may be waiting for a free slot in its
-/// queue) still runs. A worker for whom that matters checks its entry first; the job's meta names
-/// it (`"cron"`), unless it was [run now](Crons::run_now):
+/// queue) still runs. A worker for whom that matters checks its entry first, which the job's meta
+/// names (`"cron"`). This one lets a job [run now](Crons::run_now) (`"run_now"`) run anyway:
 ///
 /// ```rust,no_run
 /// use ishikari::Crons;
@@ -741,8 +745,11 @@ impl Crons {
 
     /// [`put`](Self::put) in the caller's transaction (`&mut tx`), so the entry is kept or not
     /// with the caller's own rows. The engines see it once the transaction commits; while it's
-    /// open, a changed entry's slots wait (no other entry's do), and those still due when it
-    /// commits are the new version's. It starts from when it was put, not from the commit.
+    /// open, the entry's slots wait (even if the put changes nothing; no other entry's do), and
+    /// those still due when it commits are the new version's. It starts from when it was put,
+    /// not from the commit: the slots between are inserted when it commits (those within
+    /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up)), whatever its [`CatchUp`], as
+    /// they fell due while the nodes were up. Keep the transaction short.
     ///
     /// Under `REPEATABLE READ` or `SERIALIZABLE`, a put racing another of the same name fails
     /// with a serialization error, for the caller to retry its transaction.
@@ -873,15 +880,24 @@ impl Crons {
         paused: bool,
     ) -> Result<bool, sqlx::Error> {
         let table = self.table();
-        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "WITH changed AS (
-                 UPDATE {table} SET paused = $2, updated_at = clock_timestamp()
-                 WHERE name = $1 AND paused <> $2 RETURNING 1
-             )
-             SELECT EXISTS (SELECT 1 FROM changed) OR EXISTS (SELECT 1 FROM {table} WHERE name = $1)"
+        let changed = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET paused = $2, updated_at = clock_timestamp()
+             WHERE name = $1 AND paused <> $2"
         )))
         .bind(name)
         .bind(paused)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if changed > 0 {
+            return Ok(true);
+        }
+        // Already so, or gone: a statement of its own, whose snapshot sees a delete the update
+        // waited on.
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE name = $1)"
+        )))
+        .bind(name)
         .fetch_one(conn)
         .await
     }
@@ -1168,8 +1184,6 @@ struct Progress {
     through: DateTime<Utc>,
     /// The slots it was to insert and didn't (refused, or held), to try again.
     owed: Vec<DateTime<Utc>>,
-    /// The `until` of the check that last decided on it.
-    checked: DateTime<Utc>,
 }
 
 /// A node's cron checks: the engine's entries and those kept in the database, and how far each
@@ -1179,9 +1193,12 @@ pub(crate) struct Checks {
     stored: Crons,
     /// How far each entry is in.
     done: HashMap<Key, Progress>,
-    /// The `until` of the last check: a slot at or before it, of an entry that check didn't
-    /// decide on, was missed.
-    last_until: Option<DateTime<Utc>>,
+    /// The `until` of the node's first check: a slot at or before it was missed, unless the
+    /// node decided on it since (an entry new to the node runs on time from then).
+    started: Option<DateTime<Utc>>,
+    /// The stored entries as last read, run again while they can't be read: the guard on each
+    /// slot's insert refuses those of an entry since deleted, changed or paused.
+    last_read: Vec<StoredCron>,
     /// Stored entries named as one of the engine's, and those that can't be read (by name and
     /// version), as of the last read: each is warned of once, not on every check.
     shadowed: HashSet<String>,
@@ -1196,7 +1213,8 @@ impl Checks {
             engine,
             stored: Crons::of(storage),
             done: HashMap::new(),
-            last_until: None,
+            started: None,
+            last_read: Vec::new(),
             shadowed: HashSet::new(),
             unreadable: HashSet::new(),
             read_failed: false,
@@ -1206,31 +1224,33 @@ impl Checks {
     /// Read the stored entries, then insert each entry's slots that fell due after its `done`
     /// time (but not before `floor`, nor a stored entry's last change), up to `until`, and move
     /// `done` on through the slots that are in. A slot that fails to insert stays due, so the
-    /// next check tries it again. If the stored entries can't be read, the engine's still run.
-    /// Returns how many jobs were inserted.
+    /// next check tries it again. If the stored entries can't be read, those last read run (and
+    /// are owed what they can't insert), so a failed read is as an outage of the database is
+    /// for the engine's own. Returns how many jobs were inserted.
     pub(crate) async fn run(
         &mut self,
         storage: &Arc<Postgres>,
         floor: DateTime<Utc>,
         until: DateTime<Utc>,
     ) -> usize {
-        let stored = self.read_stored().await;
+        if let Some(stored) = self.read_stored().await {
+            self.last_read = stored;
+        }
+        let stored = &self.last_read;
         let engine_names: HashSet<&str> = self.engine.iter().map(|c| c.name.as_str()).collect();
         let mut entries: Vec<Entry<'_>> = self.engine.iter().map(Entry::Engine).collect();
-        if let Some(stored) = &stored {
-            let mut shadowed = HashSet::new();
-            for cron in stored {
-                if engine_names.contains(cron.name.as_str()) {
-                    if !self.shadowed.contains(&cron.name) {
-                        tracing::warn!(cron = %cron.name, "a stored cron entry is named as one of the engine's; it's ignored");
-                    }
-                    shadowed.insert(cron.name.clone());
-                } else if !cron.paused {
-                    entries.push(Entry::Stored(cron));
+        let mut shadowed = HashSet::new();
+        for cron in stored {
+            if engine_names.contains(cron.name.as_str()) {
+                if !self.shadowed.contains(&cron.name) {
+                    tracing::warn!(cron = %cron.name, "a stored cron entry is named as one of the engine's; it's ignored");
                 }
+                shadowed.insert(cron.name.clone());
+            } else if !cron.paused {
+                entries.push(Entry::Stored(cron));
             }
-            self.shadowed = shadowed;
         }
+        self.shadowed = shadowed;
 
         let mut inserted = 0;
         let mut live = HashSet::new();
@@ -1240,12 +1260,12 @@ impl Checks {
             let progress = self.done.get(&key);
             let after = progress.map_or(start, |p| p.through.max(start));
             // Slots after this weren't missed: the last check decided on the entry through
-            // `through`, so the rest fell due since (or were left for this one). Otherwise every
-            // slot until the last check was: it's new to this node, or this node just started.
-            let on_time = match (progress, self.last_until) {
-                (Some(p), Some(last)) if p.checked == last => p.through,
-                (_, Some(last)) => last,
-                (_, None) => until,
+            // `through`, so the rest fell due since. An entry new to the node (put, changed or
+            // resumed since its last check, or seen late: its transaction committed after a
+            // check) missed only those due before the node started; on its first check, all due.
+            let on_time = match progress {
+                Some(p) => p.through,
+                None => self.started.unwrap_or(until),
             };
             let owed: Vec<_> = progress
                 .map(|p| {
@@ -1262,16 +1282,13 @@ impl Checks {
             let progress = Progress {
                 through,
                 owed: slots[done..].to_vec(),
-                checked: until,
             };
             self.done.insert(key.clone(), progress);
             live.insert(key);
         }
-        self.last_until = Some(until);
-        // Forget the entries that are gone or changed, once the stored ones could be read.
-        if stored.is_some() {
-            self.done.retain(|key, _| live.contains(key));
-        }
+        self.started.get_or_insert(until);
+        // Forget the entries that are gone, changed or paused.
+        self.done.retain(|key, _| live.contains(key));
         inserted
     }
 
@@ -1391,6 +1408,13 @@ mod tests {
             })
         }
 
+        /// The jobs' slots of the entry `name` from `h0` on.
+        async fn slots_from(&self, name: &str, h0: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+            let mut slots = self.slots(name).await;
+            slots.retain(|slot| *slot >= h0);
+            slots
+        }
+
         /// The jobs' slots of the entry `name`.
         async fn slots(&self, name: &str) -> Vec<DateTime<Utc>> {
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -1423,7 +1447,8 @@ mod tests {
         let read = db.crons.put(&entry).await.unwrap();
         let slot = at(10, 1);
 
-        // Changed since it was read: the slot is the new version's to insert.
+        // Changed since it was read: not inserted. The new version runs only from its change, so
+        // a slot due before the change that no node inserted in time never is.
         let changed = db.crons.put(&entry.clone().priority(1)).await.unwrap();
         assert!(read.insert_slot(&db.storage, slot).await.unwrap().is_none());
         // Deleted since it was read.
@@ -1585,6 +1610,230 @@ mod tests {
         }
         let hours = [13, 14, 16].map(|h| at(h, 0));
         assert_eq!(hourly_through_misses(CatchUp::None).await, hours);
+    }
+
+    /// The top of an hour after now, so that an entry put now runs from before it.
+    fn an_hour_ahead() -> DateTime<Utc> {
+        use chrono::DurationRound;
+        let hour = chrono::Duration::hours(1);
+        (Utc::now() + hour).duration_trunc(hour).unwrap() + hour
+    }
+
+    fn minutes(m: i64) -> chrono::Duration {
+        chrono::Duration::minutes(m)
+    }
+
+    /// A check of `checks` through `until`, catching up five hours.
+    async fn check(checks: &mut Checks, db: &Db, until: DateTime<Utc>) {
+        checks
+            .run(&db.storage, until - chrono::Duration::hours(5), until)
+            .await;
+    }
+
+    /// An hourly entry put with `catch_up`, checked from before `h0`; the stored entries can't
+    /// be read by the checks `failing` minutes after `h0`, and can by those `after` it: the slots
+    /// inserted.
+    async fn through_failed_reads(
+        catch_up: CatchUp,
+        failing: &[i64],
+        after: &[i64],
+    ) -> Vec<DateTime<Utc>> {
+        let db = Db::new().await.expect("database tests");
+        let h0 = an_hour_ahead();
+        let entry = CronEntry::new("rf", "0 * * * *", &Tick)
+            .unwrap()
+            .catch_up(catch_up);
+        db.crons.put(&entry).await.unwrap();
+        let mut checks = Checks::new(vec![], &db.storage);
+        check(&mut checks, &db, h0 - minutes(10)).await;
+        let rename =
+            |from: &str, to: &str| format!("ALTER TABLE {s}.{from} RENAME TO {to}", s = db.schema);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(rename("ishikari_crons", "crons_away")))
+            .execute(&db.admin)
+            .await
+            .unwrap();
+        for m in failing {
+            check(&mut checks, &db, h0 + minutes(*m)).await;
+        }
+        sqlx::raw_sql(sqlx::AssertSqlSafe(rename("crons_away", "ishikari_crons")))
+            .execute(&db.admin)
+            .await
+            .unwrap();
+        for m in after {
+            check(&mut checks, &db, h0 + minutes(*m)).await;
+        }
+        let slots = db.slots_from("rf", h0).await;
+        db.finish().await;
+        slots
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_of_the_stored_entries_loses_no_slot_due_while_the_node_was_up() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        let h0 = an_hour_ahead();
+        for catch_up in [CatchUp::All, CatchUp::Latest, CatchUp::None] {
+            let slots = through_failed_reads(catch_up, &[10], &[20, 30]).await;
+            assert_eq!(slots, [h0], "{catch_up}");
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_entries_unread_across_slots_catch_up_as_their_own_do() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        let h = |n: i64| an_hour_ahead() + chrono::Duration::hours(n);
+        // Each slot was due while they couldn't be read, so tried and owed: all of them, or only
+        // the newest, as an engine's entry would be through an outage of the database.
+        let all = through_failed_reads(CatchUp::All, &[10, 70, 130], &[140]).await;
+        assert_eq!(all, [h(0), h(1), h(2)]);
+        for catch_up in [CatchUp::Latest, CatchUp::None] {
+            let slots = through_failed_reads(catch_up, &[10, 70, 130], &[140]).await;
+            assert_eq!(slots, [h(2)], "{catch_up}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entry_deleted_while_unread_inserts_nothing_more() {
+        let Some(db) = Db::new().await else {
+            return;
+        };
+        let h0 = an_hour_ahead();
+        db.crons
+            .put(&CronEntry::new("gone", "0 * * * *", &Tick).unwrap())
+            .await
+            .unwrap();
+        let mut checks = Checks::new(vec![], &db.storage);
+        check(&mut checks, &db, h0 - minutes(10)).await;
+        // Unread (a bad statement for the read only), and deleted.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {s}.ishikari_crons RENAME COLUMN tags TO tags_away",
+            s = db.schema
+        )))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+        assert!(db.crons.delete("gone").await.unwrap());
+        check(&mut checks, &db, h0 + minutes(10)).await;
+        assert!(
+            db.slots_from("gone", h0).await.is_empty(),
+            "the copy last read isn't run"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {s}.ishikari_crons RENAME COLUMN tags_away TO tags",
+            s = db.schema
+        )))
+        .execute(&db.admin)
+        .await
+        .unwrap();
+        check(&mut checks, &db, h0 + minutes(20)).await;
+        assert!(db.slots_from("gone", h0).await.is_empty());
+        db.finish().await;
+    }
+
+    #[tokio::test]
+    async fn a_change_held_open_across_a_slot_loses_none_of_it() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        for catch_up in [CatchUp::All, CatchUp::Latest, CatchUp::None] {
+            let db = Db::new().await.unwrap();
+            let h0 = an_hour_ahead();
+            let v0 = CronEntry::new("held", "0 * * * *", &Tick)
+                .unwrap()
+                .catch_up(catch_up);
+            db.crons.put(&v0).await.unwrap();
+            let mut checks = Checks::new(vec![], &db.storage);
+            check(&mut checks, &db, h0 - minutes(10)).await;
+            let mut tx = db.admin.begin().await.unwrap();
+            let v1 = db
+                .crons
+                .put_in(&mut tx, &v0.clone().priority(1))
+                .await
+                .unwrap();
+            assert!(v1.updated_at() < h0);
+            check(&mut checks, &db, h0 + minutes(10)).await;
+            assert!(
+                db.slots_from("held", h0).await.is_empty(),
+                "held: {catch_up}"
+            );
+            tx.commit().await.unwrap();
+            check(&mut checks, &db, h0 + minutes(20)).await;
+            check(&mut checks, &db, h0 + minutes(30)).await;
+            assert_eq!(
+                db.slots_from("held", h0).await,
+                [h0],
+                "the new version's: {catch_up}"
+            );
+            db.finish().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entry_put_or_resumed_in_a_transaction_runs_from_then_not_from_its_commit() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        for resumed in [false, true] {
+            for catch_up in [CatchUp::All, CatchUp::Latest, CatchUp::None] {
+                let db = Db::new().await.unwrap();
+                let h0 = an_hour_ahead();
+                let entry = CronEntry::new("late", "0 * * * *", &Tick)
+                    .unwrap()
+                    .catch_up(catch_up);
+                if resumed {
+                    db.crons.put(&entry).await.unwrap();
+                    db.crons.pause("late").await.unwrap();
+                }
+                let mut checks = Checks::new(vec![], &db.storage);
+                check(&mut checks, &db, h0 - minutes(10)).await;
+                let mut tx = db.admin.begin().await.unwrap();
+                if resumed {
+                    assert!(db.crons.resume_in(&mut tx, "late").await.unwrap());
+                } else {
+                    db.crons.put_in(&mut tx, &entry).await.unwrap();
+                }
+                check(&mut checks, &db, h0 + minutes(10)).await;
+                tx.commit().await.unwrap();
+                check(&mut checks, &db, h0 + minutes(20)).await;
+                assert_eq!(
+                    db.slots_from("late", h0).await,
+                    [h0],
+                    "resumed {resumed}: {catch_up}"
+                );
+                db.finish().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entry_deleted_while_it_was_being_paused_or_resumed_is_none() {
+        let Some(db) = Db::new().await else {
+            return;
+        };
+        for pause in [true, false] {
+            let entry = CronEntry::new("racing", "0 * * * *", &Tick).unwrap();
+            db.crons.put(&entry).await.unwrap();
+            if !pause {
+                db.crons.pause("racing").await.unwrap();
+            }
+            let mut tx = db.admin.begin().await.unwrap();
+            assert!(db.crons.delete_in(&mut tx, "racing").await.unwrap());
+            let crons = db.crons.clone();
+            let setting = tokio::spawn(async move {
+                if pause {
+                    crons.pause("racing").await
+                } else {
+                    crons.resume("racing").await
+                }
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tx.commit().await.unwrap();
+            assert!(!setting.await.unwrap().unwrap(), "pause {pause}");
+        }
+        db.finish().await;
     }
 
     #[test]
