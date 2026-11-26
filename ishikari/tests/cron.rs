@@ -584,3 +584,60 @@ async fn an_entry_is_put_and_deleted_with_the_callers_transaction() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn a_paused_entry_inserts_nothing_until_resumed_and_back_fills_nothing() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let engine = engine_with("dyn", db.pool.clone(), vec![]);
+    let crons = Crons::new(db.pool.clone());
+    crons.put(&every_second_ping("napping", 1)).await.unwrap();
+    eventually("the first slots", Duration::from_secs(30), || async {
+        !pings(&db, "napping").await.is_empty()
+    })
+    .await;
+
+    assert!(crons.pause("napping").await.unwrap());
+    // Final, as a delete is: nothing once it has returned.
+    let at_pause = pings(&db, "napping").await;
+    assert!(crons.pause("napping").await.unwrap(), "already paused");
+    let paused = crons.get("napping").await.unwrap().unwrap();
+    assert!(paused.paused(), "kept, and listed as paused");
+    assert_eq!(crons.list().await.unwrap().len(), 1);
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    assert_eq!(pings(&db, "napping").await, at_pause, "no job while paused");
+
+    // Putting it again changes it, and keeps it paused.
+    let put = crons.put(&every_second_ping("napping", 2)).await.unwrap();
+    assert!(put.paused());
+
+    assert!(crons.resume("napping").await.unwrap());
+    let resumed = crons.get("napping").await.unwrap().unwrap();
+    assert!(!resumed.paused());
+    assert!(crons.resume("napping").await.unwrap(), "already running");
+    assert_eq!(
+        crons.get("napping").await.unwrap().unwrap().updated_at(),
+        resumed.updated_at(),
+        "resuming a running entry moves nothing"
+    );
+    eventually(
+        "slots after the resume",
+        Duration::from_secs(30),
+        || async { pings(&db, "napping").await.len() > at_pause.len() },
+    )
+    .await;
+    let after: Vec<_> = pings(&db, "napping").await[at_pause.len()..].to_vec();
+    assert!(
+        after
+            .iter()
+            .all(|(slot, n)| *slot > resumed.updated_at() && *n == 2),
+        "none from the pause, and the job as put: {after:?}"
+    );
+
+    assert!(!crons.pause("never-was").await.unwrap());
+    assert!(!crons.resume("never-was").await.unwrap());
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}

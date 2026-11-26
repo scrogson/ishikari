@@ -288,6 +288,7 @@ pub struct StoredCron {
     priority: i32,
     max_attempts: i32,
     tags: Vec<String>,
+    paused: bool,
     inserted_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -300,6 +301,7 @@ impl Debug for StoredCron {
             .field("timezone", &self.schedule.timezone)
             .field("worker", &self.worker)
             .field("queue", &self.queue)
+            .field("paused", &self.paused)
             .field("updated_at", &self.updated_at)
             .finish()
     }
@@ -359,10 +361,17 @@ impl StoredCron {
         self.schedule.slots(after, until, MAX_SLOTS)
     }
 
-    /// The first slot after `after`, if the pattern has one.
+    /// Whether it's [paused](Crons::pause): it inserts no slot until it's resumed.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// The first slot after `after` (and after the entry's last change, since no slot before
+    /// that runs), if the pattern has one. This is the pattern's, paused or not: a paused entry
+    /// runs none (see [`paused`](Self::paused)).
     pub fn next(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.schedule
-            .slots(after, DateTime::<Utc>::MAX_UTC, 1)
+            .slots(after.max(self.updated_at), DateTime::<Utc>::MAX_UTC, 1)
             .into_iter()
             .next()
     }
@@ -420,6 +429,7 @@ struct CronRow {
     priority: i32,
     max_attempts: i32,
     tags: Vec<String>,
+    paused: bool,
     inserted_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -478,6 +488,7 @@ impl CronRow {
             priority: self.priority,
             max_attempts: self.max_attempts,
             tags: self.tags,
+            paused: self.paused,
             inserted_at: self.inserted_at,
             updated_at: self.updated_at,
         })
@@ -551,7 +562,7 @@ impl Crons {
 
     /// Keep `entry`, replacing the one of its name. A change applies from now on: the slots
     /// after it insert the new job, on the new pattern. Putting an entry as it already is
-    /// changes nothing.
+    /// changes nothing. A paused entry stays paused.
     pub async fn put(&self, entry: &CronEntry) -> Result<StoredCron, sqlx::Error> {
         let mut conn = self.pool.acquire().await?;
         self.put_in(&mut conn, entry).await
@@ -645,6 +656,59 @@ impl Crons {
         .execute(conn)
         .await?;
         Ok(deleted.rows_affected() > 0)
+    }
+
+    /// Pause the entry `name`: whether there is one. Once this returns, no node inserts another
+    /// of its slots (a job already inserted still runs), as after a [`delete`](Self::delete), but
+    /// it's kept, listed, and [`resume`](Self::resume)d as it was. Pausing a paused entry changes
+    /// nothing.
+    pub async fn pause(&self, name: &str) -> Result<bool, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.pause_in(&mut conn, name).await
+    }
+
+    /// [`pause`](Self::pause) in the caller's transaction (`&mut tx`).
+    pub async fn pause_in(&self, conn: &mut PgConnection, name: &str) -> Result<bool, sqlx::Error> {
+        self.set_paused(conn, name, true).await
+    }
+
+    /// Resume the entry `name`: whether there is one. It runs from now, as if it had just been
+    /// put: none of the slots while it was paused is caught up. Resuming an entry that isn't
+    /// paused changes nothing.
+    pub async fn resume(&self, name: &str) -> Result<bool, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.resume_in(&mut conn, name).await
+    }
+
+    /// [`resume`](Self::resume) in the caller's transaction (`&mut tx`).
+    pub async fn resume_in(
+        &self,
+        conn: &mut PgConnection,
+        name: &str,
+    ) -> Result<bool, sqlx::Error> {
+        self.set_paused(conn, name, false).await
+    }
+
+    /// Pause or resume: a new `updated_at`, so a slot read before it isn't inserted (the guard in
+    /// [`StoredCron::insert_slot`]) and none from before it is caught up. Only a change moves it.
+    async fn set_paused(
+        &self,
+        conn: &mut PgConnection,
+        name: &str,
+        paused: bool,
+    ) -> Result<bool, sqlx::Error> {
+        let table = self.table();
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "WITH changed AS (
+                 UPDATE {table} SET paused = $2, updated_at = clock_timestamp()
+                 WHERE name = $1 AND paused <> $2 RETURNING 1
+             )
+             SELECT EXISTS (SELECT 1 FROM changed) OR EXISTS (SELECT 1 FROM {table} WHERE name = $1)"
+        )))
+        .bind(name)
+        .bind(paused)
+        .fetch_one(conn)
+        .await
     }
 
     /// The entry `name`, if there is one (and it can be read).
@@ -848,7 +912,7 @@ impl Checks {
                         tracing::warn!(cron = %cron.name, "a stored cron entry is named as one of the engine's; it's ignored");
                     }
                     shadowed.insert(cron.name.clone());
-                } else {
+                } else if !cron.paused {
                     entries.push(Entry::Stored(cron));
                 }
             }
@@ -1122,11 +1186,18 @@ mod tests {
             priority: 0,
             max_attempts: 1,
             tags: vec![],
+            paused: false,
             inserted_at: at(0, 0),
             updated_at: at(0, 0),
         };
         assert_eq!(stored.next(at(9, 30)), Some(at(10, 0)));
         assert_eq!(stored.next(at(10, 0)), Some(at(11, 0)), "after, not at");
+        // None before its last change runs.
+        let changed = StoredCron {
+            updated_at: at(10, 30),
+            ..stored.clone()
+        };
+        assert_eq!(changed.next(at(9, 30)), Some(at(11, 0)));
         // Months away, past where `due` would stop looking.
         let yearly = Cron::new("y", "0 0 1 1 *", || Tick).unwrap();
         let stored = StoredCron {
