@@ -62,6 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     scenarios::create_sample_workflow_definitions(&pool).await?;
     tracing::info!("Created sample workflow definitions");
 
+    // Create sample schedules (for the Schedules page)
+    scenarios::create_sample_schedules(&pool).await?;
+    tracing::info!("Created sample schedules");
+
     // Start dependency resolver
     let resolver = DependencyResolver::new(pool.clone(), Duration::from_millis(500)).start();
     tracing::info!("Started dependency resolver");

@@ -472,3 +472,38 @@ pub async fn create_sample_jobs(pool: &PgPool) -> Result<(), sqlx::Error> {
 
     Ok(())
 }
+
+/// Create sample schedules: cron entries kept in the database, as a host's users or agents put
+/// them, listed on the Schedules page.
+pub async fn create_sample_schedules(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    use ishikari::{CronEntry, Crons};
+
+    let crons = Crons::new(pool.clone());
+    let digest = SendEmail {
+        to: "team@example.com".into(),
+        subject: "Weekly digest".into(),
+        body: "This week's numbers".into(),
+    };
+    crons
+        .put(
+            &CronEntry::new("weekly-digest", "0 8 * * MON", &digest)?
+                .timezone(ishikari::chrono_tz::America::Chicago)
+                .tag("digest")
+                .tag("team-7"),
+        )
+        .await?;
+    let extract = ExtractFromSource {
+        source: "orders_db".into(),
+        query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 hour'".into(),
+    };
+    crons
+        .put(&CronEntry::new("hourly-extract", "0 * * * *", &extract)?.tag("etl"))
+        .await?;
+    let check = ValidateEmail {
+        email: "signup@example.com".into(),
+    };
+    crons
+        .put(&CronEntry::new("signup-check", "* * * * *", &check)?)
+        .await?;
+    Ok(())
+}
