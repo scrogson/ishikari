@@ -113,18 +113,19 @@ impl Schedule {
 /// (all down, or not yet started), within
 /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up). A slot that falls due while a node is
 /// up isn't missed, however many fall due between two checks. Nor is one of an entry kept in the
-/// database ([`Crons`]) that a running node sees late: put, changed or resumed in a transaction
-/// that committed after the node's check, its slots from when it was put run on that node's next.
-/// But once a check of a node failed to read the stored entries (or before its first check), an
-/// entry it hadn't read before (put, changed or resumed since its last read) missed the slots due
-/// until then, as one the node couldn't see.
+/// database ([`Crons`]) that a running node sees late (put, changed or resumed in a transaction
+/// that committed after the node's check): its slots from when it was put run on that node's
+/// next check. Except those due by the node's first check, or by its last check that failed to
+/// read the stored entries: an entry the node hadn't read by that check missed them, as one it
+/// couldn't see, even if it was put before that check and committed after.
 ///
-/// A slot a node tried to insert and couldn't (the database refused it, the entry's row was
-/// held by a transaction, or the stored entries couldn't be read, so the node ran those it read
-/// last) is tried again on its next check: with [`All`](CatchUp::All) as it is, with the others
-/// only while it's the newest late slot and no slot falls due on time, so an outage of the
-/// database inserts at most one late slot. Once an entry is changed, the slots of its old version
-/// still to insert never are: the new version runs from its change.
+/// A slot a node tried to insert and couldn't (the database refused it, the entry's row was held by
+/// a transaction, or the stored entries couldn't be read, so the node could only try those it read
+/// last, whose insert reads the table too) is tried again on its next check: with
+/// [`All`](CatchUp::All) as it is, with the others only while it's the newest late slot and no slot
+/// falls due on time, so an outage of the database inserts at most one late slot. Once an entry is
+/// changed, the slots of its old version still to insert never are: the new version runs from its
+/// change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CatchUp {
     /// Insert every missed slot, in order: for cheap, idempotent jobs, where each run counts.
@@ -446,7 +447,8 @@ impl StoredCron {
 
     /// When the entry was first put: when the transaction that put it began, as for a job's
     /// `inserted_at`, so a job inserted with it (as by [`run_now_in`](Crons::run_now_in)) is
-    /// inserted since it.
+    /// inserted since it. A job inserted in a transaction that began before the entry's is not,
+    /// even one the entry inserted.
     pub fn inserted_at(&self) -> DateTime<Utc> {
         self.inserted_at
     }
@@ -475,12 +477,13 @@ impl StoredCron {
     /// that runs), if the pattern has one. This is the pattern's, paused or not: a paused entry
     /// runs none (see [`paused`](Self::paused)).
     ///
-    /// Its last run is a job: of those whose meta has `{"cron": name}` (`meta @> ...`, which
-    /// the jobs' `meta` index serves) inserted since its [`inserted_at`](Self::inserted_at), the
-    /// one with the latest `"slot"`. That leaves out the jobs of an entry of the same name
-    /// deleted before this one's transaction began, but not those it inserted while that
-    /// transaction was open. Slots are RFC 3339 in UTC, so their text sorts as their time does;
-    /// not `scheduled_at`, which a retry or a snooze moves on.
+    /// Its last run is a job: of those whose meta has `{"cron": name}` (`meta @> ...`, which the
+    /// jobs' `meta` index serves) inserted since its [`inserted_at`](Self::inserted_at), the one
+    /// with the latest `"slot"`. That leaves out the jobs of an entry of the same name deleted
+    /// before this one's transaction began; it counts those the old entry inserted after (whether
+    /// it was deleted in that transaction or another); and it leaves out a `run_now_in` of this one
+    /// in a transaction that began before it was put. Slots are RFC 3339 in UTC, so their text
+    /// sorts as their time does; not `scheduled_at`, which a retry or a snooze moves on.
     pub fn next(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.schedule
             .slots(after.max(self.updated_at), DateTime::<Utc>::MAX_UTC, 1)
@@ -761,9 +764,9 @@ impl Crons {
     /// those still due when it commits are the new version's. It starts from when it was put,
     /// not from the commit: the slots between are inserted when it commits (those within
     /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up)), whatever its [`CatchUp`], as
-    /// they fell due while the nodes were up; but on a node that failed to read the stored
-    /// entries between the put and its first read of it, those due until then were missed (see
-    /// [`CatchUp`]). Keep the transaction short.
+    /// they fell due while the nodes were up; but on a node whose first check, or a check that
+    /// failed to read the stored entries, came between the put and its first read of it, those
+    /// due by that check were missed (see [`CatchUp`]). Keep the transaction short.
     ///
     /// Under `REPEATABLE READ` or `SERIALIZABLE`, a put racing another of the same name fails
     /// with a serialization error, for the caller to retry its transaction.
@@ -1232,12 +1235,12 @@ impl Checks {
         }
     }
 
-    /// Read the stored entries, then insert each entry's slots that fell due after its `done`
-    /// time (but not before `floor`, nor a stored entry's last change), up to `until`, and move
-    /// `done` on through the slots that are in. A slot that fails to insert stays due, so the
-    /// next check tries it again. If the stored entries can't be read, those last read run (and
-    /// are owed what they can't insert), so a failed read is as an outage of the database is
-    /// for the engine's own. Returns how many jobs were inserted.
+    /// Read the stored entries, then insert each entry's slots that fell due after its `done` time
+    /// (but not before `floor`, nor a stored entry's last change), up to `until`, and move `done`
+    /// on through the slots that are in. A slot that fails to insert stays due, so the next check
+    /// tries it again. If the stored entries can't be read, those last read are tried (and owed
+    /// what they can't insert: a slot's insert reads the entry's row), so a failed read is as an
+    /// outage of the database is for the engine's own. Returns how many jobs were inserted.
     pub(crate) async fn run(
         &mut self,
         storage: &Arc<Postgres>,
@@ -1313,7 +1316,7 @@ impl Checks {
             Ok(rows) => rows,
             Err(e) => {
                 if !self.read_failed {
-                    tracing::error!(error = %e, "failed to read the stored cron entries (is the schema at v11?); running the engine's own, and those read last, until they can be");
+                    tracing::error!(error = %e, "failed to read the stored cron entries (is the schema at v11?); running the engine's own, and trying those read last, until they can be");
                     self.read_failed = true;
                 }
                 return None;

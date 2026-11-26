@@ -90,11 +90,11 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   engines run (`*_in` in the caller's transaction): each cron check (`Checks`) reads them again and
   runs them beside the engine's own, none before its `updated_at`, each slot inserted under a shared
   lock on its row (`SKIP LOCKED`: a row a transaction holds waits for the next check) so no slot
-  follows a delete or pause; while they can't be read, those read last run. `CatchUp` picks which
-  missed slots are inserted: for an entry new to the node (put, changed or resumed), those due by
-  the node's first check or its last that failed to read them (one committed late, after a check
-  that read them, missed none). A slot it couldn't insert is owed, and tried again. One named as an
-  engine's own is ignored.
+  follows a delete or pause; while they can't be read, those read last are tried. `CatchUp` picks
+  which missed slots are inserted: for an entry the node hadn't read (put, changed or resumed),
+  those due by its first check or its last that failed to read them, whenever the entry
+  committed (a slot due after that check is on time, even for an entry committed late). A slot it
+  couldn't insert is owed, and tried again. One named as an engine's own is ignored.
 - **`stager.rs`**: moves due scheduled and retryable jobs to available.
 - **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
 - **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into
