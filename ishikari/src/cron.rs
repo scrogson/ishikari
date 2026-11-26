@@ -885,4 +885,123 @@ mod tests {
         let err = Cron::new("x", "every day", || Tick).unwrap_err();
         assert_eq!(err.pattern, "every day");
     }
+
+    /// Against a real Postgres, as the integration tests: a migrated schema of its own (dropped
+    /// by [`Db::finish`]), or `None` when database tests are switched off.
+    struct Db {
+        admin: PgPool,
+        schema: String,
+        storage: Arc<Postgres>,
+        crons: Crons,
+    }
+
+    impl Db {
+        async fn new() -> Option<Db> {
+            if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+                return None;
+            }
+            let url = std::env::var("ISHIKARI_TEST_DATABASE_URL")
+                .or_else(|_| std::env::var("DATABASE_URL"))
+                .expect(
+                    "set ISHIKARI_TEST_DATABASE_URL (or DATABASE_URL), or ISHIKARI_SKIP_DB_TESTS=1",
+                );
+            let schema = format!(
+                "ishikari_t_{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            );
+            let admin = PgPool::connect(&url).await.unwrap();
+            crate::migrations::migrate(&admin, &schema).await.unwrap();
+            Some(Db {
+                storage: Arc::new(Postgres::new(admin.clone()).with_schema(&schema)),
+                crons: Crons::new(admin.clone()).schema(&schema),
+                admin,
+                schema,
+            })
+        }
+
+        /// The jobs' slots of the entry `name`.
+        async fn slots(&self, name: &str) -> Vec<DateTime<Utc>> {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT scheduled_at FROM {}.ishikari_jobs WHERE meta->>'cron' = $1 ORDER BY 1",
+                self.schema
+            )))
+            .bind(name)
+            .fetch_all(&self.admin)
+            .await
+            .unwrap()
+        }
+
+        async fn finish(self) {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DROP SCHEMA {} CASCADE",
+                self.schema
+            )))
+            .execute(&self.admin)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entry_read_before_a_delete_or_change_inserts_nothing_after_it() {
+        let Some(db) = Db::new().await else {
+            return;
+        };
+        let entry = CronEntry::new("e", "* * * * *", &Tick).unwrap();
+        let read = db.crons.put(&entry).await.unwrap();
+        let slot = at(10, 1);
+
+        // Changed since it was read: the slot is the new version's to insert.
+        let changed = db.crons.put(&entry.clone().priority(1)).await.unwrap();
+        assert!(read.insert_slot(&db.storage, slot).await.unwrap().is_none());
+        // Deleted since it was read.
+        assert!(db.crons.delete("e").await.unwrap());
+        assert!(changed
+            .insert_slot(&db.storage, slot)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(db.slots("e").await.is_empty());
+
+        // As it is, it inserts.
+        let current = db.crons.put(&entry).await.unwrap();
+        assert!(current
+            .insert_slot(&db.storage, slot)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(db.slots("e").await, [slot]);
+
+        db.finish().await;
+    }
+
+    /// A node's clock ahead of the database's: its check before an entry's change runs past the
+    /// change's time, so the old version's progress is ahead of the new version's start. The
+    /// new version still inserts every slot after its change.
+    #[tokio::test]
+    async fn a_changed_entry_starts_from_its_change_however_far_the_old_one_got() {
+        let Some(db) = Db::new().await else {
+            return;
+        };
+        let yearly = CronEntry::new("chg", "0 0 1 1 *", &Tick).unwrap();
+        db.crons.put(&yearly).await.unwrap();
+        let mut checks = Checks::new(vec![], &db.storage);
+        let ahead = chrono::Duration::seconds(3);
+        let catch_up = chrono::Duration::seconds(10);
+        let until = Utc::now() + ahead;
+        checks.run(&db.storage, until - catch_up, until).await;
+
+        let every_second = CronEntry::new("chg", "* * * * * *", &Tick).unwrap();
+        let changed = db.crons.put(&every_second).await.unwrap();
+        assert!(changed.updated_at() < until);
+        let until = Utc::now() + ahead;
+        checks.run(&db.storage, until - catch_up, until).await;
+
+        assert_eq!(
+            db.slots("chg").await,
+            changed.due(changed.updated_at(), until)
+        );
+
+        db.finish().await;
+    }
 }

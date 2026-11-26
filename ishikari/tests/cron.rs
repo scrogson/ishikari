@@ -281,17 +281,17 @@ async fn a_deleted_entry_inserts_no_more_slots() {
     .await;
 
     assert!(crons.delete("gone").await.unwrap());
-    let deleted_at = Utc::now();
+    // No job is inserted once the delete has returned (not even of a slot already due).
+    let at_delete = pings(&db, "gone").await;
     assert!(!crons.delete("gone").await.unwrap(), "already gone");
     assert!(crons.get("gone").await.unwrap().is_none());
 
     tokio::time::sleep(Duration::from_millis(2_500)).await;
-    let late: Vec<_> = pings(&db, "gone")
-        .await
-        .into_iter()
-        .filter(|(slot, _)| *slot > deleted_at)
-        .collect();
-    assert!(late.is_empty(), "slots after the delete: {late:?}");
+    assert_eq!(
+        pings(&db, "gone").await,
+        at_delete,
+        "no job after the delete"
+    );
 
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
@@ -509,6 +509,11 @@ async fn a_null_tag_is_refused() {
     .execute(&db.pool)
     .await;
     assert!(refused.is_err(), "a tag can't be NULL");
+    // Nor longer than a job's tag may be.
+    let long = CronEntry::new("long", "* * * * *", &Ping { n: 1 })
+        .unwrap()
+        .tag("t".repeat(256));
+    assert!(Crons::new(db.pool.clone()).put(&long).await.is_err());
 
     db.finish().await;
 }

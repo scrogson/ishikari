@@ -14,7 +14,8 @@ transaction as your own writes, and they survive restarts, deploys and crashed n
 - **Unique jobs** are unique by worker, queue and some or all arguments, optionally within a
   period. Duplicates return the existing job.
 - **Cron** runs jobs on a crontab schedule in any time zone, each slot exactly once however
-  many nodes run, with no leader election.
+  many nodes run, with no leader election. Entries given to the engine are fixed; `Crons` keeps
+  others in the database, put and deleted while it runs (by your users, or your agents).
 - **Workflows:**
   - pipelines, DAGs and sagas with compensation;
   - each is inserted atomically;
@@ -121,6 +122,13 @@ let engine = Engine::builder("my-app")
     .cron(Cron::new("daily-digest", "0 7 * * *", || DailyDigest)?
         .timezone(ishikari::chrono_tz::America::Chicago))
     .start(Postgres::new(pool.clone()));
+
+// Schedules made at run time, kept in the database (schema v11): every engine picks them up on
+// its next cron check, with no restart.
+let crons = ishikari::Crons::new(pool.clone());
+crons.put(&ishikari::CronEntry::new("team-7-digest", "30 8 * * 1-5", &DailyDigest)?)
+    .await?;
+crons.delete("team-7-digest").await?;
 
 // On SIGTERM: wait up to 25 s for running jobs, give the rest back.
 let report = engine.shutdown(Duration::from_secs(25)).await;
