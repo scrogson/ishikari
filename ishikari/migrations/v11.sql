@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.ishikari_crons (
     priority INTEGER NOT NULL DEFAULT 0 CHECK (priority >= 0 AND priority <= 3),
     max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
     tags VARCHAR(255)[] NOT NULL DEFAULT '{}' CHECK (array_position(tags, NULL) IS NULL),
+    -- What a node does with the slots missed while none ran: all, the latest, or none.
+    catch_up TEXT NOT NULL DEFAULT 'all' CHECK (catch_up IN ('all', 'latest', 'none')),
     paused BOOLEAN NOT NULL DEFAULT false,
     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

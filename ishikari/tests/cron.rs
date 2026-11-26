@@ -6,7 +6,7 @@ mod common;
 use chrono::{Duration as ChronoDuration, Utc};
 use common::{eventually, TestDb};
 use ishikari::prelude::*;
-use ishikari::{Cron, CronEntry, Crons, Engine, Postgres, Queue};
+use ishikari::{CatchUp, Cron, CronEntry, Crons, Engine, Postgres, Queue};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -639,5 +639,27 @@ async fn a_paused_entry_inserts_nothing_until_resumed_and_back_fills_nothing() {
     assert!(!crons.resume("never-was").await.unwrap());
 
     engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn an_entrys_catch_up_is_kept_and_a_change_to_it_is_a_change() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let crons = Crons::new(db.pool.clone());
+    let all = crons.put(&every_second_ping("sync", 1)).await.unwrap();
+    assert_eq!(all.catch_up(), CatchUp::All, "the default");
+    let latest = crons
+        .put(&every_second_ping("sync", 1).catch_up(CatchUp::Latest))
+        .await
+        .unwrap();
+    assert_eq!(latest.catch_up(), CatchUp::Latest);
+    assert!(latest.updated_at() > all.updated_at());
+    assert_eq!(
+        crons.get("sync").await.unwrap().unwrap().catch_up(),
+        CatchUp::Latest
+    );
+
     db.finish().await;
 }

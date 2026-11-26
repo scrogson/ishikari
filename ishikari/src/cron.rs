@@ -92,6 +92,74 @@ impl Schedule {
     }
 }
 
+impl Schedule {
+    /// The last slot after `after`, up to and including `until`.
+    fn last_slot(&self, after: DateTime<Utc>, until: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let mut last = None;
+        let mut from = after.with_timezone(&self.timezone);
+        while let Ok(next) = self.cron.find_next_occurrence(&from, false) {
+            if next.with_timezone(&Utc) > until {
+                break;
+            }
+            last = Some(next.with_timezone(&Utc));
+            from = next;
+        }
+        last
+    }
+}
+
+/// What an entry does with the slots it missed: those that fell due while no node was checking it
+/// (all down, or not yet started), within
+/// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up). A slot that falls due while a node is
+/// up isn't missed, however many fall due between two checks.
+///
+/// A slot a node tried to insert and couldn't (the database refused it, or the entry's row was
+/// held by a transaction) is tried again on its next check: with [`All`](CatchUp::All) as it is,
+/// with the others only while it's the newest late slot and no slot falls due on time, so an
+/// outage of the database inserts at most one late slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CatchUp {
+    /// Insert every missed slot, in order: for cheap, idempotent jobs, where each run counts.
+    #[default]
+    All,
+    /// Insert only the newest missed slot (none if a slot falls due on time): for a sync, a
+    /// report, a digest, where only the latest run matters.
+    Latest,
+    /// Insert no missed slot: the next runs on its own slot. For a job whose late run is worse
+    /// than none, or an expensive one.
+    None,
+}
+
+impl CatchUp {
+    /// As it's stored: `all`, `latest` or `none`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CatchUp::All => "all",
+            CatchUp::Latest => "latest",
+            CatchUp::None => "none",
+        }
+    }
+}
+
+impl std::fmt::Display for CatchUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for CatchUp {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "all" => Ok(CatchUp::All),
+            "latest" => Ok(CatchUp::Latest),
+            "none" => Ok(CatchUp::None),
+            other => Err(format!("unknown catch-up {other:?}: all, latest or none")),
+        }
+    }
+}
+
 /// The options a slot's job is inserted with: scheduled at the slot, with
 /// `{"cron": name, "slot": slot}` in its meta, unique by the entry's name and the slot.
 fn slot_opts(name: &str, slot: DateTime<Utc>) -> InsertOpts {
@@ -107,6 +175,7 @@ fn slot_opts(name: &str, slot: DateTime<Utc>) -> InsertOpts {
 pub struct Cron {
     name: String,
     schedule: Schedule,
+    catch_up: CatchUp,
     insert: InsertFn,
 }
 
@@ -116,6 +185,7 @@ impl Debug for Cron {
             .field("name", &self.name)
             .field("pattern", &self.schedule.pattern)
             .field("timezone", &self.schedule.timezone)
+            .field("catch_up", &self.catch_up)
             .finish()
     }
 }
@@ -149,6 +219,7 @@ impl Cron {
         Ok(Cron {
             name: name.into(),
             schedule,
+            catch_up: CatchUp::All,
             insert,
         })
     }
@@ -156,6 +227,13 @@ impl Cron {
     /// Read the pattern in `timezone` (for example `chrono_tz::America::Chicago`).
     pub fn timezone(mut self, timezone: Tz) -> Self {
         self.schedule.timezone = timezone;
+        self
+    }
+
+    /// What to do with the slots missed while no node ran: [`CatchUp::All`] (the default) unless
+    /// set here.
+    pub fn catch_up(mut self, catch_up: CatchUp) -> Self {
+        self.catch_up = catch_up;
         self
     }
 
@@ -191,6 +269,7 @@ pub struct CronEntry {
     priority: i32,
     max_attempts: i32,
     tags: Vec<String>,
+    catch_up: CatchUp,
 }
 
 impl Debug for CronEntry {
@@ -202,6 +281,7 @@ impl Debug for CronEntry {
             .field("timezone", &self.schedule.timezone)
             .field("worker", &self.worker)
             .field("queue", &self.queue)
+            .field("catch_up", &self.catch_up)
             .finish()
     }
 }
@@ -239,7 +319,15 @@ impl CronEntry {
             priority: 0,
             max_attempts: job.max_attempts(),
             tags: Vec::new(),
+            catch_up: CatchUp::All,
         })
+    }
+
+    /// What to do with the slots missed while no node ran: [`CatchUp::All`] (the default) unless
+    /// set here.
+    pub fn catch_up(mut self, catch_up: CatchUp) -> Self {
+        self.catch_up = catch_up;
+        self
     }
 
     /// Read the pattern in `timezone` (for example `"America/Chicago".parse()?`).
@@ -288,6 +376,7 @@ pub struct StoredCron {
     priority: i32,
     max_attempts: i32,
     tags: Vec<String>,
+    catch_up: CatchUp,
     paused: bool,
     inserted_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -301,6 +390,7 @@ impl Debug for StoredCron {
             .field("timezone", &self.schedule.timezone)
             .field("worker", &self.worker)
             .field("queue", &self.queue)
+            .field("catch_up", &self.catch_up)
             .field("paused", &self.paused)
             .field("updated_at", &self.updated_at)
             .finish()
@@ -359,6 +449,11 @@ impl StoredCron {
     /// The slots after `after`, up to and including `until` (at most 100).
     pub fn due(&self, after: DateTime<Utc>, until: DateTime<Utc>) -> Vec<DateTime<Utc>> {
         self.schedule.slots(after, until, MAX_SLOTS)
+    }
+
+    /// What it does with the slots missed while no node ran.
+    pub fn catch_up(&self) -> CatchUp {
+        self.catch_up
     }
 
     /// Whether it's [paused](Crons::pause): it inserts no slot until it's resumed.
@@ -429,6 +524,7 @@ struct CronRow {
     priority: i32,
     max_attempts: i32,
     tags: Vec<String>,
+    catch_up: String,
     paused: bool,
     inserted_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -465,17 +561,22 @@ impl CronRow {
             pattern: self.pattern.clone(),
             reason: format!("unknown timezone {:?}: {e}", self.timezone),
         });
-        let (schedule, timezone) =
-            match Schedule::parse(&self.pattern).and_then(|schedule| Ok((schedule, timezone?))) {
-                Ok(read) => read,
-                Err(error) => {
-                    return Err(UnreadableCron {
-                        name: self.name,
-                        updated_at: self.updated_at,
-                        error,
-                    })
-                }
-            };
+        let catch_up = CatchUp::from_str(&self.catch_up).map_err(|reason| CronError {
+            pattern: self.pattern.clone(),
+            reason,
+        });
+        let read = Schedule::parse(&self.pattern)
+            .and_then(|schedule| Ok((schedule, timezone?, catch_up?)));
+        let (schedule, timezone, catch_up) = match read {
+            Ok(read) => read,
+            Err(error) => {
+                return Err(UnreadableCron {
+                    name: self.name,
+                    updated_at: self.updated_at,
+                    error,
+                })
+            }
+        };
         Ok(StoredCron {
             name: self.name,
             schedule: Schedule {
@@ -488,6 +589,7 @@ impl CronRow {
             priority: self.priority,
             max_attempts: self.max_attempts,
             tags: self.tags,
+            catch_up,
             paused: self.paused,
             inserted_at: self.inserted_at,
             updated_at: self.updated_at,
@@ -585,18 +687,21 @@ impl Crons {
             r#"
             WITH put AS (
                 INSERT INTO {table} AS c (name, pattern, timezone, worker, args, queue, priority,
-                                          max_attempts, tags, inserted_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp(), clock_timestamp())
+                                          max_attempts, tags, catch_up, inserted_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp(),
+                        clock_timestamp())
                 ON CONFLICT (name) DO UPDATE SET
                     pattern = EXCLUDED.pattern, timezone = EXCLUDED.timezone,
                     worker = EXCLUDED.worker, args = EXCLUDED.args, queue = EXCLUDED.queue,
                     priority = EXCLUDED.priority, max_attempts = EXCLUDED.max_attempts,
-                    tags = EXCLUDED.tags, updated_at = clock_timestamp()
+                    tags = EXCLUDED.tags, catch_up = EXCLUDED.catch_up,
+                    updated_at = clock_timestamp()
                 WHERE (c.pattern, c.timezone, c.worker, c.args, c.queue, c.priority,
-                       c.max_attempts, c.tags)
+                       c.max_attempts, c.tags, c.catch_up)
                       IS DISTINCT FROM
                       (EXCLUDED.pattern, EXCLUDED.timezone, EXCLUDED.worker, EXCLUDED.args,
-                       EXCLUDED.queue, EXCLUDED.priority, EXCLUDED.max_attempts, EXCLUDED.tags)
+                       EXCLUDED.queue, EXCLUDED.priority, EXCLUDED.max_attempts, EXCLUDED.tags,
+                       EXCLUDED.catch_up)
                 RETURNING c.*
             )
             SELECT * FROM put
@@ -620,6 +725,7 @@ impl Crons {
                 .bind(entry.priority)
                 .bind(entry.max_attempts)
                 .bind(&entry.tags)
+                .bind(entry.catch_up.as_str())
                 .fetch_optional(&mut *conn)
                 .await?;
             if let Some(row) = row {
@@ -784,6 +890,13 @@ impl Entry<'_> {
         }
     }
 
+    fn catch_up(&self) -> CatchUp {
+        match self {
+            Entry::Engine(cron) => cron.catch_up,
+            Entry::Stored(cron) => cron.catch_up,
+        }
+    }
+
     /// No slot at or before this is inserted: a stored entry's start, when it last changed.
     fn since(&self) -> Option<DateTime<Utc>> {
         match self {
@@ -814,23 +927,58 @@ impl Entry<'_> {
         }
     }
 
-    /// Insert the slots that fell due after `after`, up to `until`, in order, stopping at the
-    /// first that fails and after [`MAX_SLOTS`]. Returns how many jobs were inserted (slots
-    /// another node had inserted don't count) and the time through which every slot is in:
-    /// `until`, or the last slot done before stopping. That is the next check's `after`.
-    async fn insert_due(
+    /// The slots to insert this check, and the time through which the slots are decided (the
+    /// next check's `after`): those after `after` up to `until`, but at most [`MAX_SLOTS`]
+    /// (the next check goes on from the last), and, by the entry's [`CatchUp`], of those at or
+    /// before `on_time` (missed) and those it owes (tried and not inserted), all, the newest or
+    /// none.
+    fn plan(
         &self,
-        storage: &Arc<Postgres>,
         after: DateTime<Utc>,
+        on_time: DateTime<Utc>,
         until: DateTime<Utc>,
-    ) -> (usize, DateTime<Utc>) {
+        owed: &[DateTime<Utc>],
+    ) -> (Vec<DateTime<Utc>>, DateTime<Utc>) {
+        let schedule = self.schedule();
+        let capped = |from: DateTime<Utc>| {
+            let mut slots = schedule.slots(from, until, MAX_SLOTS + 1);
+            if slots.len() > MAX_SLOTS {
+                slots.truncate(MAX_SLOTS);
+                let through = slots[MAX_SLOTS - 1];
+                tracing::warn!(cron = %self.name(), %through, "more than {MAX_SLOTS} cron slots due; inserting the rest next check");
+                (slots, through)
+            } else {
+                (slots, until)
+            }
+        };
+        match self.catch_up() {
+            CatchUp::All => {
+                let (slots, through) = capped(after);
+                (owed.iter().copied().chain(slots).collect(), through)
+            }
+            policy @ (CatchUp::Latest | CatchUp::None) => {
+                let on_time = on_time.max(after);
+                let (slots, through) = capped(on_time);
+                if !slots.is_empty() {
+                    return (slots, through);
+                }
+                let missed = match policy {
+                    CatchUp::Latest => schedule.last_slot(after, on_time),
+                    _ => None,
+                };
+                let latest = owed.iter().copied().chain(missed).max();
+                (latest.into_iter().collect(), through)
+            }
+        }
+    }
+
+    /// Insert `slots`, in order, stopping at the first that fails or the entry no longer as it
+    /// was read. Returns how many jobs were inserted (slots another node had inserted don't
+    /// count) and how many slots are in.
+    async fn insert(&self, storage: &Arc<Postgres>, slots: &[DateTime<Utc>]) -> (usize, usize) {
         let name = self.name();
-        let mut slots = self.schedule().slots(after, until, MAX_SLOTS + 1);
-        let more = slots.len() > MAX_SLOTS;
-        slots.truncate(MAX_SLOTS);
         let mut inserted = 0;
-        let mut done = after;
-        for slot in slots {
+        for (done, slot) in slots.iter().copied().enumerate() {
             match self.insert_slot(storage, slot).await {
                 Ok(Some(Inserted::New(job))) => {
                     tracing::info!(cron = %name, %slot, id = job.id, "cron job inserted");
@@ -838,7 +986,7 @@ impl Entry<'_> {
                 }
                 Ok(Some(Inserted::Duplicate(_))) => {}
                 Ok(None) => {
-                    tracing::debug!(cron = %name, "cron entry changed or deleted; reading it again next check");
+                    tracing::debug!(cron = %name, "cron entry changed, deleted or held; reading it again next check");
                     return (inserted, done);
                 }
                 Err(e) => {
@@ -846,13 +994,8 @@ impl Entry<'_> {
                     return (inserted, done);
                 }
             }
-            done = slot;
         }
-        if more {
-            tracing::warn!(cron = %name, through = %done, "more than {MAX_SLOTS} cron slots due; inserting the rest next check");
-            return (inserted, done);
-        }
-        (inserted, until)
+        (inserted, slots.len())
     }
 }
 
@@ -863,13 +1006,27 @@ enum Key {
     Stored(String, DateTime<Utc>),
 }
 
+/// How far an entry is in, on a node.
+struct Progress {
+    /// The time through which its slots are decided: inserted, owed, or skipped by its
+    /// [`CatchUp`].
+    through: DateTime<Utc>,
+    /// The slots it was to insert and didn't (refused, or held), to try again.
+    owed: Vec<DateTime<Utc>>,
+    /// The `until` of the check that last decided on it.
+    checked: DateTime<Utc>,
+}
+
 /// A node's cron checks: the engine's entries and those kept in the database, and how far each
 /// is in.
 pub(crate) struct Checks {
     engine: Vec<Cron>,
     stored: Crons,
-    /// The time through which each entry's slots are in.
-    done: HashMap<Key, DateTime<Utc>>,
+    /// How far each entry is in.
+    done: HashMap<Key, Progress>,
+    /// The `until` of the last check: a slot at or before it, of an entry that check didn't
+    /// decide on, was missed.
+    last_until: Option<DateTime<Utc>>,
     /// Stored entries named as one of the engine's, and those that can't be read (by name and
     /// version), as of the last read: each is warned of once, not on every check.
     shadowed: HashSet<String>,
@@ -884,6 +1041,7 @@ impl Checks {
             engine,
             stored: Crons::of(storage),
             done: HashMap::new(),
+            last_until: None,
             shadowed: HashSet::new(),
             unreadable: HashSet::new(),
             read_failed: false,
@@ -923,13 +1081,38 @@ impl Checks {
         let mut live = HashSet::new();
         for (index, entry) in entries.iter().enumerate() {
             let key = entry.key(index);
-            let done = self.done.get(&key).copied().unwrap_or(floor);
-            let after = done.max(floor).max(entry.since().unwrap_or(floor));
-            let (new, through) = entry.insert_due(storage, after, until).await;
+            let start = floor.max(entry.since().unwrap_or(floor));
+            let progress = self.done.get(&key);
+            let after = progress.map_or(start, |p| p.through.max(start));
+            // Slots after this weren't missed: the last check decided on the entry through
+            // `through`, so the rest fell due since (or were left for this one). Otherwise every
+            // slot until the last check was: it's new to this node, or this node just started.
+            let on_time = match (progress, self.last_until) {
+                (Some(p), Some(last)) if p.checked == last => p.through,
+                (_, Some(last)) => last,
+                (_, None) => until,
+            };
+            let owed: Vec<_> = progress
+                .map(|p| {
+                    p.owed
+                        .iter()
+                        .copied()
+                        .filter(|slot| *slot > start)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (slots, through) = entry.plan(after, on_time, until, &owed);
+            let (new, done) = entry.insert(storage, &slots).await;
             inserted += new;
-            self.done.insert(key.clone(), through);
+            let progress = Progress {
+                through,
+                owed: slots[done..].to_vec(),
+                checked: until,
+            };
+            self.done.insert(key.clone(), progress);
             live.insert(key);
         }
+        self.last_until = Some(until);
         // Forget the entries that are gone or changed, once the stored ones could be read.
         if stored.is_some() {
             self.done.retain(|key, _| live.contains(key));
@@ -1174,6 +1357,81 @@ mod tests {
         db.finish().await;
     }
 
+    /// An hourly entry with `catch_up` through a node's start (five hours to catch up, so
+    /// 8:00 to 12:00 missed), a check on time (13:00), a slot the database refuses then accepts
+    /// on the next check (14:00), and one it refuses until a newer slot is due (15:00, then
+    /// 16:00): the slots inserted.
+    async fn hourly_through_misses(catch_up: CatchUp) -> Vec<DateTime<Utc>> {
+        let db = Db::new().await.expect("database tests");
+        let hourly = Cron::new("h", "0 * * * *", || Tick)
+            .unwrap()
+            .catch_up(catch_up);
+        let mut checks = Checks::new(vec![hourly], &db.storage);
+        let window = chrono::Duration::hours(5);
+        let refuse = |refused: bool| {
+            let sql = if refused {
+                "ALTER TABLE {s}.ishikari_jobs ADD CONSTRAINT no_cron CHECK (meta->>'cron' IS NULL) NOT VALID"
+            } else {
+                "ALTER TABLE {s}.ishikari_jobs DROP CONSTRAINT no_cron"
+            };
+            let sql = sql.replace("{s}", &db.schema);
+            let admin = db.admin.clone();
+            async move {
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .execute(&admin)
+                    .await
+                    .unwrap();
+            }
+        };
+        for (until, refused) in [
+            (at(12, 30), false),
+            (at(13, 10), false),
+            (at(14, 10), true),
+            (at(14, 20), false),
+            (at(15, 10), true),
+            (at(16, 10), false),
+        ] {
+            if refused {
+                refuse(true).await;
+            }
+            checks.run(&db.storage, until - window, until).await;
+            if refused {
+                refuse(false).await;
+            }
+        }
+        let slots = db.slots("h").await;
+        db.finish().await;
+        slots
+    }
+
+    #[tokio::test]
+    async fn all_missed_slots_are_caught_up_by_default() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        let hours = [8, 9, 10, 11, 12, 13, 14, 15, 16].map(|h| at(h, 0));
+        assert_eq!(hourly_through_misses(CatchUp::All).await, hours);
+    }
+
+    #[tokio::test]
+    async fn only_the_latest_missed_slot_is_caught_up() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        // 15:00 was refused, and 16:00 fell due before it was accepted.
+        let hours = [12, 13, 14, 16].map(|h| at(h, 0));
+        assert_eq!(hourly_through_misses(CatchUp::Latest).await, hours);
+    }
+
+    #[tokio::test]
+    async fn no_missed_slot_is_caught_up_but_a_refused_one_is_tried_again() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        let hours = [13, 14, 16].map(|h| at(h, 0));
+        assert_eq!(hourly_through_misses(CatchUp::None).await, hours);
+    }
+
     #[test]
     fn the_next_slot() {
         let hourly = Cron::new("h", "0 * * * *", || Tick).unwrap();
@@ -1186,6 +1444,7 @@ mod tests {
             priority: 0,
             max_attempts: 1,
             tags: vec![],
+            catch_up: CatchUp::All,
             paused: false,
             inserted_at: at(0, 0),
             updated_at: at(0, 0),

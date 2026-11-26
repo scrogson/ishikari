@@ -184,7 +184,7 @@ pub mod secrets;
 
 pub use ishikari_macros::{job, worker};
 
-pub use cron::{Cron, CronEntry, CronError, Crons, StoredCron, UnreadableCron};
+pub use cron::{CatchUp, Cron, CronEntry, CronError, Crons, StoredCron, UnreadableCron};
 pub use engine::{Engine, EngineBuilder, EngineName, ErrorKind, Postgres, Shutdown};
 pub use insert::{insert_all, insert_with, InsertOpts, Inserted, Unique};
 pub use model::{Job, JobState};
