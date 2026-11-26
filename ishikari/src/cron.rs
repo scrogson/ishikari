@@ -860,7 +860,7 @@ impl Crons {
     /// The entry `name`, if there is one (and it can be read).
     pub async fn get(&self, name: &str) -> Result<Option<StoredCron>, sqlx::Error> {
         Ok(self
-            .read(Some(name))
+            .read(Filter::Name(name))
             .await?
             .into_iter()
             .find_map(Result::ok))
@@ -869,40 +869,86 @@ impl Crons {
     /// Every entry, by name. One whose pattern or timezone can't be read (edited by hand) is
     /// left out, with a warning.
     pub async fn list(&self) -> Result<Vec<StoredCron>, sqlx::Error> {
-        Ok(self
-            .read(None)
-            .await?
-            .into_iter()
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(entry),
-                Err(u) => {
-                    tracing::warn!(cron = %u.name, error = %u.error, "cron entry can't be read; skipped");
-                    None
-                }
-            })
-            .collect())
+        Ok(readable(self.read(Filter::All).await?))
+    }
+
+    /// The entries whose name starts with `prefix`, by name, as [`list`](Self::list): one
+    /// owner's, when their names start with it (`"tenant-42:"`).
+    pub async fn list_by_prefix(&self, prefix: &str) -> Result<Vec<StoredCron>, sqlx::Error> {
+        Ok(readable(self.read(Filter::Prefix(prefix)).await?))
+    }
+
+    /// The entries tagged `tag`, by name, as [`list`](Self::list).
+    pub async fn list_by_tag(&self, tag: &str) -> Result<Vec<StoredCron>, sqlx::Error> {
+        Ok(readable(self.read(Filter::Tag(tag)).await?))
     }
 
     /// Every entry, by name, with those that can't be read (edited by hand) as errors: they
     /// never run, and [`delete`](Self::delete) deletes them.
     pub async fn list_all(&self) -> Result<Vec<Result<StoredCron, UnreadableCron>>, sqlx::Error> {
-        self.read(None).await
+        self.read(Filter::All).await
     }
 
-    /// The entries (or the one named), by name, each read or not.
+    /// The entries `filter` picks, by name, each read or not.
     async fn read(
         &self,
-        name: Option<&str>,
+        filter: Filter<'_>,
     ) -> Result<Vec<Result<StoredCron, UnreadableCron>>, sqlx::Error> {
+        // Each served by an index: the primary key, `name text_pattern_ops` for a prefix
+        // (`LIKE` with no wildcard but the last), and the GIN index on `tags`.
+        let (clause, value) = match filter {
+            Filter::All => ("$1::text IS NULL", None),
+            Filter::Name(name) => ("name = $1", Some(name.to_string())),
+            Filter::Prefix(prefix) => (
+                r"name LIKE $1 ESCAPE '\'",
+                Some(format!("{}%", escape_like(prefix))),
+            ),
+            Filter::Tag(tag) => ("tags @> ARRAY[$1]::varchar[]", Some(tag.to_string())),
+        };
         let rows: Vec<CronRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT * FROM {} WHERE $1::text IS NULL OR name = $1 ORDER BY name",
+            "SELECT * FROM {} WHERE {clause} ORDER BY name",
             self.table()
         )))
-        .bind(name)
+        .bind(value)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(CronRow::read).collect())
     }
+}
+
+/// Which entries [`Crons::read`] reads.
+#[derive(Clone, Copy)]
+enum Filter<'a> {
+    All,
+    Name(&'a str),
+    Prefix(&'a str),
+    Tag(&'a str),
+}
+
+/// `text` matched as it is by `LIKE … ESCAPE '\'`.
+fn escape_like(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// The entries that can be read; each that can't is left out, with a warning.
+fn readable(entries: Vec<Result<StoredCron, UnreadableCron>>) -> Vec<StoredCron> {
+    entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry),
+            Err(u) => {
+                tracing::warn!(cron = %u.name, error = %u.error, "cron entry can't be read; skipped");
+                None
+            }
+        })
+        .collect()
 }
 
 /// The most slots one check inserts for an entry; the next check goes on from the last.
@@ -1162,7 +1208,7 @@ impl Checks {
 
     /// The stored entries that can be read; `None` if none could be read at all.
     async fn read_stored(&mut self) -> Option<Vec<StoredCron>> {
-        let rows = match self.stored.read(None).await {
+        let rows = match self.stored.read(Filter::All).await {
             Ok(rows) => rows,
             Err(e) => {
                 if !self.read_failed {

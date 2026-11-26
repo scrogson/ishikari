@@ -698,3 +698,48 @@ async fn an_entry_is_run_now_as_its_own_job() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn entries_are_listed_by_a_prefix_of_their_names_or_by_a_tag() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let crons = Crons::new(db.pool.clone());
+    for (name, tag) in [
+        ("tenant-42:digest", "digest"),
+        ("tenant-42:sync", "sync"),
+        ("tenant-420:digest", "digest"),
+        ("tenant_4%:odd", "digest"),
+        ("tenant-4x:odd", "sync"),
+    ] {
+        let entry = CronEntry::new(name, "0 * * * *", &Ping { n: 1 })
+            .unwrap()
+            .tag(tag);
+        crons.put(&entry).await.unwrap();
+    }
+    let names = |entries: Vec<ishikari::StoredCron>| {
+        entries
+            .iter()
+            .map(|e| e.name().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        names(crons.list_by_prefix("tenant-42:").await.unwrap()),
+        ["tenant-42:digest", "tenant-42:sync"]
+    );
+    // `%` and `_` are matched as they are, not as wildcards.
+    assert_eq!(
+        names(crons.list_by_prefix("tenant_4%").await.unwrap()),
+        ["tenant_4%:odd"]
+    );
+    assert!(crons.list_by_prefix("tenant_").await.unwrap().len() == 1);
+    assert_eq!(crons.list_by_prefix("").await.unwrap().len(), 5);
+    assert_eq!(
+        names(crons.list_by_tag("sync").await.unwrap()),
+        ["tenant-42:sync", "tenant-4x:odd"]
+    );
+    assert!(crons.list_by_tag("none").await.unwrap().is_empty());
+
+    db.finish().await;
+}

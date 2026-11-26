@@ -20,3 +20,9 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.ishikari_crons (
     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One owner's entries, by a prefix of their names (`LIKE 'tenant-42:%'`), or by a tag.
+CREATE INDEX IF NOT EXISTS ishikari_crons_name_prefix_idx
+    ON {SCHEMA}.ishikari_crons (name text_pattern_ops);
+CREATE INDEX IF NOT EXISTS ishikari_crons_tags_idx
+    ON {SCHEMA}.ishikari_crons USING GIN (tags);
