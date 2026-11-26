@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
-Migration **v11**.
+All five crates move to 0.7.0. Migration **v11**: cron entries kept in the database.
 
 ### Upgrading
 
@@ -39,6 +39,15 @@ Migration **v11**.
 - The admin's Schedules page lists the entries kept in the database, with their next slot and the
   job of their latest; pauses, resumes, runs now and deletes them; and, with the host's modules
   (`AppState::with_node_modules`), schedules a module (a `ModuleJob` per slot).
+
+### Fixed
+
+- url 2.5.9 in both lockfiles (from 2.5.4, and `ishikari-wasm`'s from 2.5.8), for
+  RUSTSEC-2026-0592.
+- ishikari-wasm requires wasmtime and wasmtime-wasi 49.0.7 (from 49; its lockfile had 49.0.5),
+  for RUSTSEC-2026-0566 to RUSTSEC-2026-0573 and RUSTSEC-2026-0587: guest-triggered host aborts
+  and panics, unbounded host memory from empty stream writes, and a WASI filesystem escape on
+  Windows.
 
 ## 0.6.1
 
