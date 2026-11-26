@@ -658,6 +658,16 @@ impl Entry<'_> {
         }
     }
 
+    /// What its progress is kept by: an engine's entry by its place among them (two may share a
+    /// name), a stored one by its name and version, so a changed entry starts afresh from its
+    /// change, not from how far the old one got.
+    fn key(&self, index: usize) -> Key {
+        match self {
+            Entry::Engine(_) => Key::Engine(index),
+            Entry::Stored(cron) => Key::Stored(cron.name.clone(), cron.updated_at),
+        }
+    }
+
     /// The slot's job, inserted or found; `None` when the entry is no longer as it was read.
     async fn insert_slot(
         &self,
@@ -712,13 +722,20 @@ impl Entry<'_> {
     }
 }
 
+/// What an entry's progress is kept by; see [`Entry::key`].
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Key {
+    Engine(usize),
+    Stored(String, DateTime<Utc>),
+}
+
 /// A node's cron checks: the engine's entries and those kept in the database, and how far each
 /// is in.
 pub(crate) struct Checks {
     engine: Vec<Cron>,
     stored: Crons,
-    /// The time through which each entry's slots are in, by name.
-    done: HashMap<String, DateTime<Utc>>,
+    /// The time through which each entry's slots are in.
+    done: HashMap<Key, DateTime<Utc>>,
     /// Stored entries named as one of the engine's, and those that can't be read (by name and
     /// version), as of the last read: each is warned of once, not on every check.
     shadowed: HashSet<String>,
@@ -769,17 +786,19 @@ impl Checks {
         }
 
         let mut inserted = 0;
-        for entry in &entries {
-            let done = self.done.get(entry.name()).copied().unwrap_or(floor);
+        let mut live = HashSet::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let key = entry.key(index);
+            let done = self.done.get(&key).copied().unwrap_or(floor);
             let after = done.max(floor).max(entry.since().unwrap_or(floor));
             let (new, through) = entry.insert_due(storage, after, until).await;
             inserted += new;
-            self.done.insert(entry.name().to_string(), through);
+            self.done.insert(key.clone(), through);
+            live.insert(key);
         }
-        // Forget the entries that are gone, once the stored ones could be read.
+        // Forget the entries that are gone or changed, once the stored ones could be read.
         if stored.is_some() {
-            let live: HashSet<&str> = entries.iter().map(|e| e.name()).collect();
-            self.done.retain(|name, _| live.contains(name.as_str()));
+            self.done.retain(|key, _| live.contains(key));
         }
         inserted
     }

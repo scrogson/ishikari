@@ -477,3 +477,38 @@ async fn an_entry_named_as_a_static_cron_is_ignored() {
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;
 }
+
+#[tokio::test]
+async fn two_engine_crons_of_one_name_both_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let yearly = Cron::new("dup", "0 0 1 1 *", || Ping { n: 1 }).unwrap();
+    let often = Cron::new("dup", "* * * * * *", || Ping { n: 2 }).unwrap();
+    let engine = engine_with("dyn", db.pool.clone(), vec![yearly, often]);
+    eventually(
+        "the second entry's slots",
+        Duration::from_secs(30),
+        || async { pings(&db, "dup").await.len() >= 2 },
+    )
+    .await;
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_null_tag_is_refused() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let refused = sqlx::query(
+        "INSERT INTO ishikari_crons (name, pattern, worker, args, queue, max_attempts, tags) \
+         VALUES ('nulltag', '* * * * *', 'x', '{}', 'default', 1, '{NULL}')",
+    )
+    .execute(&db.pool)
+    .await;
+    assert!(refused.is_err(), "a tag can't be NULL");
+
+    db.finish().await;
+}

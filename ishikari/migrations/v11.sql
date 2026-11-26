@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.ishikari_crons (
     queue TEXT NOT NULL CHECK (char_length(queue) > 0 AND char_length(queue) < 128),
     priority INTEGER NOT NULL DEFAULT 0 CHECK (priority >= 0 AND priority <= 3),
     max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
-    tags TEXT[] NOT NULL DEFAULT '{}',
+    tags TEXT[] NOT NULL DEFAULT '{}' CHECK (array_position(tags, NULL) IS NULL),
     inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
