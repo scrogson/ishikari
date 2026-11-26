@@ -7,7 +7,7 @@
 <header class="ik-page-header">
     <div>
         <h1 class="ik-title">Schedules</h1>
-        <p class="ik-subtitle">Cron entries kept in the database, put and deleted while the engines run: each engine reads them again on every cron check and inserts each slot once. Entries an engine is given in code aren't listed here.</p>
+        <p class="ik-subtitle">Cron entries kept in the database, put and deleted while the engines run: each engine reads them again on every cron check and inserts each slot once. Entries an engine is given in code aren't listed here, and one listed here with the name of one of those never runs: the engine's own runs instead.</p>
     </div>
 </header>
 
@@ -81,7 +81,7 @@
                         {% if let Some(last) = s.last %}
                         <a href="{{ base_path }}/jobs/{{ last.id }}" class="ik-link tabular-nums">#{{ last.id }}</a>
                         <span class="ik-badge ik-badge-sm ik-dot {{ last.state_class() }}">{{ last.state }}</span>
-                        <div class="ik-muted text-xs mt-1 tabular-nums">{{ last.scheduled_at.format("%Y-%m-%d %H:%M") }}</div>
+                        <div class="ik-muted text-xs mt-1 tabular-nums">{{ last.slot.format("%Y-%m-%d %H:%M") }}</div>
                         {% else %}<span class="ik-none">none yet</span>{% endif %}
                     </td>
                     <td class="text-right whitespace-nowrap">

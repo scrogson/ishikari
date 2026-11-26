@@ -223,6 +223,11 @@ impl CronEntry {
         if name.is_empty() {
             return Err(refused("a cron entry needs a name".into()));
         }
+        if name.trim() != name || name.chars().any(char::is_control) {
+            return Err(refused(format!(
+                "a cron entry's name can't start or end with whitespace, nor hold control characters: {name:?}"
+            )));
+        }
         let args = serde_json::to_value(job as &dyn Worker)
             .map_err(|e| refused(format!("the job couldn't be serialized: {e}")))?;
         Ok(CronEntry {

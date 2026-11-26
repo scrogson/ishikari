@@ -47,7 +47,8 @@ pub struct ScheduleRow {
 pub struct LastRun {
     pub id: i64,
     pub state: String,
-    pub scheduled_at: DateTime<Utc>,
+    /// Its slot (or, for a job whose meta doesn't give one, when it's scheduled).
+    pub slot: DateTime<Utc>,
 }
 
 impl LastRun {
@@ -97,6 +98,18 @@ pub struct ScheduleForm {
     pub max_attempts: String,
 }
 
+impl ScheduleForm {
+    /// The form as the page first shows it.
+    fn defaults() -> Self {
+        ScheduleForm {
+            pattern: "0 * * * *".into(),
+            timezone: "UTC".into(),
+            args: "{}".into(),
+            ..ScheduleForm::default()
+        }
+    }
+}
+
 /// The form deleting a schedule.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -113,13 +126,14 @@ pub async fn list(State(state): State<AppState>, Query(query): Query<ChangedQuer
         (_, Some(name)) => Some(format!("Deleted {name}")),
         _ => None,
     };
-    let form = ScheduleForm {
-        pattern: "0 * * * *".into(),
-        timezone: "UTC".into(),
-        args: "{}".into(),
-        ..ScheduleForm::default()
-    };
-    page(&state, StatusCode::OK, notice, None, form).await
+    page(
+        &state,
+        StatusCode::OK,
+        notice,
+        None,
+        ScheduleForm::defaults(),
+    )
+    .await
 }
 
 /// Schedule a module, an `application/x-www-form-urlencoded` [`ScheduleForm`]: a
@@ -178,20 +192,28 @@ async fn putting(state: &AppState, form: &ScheduleForm) -> Result<String, Refuse
         queue => entry = entry.queue(queue),
     }
     crons(state).put(&entry).await.map_err(|e| {
-        let why = format!("Couldn't put the schedule: {e}");
-        (StatusCode::INTERNAL_SERVER_ERROR, why)
+        // A value the table refuses (too long, a NUL...) is the form's to fix.
+        let refused = matches!(&e, sqlx::Error::Database(db)
+            if db.code().is_some_and(|code| code.starts_with("22") || code.starts_with("23")));
+        let status = if refused {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (status, format!("Couldn't put the schedule: {e}"))
     })?;
     Ok(name.to_string())
 }
 
-/// Delete a schedule, an `application/x-www-form-urlencoded` [`DeleteForm`]. No slot of it is
-/// inserted once it's deleted; a job already inserted still runs.
+/// Delete a schedule, an `application/x-www-form-urlencoded` [`DeleteForm`], by its name exactly
+/// as given (one edited by hand may have odd whitespace). No slot of it is inserted once it's
+/// deleted; a job already inserted still runs.
 pub async fn delete(
     State(state): State<AppState>,
     form: Result<Form<DeleteForm>, FormRejection>,
 ) -> Response {
     let name = match form {
-        Ok(Form(form)) => form.name.trim().to_string(),
+        Ok(Form(form)) => form.name,
         Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
     };
     let error = match crons(&state).delete(&name).await {
@@ -207,7 +229,7 @@ pub async fn delete(
         error.0,
         None,
         Some(error.1),
-        ScheduleForm::default(),
+        ScheduleForm::defaults(),
     )
     .await
 }
@@ -231,43 +253,45 @@ fn changed(state: &AppState, done: &str, name: &str) -> Response {
     }
 }
 
-/// The job of each schedule's latest slot, by schedule name, in one query.
+/// The job of each schedule's latest slot, by schedule name, in one query: of the jobs inserted
+/// since the schedule was (so not one of a deleted schedule of the same name), the one with the
+/// latest slot. Not the latest `scheduled_at`: a retry or a snooze moves that on.
 async fn last_runs(
     state: &AppState,
-    names: &[String],
+    schedules: &[(String, DateTime<Utc>)],
 ) -> Result<HashMap<String, LastRun>, sqlx::Error> {
-    if names.is_empty() {
+    let (names, since): (Vec<String>, Vec<DateTime<Utc>>) = schedules.iter().cloned().unzip();
+    if schedules.is_empty() {
         return Ok(HashMap::new());
     }
     let jobs = match state.schema() {
         Some(schema) => format!("{schema}.ishikari_jobs"),
         None => "ishikari_jobs".to_string(),
     };
-    // `meta @>` is what the GIN index on `meta` serves.
-    let rows: Vec<(String, i64, String, DateTime<Utc>)> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT c.name, j.id, j.state::text, j.scheduled_at
-             FROM unnest($1::text[]) AS c(name)
+    // `meta @>` is what the GIN index on `meta` serves. Slots are RFC 3339 in UTC, so their text
+    // sorts as their time does.
+    // The schedule's name, then its job's id, state, slot and scheduled time.
+    type LastRow = (String, i64, String, Option<String>, DateTime<Utc>);
+    let rows: Vec<LastRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT c.name, j.id, j.state::text, j.slot, j.scheduled_at
+             FROM unnest($1::text[], $2::timestamptz[]) AS c(name, since)
              CROSS JOIN LATERAL (
-                 SELECT id, state, scheduled_at FROM {jobs}
-                 WHERE meta @> jsonb_build_object('cron', c.name)
-                 ORDER BY scheduled_at DESC, id DESC LIMIT 1
+                 SELECT id, state, meta->>'slot' AS slot, scheduled_at FROM {jobs}
+                 WHERE meta @> jsonb_build_object('cron', c.name) AND inserted_at >= c.since
+                 ORDER BY meta->>'slot' DESC NULLS LAST, id DESC LIMIT 1
              ) j"
-        )))
-        .bind(names)
-        .fetch_all(&state.pool)
-        .await?;
+    )))
+    .bind(&names)
+    .bind(&since)
+    .fetch_all(&state.pool)
+    .await?;
     Ok(rows
         .into_iter()
-        .map(|(name, id, state, scheduled_at)| {
-            (
-                name,
-                LastRun {
-                    id,
-                    state,
-                    scheduled_at,
-                },
-            )
+        .map(|(name, id, state, slot, scheduled_at)| {
+            let slot = slot
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map_or(scheduled_at, |s| s.with_timezone(&Utc));
+            (name, LastRun { id, state, slot })
         })
         .collect())
 }
@@ -314,11 +338,12 @@ async fn page(
     let mut unreadable = Vec::new();
     match crons(state).list_all().await {
         Ok(all) => {
-            let names: Vec<String> = all
+            let named: Vec<(String, DateTime<Utc>)> = all
                 .iter()
-                .filter_map(|c| c.as_ref().ok().map(|c| c.name().to_string()))
+                .filter_map(|c| c.as_ref().ok())
+                .map(|c| (c.name().to_string(), c.inserted_at()))
                 .collect();
-            let mut last = last_runs(state, &names).await.unwrap_or_else(|e| {
+            let mut last = last_runs(state, &named).await.unwrap_or_else(|e| {
                 error.get_or_insert(format!("Couldn't find the schedules' last runs: {e}"));
                 HashMap::new()
             });

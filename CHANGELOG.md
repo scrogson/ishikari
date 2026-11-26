@@ -14,7 +14,8 @@ Migration **v11**.
 
 - Cron entries kept in the database, put and deleted while engines run, with no restart: for
   schedules a host's users, or its agents, make. `Crons::new(pool)` `put`s a `CronEntry`
-  (`CronEntry::new(name, pattern, &job)`, with `timezone`, `queue`, `priority`, `max_attempts`
+  (`CronEntry::new(name, pattern, &job)`, its name without surrounding whitespace or control
+  characters, with `timezone`, `queue`, `priority`, `max_attempts`
   and `tag`), and `get`s, `list`s and `delete`s them as `StoredCron`s. Every node picks a change
   up on its next check (`cron_interval`) and inserts each slot once, as for the engine's own
   entries. An entry's slots start when it's put (none from before is caught up); a change

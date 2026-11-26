@@ -304,3 +304,163 @@ async fn a_bad_schedule_is_refused_with_the_form_kept() {
 
     db.drop().await;
 }
+
+/// Insert a job of the schedule `name` for `slot`, in `state`, scheduled at `scheduled_at`.
+async fn slot_job(
+    db: &TestDb,
+    name: &str,
+    slot: &str,
+    state: &str,
+    scheduled_at: chrono::DateTime<Utc>,
+) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {}.ishikari_jobs (worker, state, meta, scheduled_at) \
+         VALUES ($1, $2::{}.ishikari_job_state, jsonb_build_object('cron', $3::text, 'slot', $4::text), $5) \
+         RETURNING id",
+        db.schema, db.schema
+    )))
+    .bind(ModuleJob::WORKER)
+    .bind(state)
+    .bind(name)
+    .bind(slot)
+    .bind(scheduled_at)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+}
+
+fn hourly(name: &str) -> CronEntry {
+    CronEntry::new(
+        name,
+        "0 * * * *",
+        &ModuleJob::new("test/kit", serde_json::json!({})),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_last_run_is_the_latest_slot_even_when_an_older_one_is_retried_later() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    crons(&db).put(&hourly("hourly")).await.unwrap();
+    let now = Utc::now();
+    // The 10:00 job failed and retries in half an hour; the 11:00 one is done.
+    let older = slot_job(
+        &db,
+        "hourly",
+        "2026-11-26T10:00:00+00:00",
+        "retryable",
+        now + chrono::Duration::minutes(30),
+    )
+    .await;
+    let latest = slot_job(
+        &db,
+        "hourly",
+        "2026-11-26T11:00:00+00:00",
+        "completed",
+        now - chrono::Duration::minutes(1),
+    )
+    .await;
+
+    let html = body(get(&admin(&db, false), "/admin/schedules", &[]).await).await;
+    assert!(html.contains(&format!("/admin/jobs/{latest}")), "{html}");
+    assert!(!html.contains(&format!("/admin/jobs/{older}")));
+    assert!(html.contains("2026-11-26 11:00"), "the slot's time");
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_put_again_after_a_delete_has_no_last_run_of_the_old_one() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    crons(&db).put(&hourly("hourly")).await.unwrap();
+    let old = slot_job(
+        &db,
+        "hourly",
+        "2026-11-26T10:00:00+00:00",
+        "completed",
+        Utc::now(),
+    )
+    .await;
+    assert!(crons(&db).delete("hourly").await.unwrap());
+    crons(&db).put(&hourly("hourly")).await.unwrap();
+
+    let html = body(get(&admin(&db, false), "/admin/schedules", &[]).await).await;
+    assert!(!html.contains(&format!("/admin/jobs/{old}")), "{html}");
+    assert!(html.contains("none yet"));
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_with_odd_whitespace_in_its_name_can_be_deleted() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    // Only by hand: `CronEntry::new` refuses such a name.
+    assert!(CronEntry::new(
+        " padded ",
+        "0 * * * *",
+        &ModuleJob::new("test/kit", serde_json::json!({}))
+    )
+    .is_err());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {}.ishikari_crons (name, pattern, worker, args, queue, max_attempts) \
+         VALUES (' padded ', '0 * * * *', 'x', '{{}}', 'default', 1)",
+        db.schema
+    )))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let app = admin(&db, false);
+    let res = post_form(&app, "/admin/schedules/delete", &[("name", " padded ")]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(crons(&db).list_all().await.unwrap().is_empty());
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_value_the_table_refuses_is_a_bad_request() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let app = admin(&db, true);
+    let queue = "q".repeat(200);
+    let res = post_form(
+        &app,
+        "/admin/schedules",
+        &[
+            ("name", "long-queue"),
+            ("module", "test/kit"),
+            ("pattern", "0 * * * *"),
+            ("queue", &queue),
+        ],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body(res).await.contains(r#"value="long-queue""#));
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_failed_delete_keeps_the_forms_defaults() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let res = post_form(
+        &admin(&db, true),
+        "/admin/schedules/delete",
+        &[("name", "gone")],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert!(body(res).await.contains(r#"value="0 * * * *""#));
+
+    db.drop().await;
+}
