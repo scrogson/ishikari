@@ -471,6 +471,12 @@ impl StoredCron {
     /// The first slot after `after` (and after the entry's last change, since no slot before
     /// that runs), if the pattern has one. This is the pattern's, paused or not: a paused entry
     /// runs none (see [`paused`](Self::paused)).
+    ///
+    /// Its last run is a job: of those whose meta has `{"cron": name}` (`meta @> ...`, which
+    /// the jobs' `meta` index serves) inserted since its [`inserted_at`](Self::inserted_at) (not
+    /// those of a deleted entry of the same name), the one with the latest `"slot"`. Slots are
+    /// RFC 3339 in UTC, so their text sorts as their time does; not `scheduled_at`, which a
+    /// retry or a snooze moves on.
     pub fn next(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.schedule
             .slots(after.max(self.updated_at), DateTime::<Utc>::MAX_UTC, 1)
@@ -751,7 +757,8 @@ impl Crons {
     /// those still due when it commits are the new version's. It starts from when it was put,
     /// not from the commit: the slots between are inserted when it commits (those within
     /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up)), whatever its [`CatchUp`], as
-    /// they fell due while the nodes were up. Keep the transaction short.
+    /// they fell due while the nodes were up (on a node that couldn't read the stored entries
+    /// meanwhile, they were missed). Keep the transaction short.
     ///
     /// Under `REPEATABLE READ` or `SERIALIZABLE`, a put racing another of the same name fails
     /// with a serialization error, for the caller to retry its transaction.
@@ -851,7 +858,8 @@ impl Crons {
         self.pause_in(&mut conn, name).await
     }
 
-    /// [`pause`](Self::pause) in the caller's transaction (`&mut tx`).
+    /// [`pause`](Self::pause) in the caller's transaction (`&mut tx`). Until it commits, the
+    /// entry's slots wait (even if it was paused already).
     pub async fn pause_in(&self, conn: &mut PgConnection, name: &str) -> Result<bool, sqlx::Error> {
         self.set_paused(conn, name, true).await
     }
@@ -864,7 +872,8 @@ impl Crons {
         self.resume_in(&mut conn, name).await
     }
 
-    /// [`resume`](Self::resume) in the caller's transaction (`&mut tx`).
+    /// [`resume`](Self::resume) in the caller's transaction (`&mut tx`). Until it commits, the
+    /// entry's slots wait (even if it wasn't paused).
     pub async fn resume_in(
         &self,
         conn: &mut PgConnection,
@@ -882,26 +891,20 @@ impl Crons {
         paused: bool,
     ) -> Result<bool, sqlx::Error> {
         let table = self.table();
-        let changed = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE {table} SET paused = $2, updated_at = clock_timestamp()
-             WHERE name = $1 AND paused <> $2"
+        // One statement that always updates the row (moving `updated_at` only on a change): it
+        // waits for a transaction holding the row, and finds none if that deleted it. A check of
+        // existence apart could see a row another put since, and say an entry this didn't pause
+        // was.
+        let updated = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET paused = $2,
+                 updated_at = CASE WHEN paused <> $2 THEN clock_timestamp() ELSE updated_at END
+             WHERE name = $1"
         )))
         .bind(name)
         .bind(paused)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
-        if changed > 0 {
-            return Ok(true);
-        }
-        // Already so, or gone: a statement of its own, whose snapshot sees a delete the update
-        // waited on.
-        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM {table} WHERE name = $1)"
-        )))
-        .bind(name)
-        .fetch_one(conn)
-        .await
+        .execute(conn)
+        .await?;
+        Ok(updated.rows_affected() > 0)
     }
 
     /// Insert the job of the entry `name` now, outside its schedule (to try it, or for a "run

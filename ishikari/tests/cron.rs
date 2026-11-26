@@ -601,8 +601,10 @@ async fn a_paused_entry_inserts_nothing_until_resumed_and_back_fills_nothing() {
     assert!(crons.pause("napping").await.unwrap());
     // Final, as a delete is: nothing once it has returned.
     let at_pause = pings(&db, "napping").await;
-    assert!(crons.pause("napping").await.unwrap(), "already paused");
     let paused = crons.get("napping").await.unwrap().unwrap();
+    assert!(crons.pause("napping").await.unwrap(), "already paused");
+    let again = crons.get("napping").await.unwrap().unwrap();
+    assert_eq!(again.updated_at(), paused.updated_at(), "unchanged");
     assert!(paused.paused(), "kept, and listed as paused");
     assert_eq!(crons.list().await.unwrap().len(), 1);
     tokio::time::sleep(Duration::from_millis(2_500)).await;
