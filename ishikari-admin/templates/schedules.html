@@ -55,7 +55,7 @@
                 {% for s in schedules %}
                 <tr>
                     <td>
-                        <span class="font-medium ik-mono">{{ s.name }}</span>
+                        <span class="font-medium ik-mono whitespace-nowrap">{{ s.name }}</span>
                         {% if s.paused %}<span class="ik-badge ik-badge-sm ik-tone-warning">paused</span>{% endif %}
                         {% if !s.tags.is_empty() %}
                         <div class="mt-1 flex flex-wrap gap-1">
@@ -86,26 +86,28 @@
                         <div class="ik-muted text-xs mt-1 tabular-nums">{{ last.slot.format("%Y-%m-%d %H:%M") }}{% if last.run_now %} · run now{% endif %}</div>
                         {% else %}<span class="ik-none">none yet</span>{% endif %}
                     </td>
-                    <td class="text-right whitespace-nowrap">
-                        <form method="post" action="{{ base_path }}/schedules/run" class="inline">
-                            <input type="hidden" name="name" value="{{ s.name }}">
-                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="Insert its job now, outside the pattern">Run now</button>
-                        </form>
-                        {% if s.paused %}
-                        <form method="post" action="{{ base_path }}/schedules/resume" class="inline">
-                            <input type="hidden" name="name" value="{{ s.name }}">
-                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="Runs from now: no slot missed while it was paused is caught up">Resume</button>
-                        </form>
-                        {% else %}
-                        <form method="post" action="{{ base_path }}/schedules/pause" class="inline">
-                            <input type="hidden" name="name" value="{{ s.name }}">
-                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="No slot is inserted until it's resumed">Pause</button>
-                        </form>
-                        {% endif %}
-                        <form method="post" action="{{ base_path }}/schedules/delete" class="inline">
-                            <input type="hidden" name="name" value="{{ s.name }}">
-                            <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" onclick="return confirm('Delete this schedule? No slot of it is inserted after this; a job already inserted still runs.')">Delete</button>
-                        </form>
+                    <td class="whitespace-nowrap">
+                        <div class="flex justify-end gap-1">
+                            <form method="post" action="{{ base_path }}/schedules/run">
+                                <input type="hidden" name="name" value="{{ s.name }}">
+                                <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="Insert its job now, outside the pattern">Run now</button>
+                            </form>
+                            {% if s.paused %}
+                            <form method="post" action="{{ base_path }}/schedules/resume">
+                                <input type="hidden" name="name" value="{{ s.name }}">
+                                <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="Runs from now: no slot missed while it was paused is caught up">Resume</button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="{{ base_path }}/schedules/pause">
+                                <input type="hidden" name="name" value="{{ s.name }}">
+                                <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" title="No slot is inserted until it's resumed">Pause</button>
+                            </form>
+                            {% endif %}
+                            <form method="post" action="{{ base_path }}/schedules/delete">
+                                <input type="hidden" name="name" value="{{ s.name }}">
+                                <button type="submit" class="ik-btn ik-btn-ghost ik-btn-xs" onclick="return confirm('Delete this schedule? No slot of it is inserted after this; a job already inserted still runs.')">Delete</button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
