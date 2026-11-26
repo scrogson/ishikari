@@ -1,11 +1,12 @@
-//! Cron slots run once across nodes, and a starting node catches up on recent slots.
+//! Cron slots run once across nodes, and a starting node catches up on recent slots. Entries
+//! kept in the database are picked up, changed and dropped while engines run.
 
 mod common;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use common::{eventually, TestDb};
 use ishikari::prelude::*;
-use ishikari::{Cron, Engine, Postgres, Queue};
+use ishikari::{Cron, CronEntry, Crons, Engine, Postgres, Queue};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -185,6 +186,293 @@ async fn slots_that_failed_to_insert_are_inserted_on_a_later_tick() {
         },
     )
     .await;
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+// Entries kept in the database (`Crons`), created, changed and deleted while engines run.
+
+#[ishikari::job]
+struct Ping {
+    n: i32,
+}
+
+#[ishikari::worker]
+impl Worker for Ping {
+    async fn perform(&self, _ctx: Context) -> PerformResult {
+        Complete::default().into()
+    }
+}
+
+/// The slots inserted for the entry `name`, in order, with the `n` each job was given.
+async fn pings(db: &TestDb, name: &str) -> Vec<(chrono::DateTime<Utc>, i32)> {
+    sqlx::query_as(
+        "SELECT (meta->>'slot')::timestamptz, (args->>'n')::int FROM ishikari_jobs \
+         WHERE meta->>'cron' = $1 ORDER BY 1",
+    )
+    .bind(name)
+    .fetch_all(&db.pool)
+    .await
+    .unwrap()
+}
+
+fn engine_with(name: &str, pool: sqlx::PgPool, statics: Vec<Cron>) -> Engine {
+    statics
+        .into_iter()
+        .fold(
+            Engine::builder(name)
+                .cron_interval(Duration::from_millis(100))
+                .cron_catch_up(Duration::from_secs(5)),
+            |builder, cron| builder.cron(cron),
+        )
+        .start(Postgres::new(pool))
+}
+
+fn every_second_ping(name: &str, n: i32) -> CronEntry {
+    CronEntry::new(name, "* * * * * *", &Ping { n }).unwrap()
+}
+
+#[tokio::test]
+async fn an_entry_put_at_runtime_runs_without_a_restart_and_without_back_filling() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    // No cron given to the engine at all.
+    let engine = engine_with("dyn", db.pool.clone(), vec![]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let crons = Crons::new(db.pool.clone());
+    let entry = crons
+        .put(&every_second_ping("agent-ping", 1))
+        .await
+        .unwrap();
+    assert_eq!(entry.name(), "agent-ping");
+    assert_eq!(entry.worker(), std::any::type_name::<Ping>());
+
+    eventually("the entry's slots", Duration::from_secs(30), || async {
+        pings(&db, "agent-ping").await.len() >= 2
+    })
+    .await;
+    let slots = pings(&db, "agent-ping").await;
+    // Within the catch-up window, but nothing from before the entry was put.
+    assert!(
+        slots.iter().all(|(slot, _)| *slot > entry.updated_at()),
+        "no slot before the entry was put: {slots:?}, put at {}",
+        entry.updated_at()
+    );
+    assert!(slots.iter().all(|(_, n)| *n == 1));
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn a_deleted_entry_inserts_no_more_slots() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let engine = engine_with("dyn", db.pool.clone(), vec![]);
+    let crons = Crons::new(db.pool.clone());
+    crons.put(&every_second_ping("gone", 1)).await.unwrap();
+    eventually("the first slots", Duration::from_secs(30), || async {
+        pings(&db, "gone").await.len() >= 2
+    })
+    .await;
+
+    assert!(crons.delete("gone").await.unwrap());
+    let deleted_at = Utc::now();
+    assert!(!crons.delete("gone").await.unwrap(), "already gone");
+    assert!(crons.get("gone").await.unwrap().is_none());
+
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    let late: Vec<_> = pings(&db, "gone")
+        .await
+        .into_iter()
+        .filter(|(slot, _)| *slot > deleted_at)
+        .collect();
+    assert!(late.is_empty(), "slots after the delete: {late:?}");
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn two_engines_insert_an_entrys_slots_once() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let a = engine_with("a", db.pool.clone(), vec![]);
+    let b = engine_with("b", db.another_pool().await, vec![]);
+    Crons::new(db.pool.clone())
+        .put(&every_second_ping("shared", 1))
+        .await
+        .unwrap();
+
+    eventually("a few slots", Duration::from_secs(30), || async {
+        pings(&db, "shared").await.len() >= 3
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    let slots = pings(&db, "shared").await;
+    let mut distinct = slots.clone();
+    distinct.dedup_by_key(|(slot, _)| *slot);
+    assert_eq!(slots.len(), distinct.len(), "no slot twice: {slots:?}");
+
+    a.shutdown(Duration::from_secs(1)).await;
+    b.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn putting_an_entry_again_changes_it_from_then_on() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let engine = engine_with("dyn", db.pool.clone(), vec![]);
+    let crons = Crons::new(db.pool.clone());
+    let first = crons.put(&every_second_ping("changing", 1)).await.unwrap();
+    eventually("the first job's slots", Duration::from_secs(30), || async {
+        pings(&db, "changing").await.len() >= 2
+    })
+    .await;
+
+    // Putting the same entry again changes nothing, its time included.
+    let same = crons.put(&every_second_ping("changing", 1)).await.unwrap();
+    assert_eq!(same.updated_at(), first.updated_at());
+    assert_eq!(same.inserted_at(), first.inserted_at());
+
+    let second = crons.put(&every_second_ping("changing", 2)).await.unwrap();
+    assert!(second.updated_at() > first.updated_at());
+    assert_eq!(second.inserted_at(), first.inserted_at());
+    eventually("the new job's slots", Duration::from_secs(30), || async {
+        pings(&db, "changing")
+            .await
+            .iter()
+            .filter(|(_, n)| *n == 2)
+            .count()
+            >= 2
+    })
+    .await;
+    let slots = pings(&db, "changing").await;
+    assert!(
+        slots
+            .iter()
+            .all(|(slot, n)| (*n == 1) == (*slot <= second.updated_at())),
+        "the old job before the change, the new one after: {slots:?} (changed at {})",
+        second.updated_at()
+    );
+
+    // A pattern that won't fall due for months stops the slots.
+    let yearly = CronEntry::new("changing", "0 0 1 1 *", &Ping { n: 3 }).unwrap();
+    let third = crons.put(&yearly).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(2_000)).await;
+    assert!(pings(&db, "changing")
+        .await
+        .iter()
+        .all(|(slot, _)| *slot <= third.updated_at()));
+    assert_eq!(
+        crons.get("changing").await.unwrap().unwrap().pattern(),
+        "0 0 1 1 *"
+    );
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn entries_are_listed_with_what_they_insert() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let crons = Crons::new(db.pool.clone());
+    let chicago = CronEntry::new("b-daily", "0 7 * * *", &Ping { n: 7 })
+        .unwrap()
+        .timezone(ishikari::chrono_tz::America::Chicago)
+        .queue("reports")
+        .priority(2)
+        .max_attempts(3)
+        .tag("agent");
+    crons.put(&chicago).await.unwrap();
+    crons.put(&every_second_ping("a-often", 1)).await.unwrap();
+
+    let all = crons.list().await.unwrap();
+    let names: Vec<_> = all.iter().map(|e| e.name()).collect();
+    assert_eq!(names, ["a-often", "b-daily"]);
+    let daily = &all[1];
+    assert_eq!(daily.pattern(), "0 7 * * *");
+    assert_eq!(daily.timezone(), ishikari::chrono_tz::America::Chicago);
+    assert_eq!(daily.queue(), "reports");
+    assert_eq!(daily.priority(), 2);
+    assert_eq!(daily.max_attempts(), 3);
+    assert_eq!(daily.tags(), ["agent"]);
+    assert_eq!(
+        daily.args(),
+        &serde_json::json!({"ishikari_worker": "Ping", "n": 7})
+    );
+    // The job's own queue and attempts, unless the entry sets them.
+    let often = &all[0];
+    assert_eq!(often.queue(), "default");
+    assert_eq!(often.max_attempts(), 20);
+
+    db.finish().await;
+}
+
+#[test]
+fn an_entry_with_a_bad_pattern_is_refused() {
+    let err = CronEntry::new("x", "every day", &Ping { n: 1 }).unwrap_err();
+    assert_eq!(err.pattern, "every day");
+    assert!(CronEntry::new("", "* * * * *", &Ping { n: 1 }).is_err());
+}
+
+#[tokio::test]
+async fn a_row_that_cannot_be_read_does_not_stop_the_others() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO ishikari_crons (name, pattern, timezone, worker, args, queue, max_attempts) \
+         VALUES ('broken', 'not a pattern', 'UTC', 'x', '{}', 'default', 1), \
+                ('lost', '* * * * * *', 'Mars/Olympus', 'x', '{}', 'default', 1)",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let engine = engine_with("dyn", db.pool.clone(), vec![]);
+    Crons::new(db.pool.clone())
+        .put(&every_second_ping("fine", 1))
+        .await
+        .unwrap();
+    eventually(
+        "the good entry's slots",
+        Duration::from_secs(30),
+        || async { pings(&db, "fine").await.len() >= 2 },
+    )
+    .await;
+    assert!(pings(&db, "lost").await.is_empty());
+
+    engine.shutdown(Duration::from_secs(1)).await;
+    db.finish().await;
+}
+
+#[tokio::test]
+async fn an_entry_named_as_a_static_cron_is_ignored() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let statik = Cron::new("same", "* * * * * *", || Ping { n: 1 }).unwrap();
+    let engine = engine_with("dyn", db.pool.clone(), vec![statik]);
+    Crons::new(db.pool.clone())
+        .put(&every_second_ping("same", 2))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    let slots = pings(&db, "same").await;
+    assert!(slots.len() >= 2);
+    assert!(
+        slots.iter().all(|(_, n)| *n == 1),
+        "only the engine's own cron: {slots:?}"
+    );
 
     engine.shutdown(Duration::from_secs(1)).await;
     db.finish().await;

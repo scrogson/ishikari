@@ -27,6 +27,7 @@ use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde::Serialize;
 use sqlx::{Acquire, Postgres as Pg};
+use std::borrow::Cow;
 use std::fmt::Debug;
 use std::time::Duration;
 use tracing::debug;
@@ -356,7 +357,7 @@ where
 /// One job's column values.
 pub(crate) struct Row {
     queue: String,
-    worker: &'static str,
+    worker: Cow<'static, str>,
     args: serde_json::Value,
     max_attempts: i32,
     priority: i32,
@@ -386,23 +387,61 @@ impl Row {
             .queue
             .clone()
             .unwrap_or_else(|| job.queue().to_string());
-        let worker = J::worker();
         let unique = opts.unique.clone().or_else(|| job.unique());
+        Ok(Row::from_parts(
+            Cow::Borrowed(J::worker()),
+            args,
+            queue,
+            opts.max_attempts.unwrap_or_else(|| job.max_attempts()),
+            unique,
+            opts,
+        ))
+    }
+
+    /// A row of a job already serialized: `worker` and its `args`, as stored (a cron entry's),
+    /// with its queue and max attempts. The options' own win over these.
+    pub(crate) fn stored(
+        worker: String,
+        args: serde_json::Value,
+        queue: String,
+        max_attempts: i32,
+        opts: &InsertOpts,
+    ) -> Row {
+        let queue = opts.queue.clone().unwrap_or(queue);
+        let max_attempts = opts.max_attempts.unwrap_or(max_attempts);
+        Row::from_parts(
+            Cow::Owned(worker),
+            args,
+            queue,
+            max_attempts,
+            opts.unique.clone(),
+            opts,
+        )
+    }
+
+    fn from_parts(
+        worker: Cow<'static, str>,
+        args: serde_json::Value,
+        queue: String,
+        max_attempts: i32,
+        unique: Option<Unique>,
+        opts: &InsertOpts,
+    ) -> Row {
         let now = Utc::now();
-        Ok(Row {
-            unique_key: unique.as_ref().map(|u| u.text(worker, &queue, &args, now)),
+        Row {
+            unique_key: unique.as_ref().map(|u| u.text(&worker, &queue, &args, now)),
             unique_states: unique
                 .as_ref()
                 .map(|u| u.states.iter().map(|s| s.as_str().to_string()).collect()),
             queue,
             worker,
             args,
-            max_attempts: opts.max_attempts.unwrap_or_else(|| job.max_attempts()),
+            max_attempts,
             priority: opts.priority.unwrap_or(0),
             tags: opts.tags.clone(),
             meta: opts.meta.clone().unwrap_or_else(|| serde_json::json!({})),
             scheduled_at: opts.scheduled_at,
-        })
+        }
     }
 }
 
@@ -446,7 +485,7 @@ pub(crate) async fn insert_row(
     for _ in 0..3 {
         let found: Option<(Job, bool)> = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&row.queue)
-            .bind(row.worker)
+            .bind(row.worker.as_ref())
             .bind(&row.args)
             .bind(row.max_attempts)
             .bind(row.priority)

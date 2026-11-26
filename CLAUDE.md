@@ -83,7 +83,11 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   as slots free up while jobs wait. It tracks running jobs in a `JoinSet` (which bounds
   concurrency) and drains on stop.
 - **`insert.rs`**: `insert`, `insert_with`, `insert_all`, `InsertOpts`, `Unique`, `Inserted`.
-- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key.
+- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key. `Crons` keeps
+  entries in `ishikari_crons` (`CronEntry` to put, `StoredCron` read back), put and deleted while
+  engines run: each cron check (`Checks`) reads them again and runs them beside the engine's own,
+  none before its `updated_at`, each slot inserted under a shared lock on its row so no slot
+  follows a delete. One named as an engine's own is ignored.
 - **`stager.rs`**: moves due scheduled and retryable jobs to available.
 - **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
 - **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into
@@ -139,6 +143,7 @@ it creates.
 - v09: secrets (kept encrypted, and those modules are granted)
 - v10: jobs' claims, counted, which fence a run's outcome; the hosts secrets are bound to; the
   versions of modules runs keep
+- v11: cron entries kept in the database (`ishikari_crons`)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

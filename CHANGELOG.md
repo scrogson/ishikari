@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Migration **v11**.
+
+### Upgrading
+
+- **Run v11** (`ishikari generate migration --database-url …`, or `migrations::migrate`). It
+  adds `ishikari_crons`. Every engine now reads it on each cron check, even one with no cron
+  of its own: until v11 is in, it logs one error and runs its own entries.
+
+### Added
+
+- Cron entries kept in the database, put and deleted while engines run, with no restart: for
+  schedules a host's users, or its agents, make. `Crons::new(pool)` `put`s a `CronEntry`
+  (`CronEntry::new(name, pattern, &job)`, with `timezone`, `queue`, `priority`, `max_attempts`
+  and `tag`), and `get`s, `list`s and `delete`s them as `StoredCron`s. Every node picks a change
+  up on its next check (`cron_interval`) and inserts each slot once, as for the engine's own
+  entries. An entry's slots start when it's put (none from before is caught up); a change
+  applies to the slots after it; once `delete` returns, no slot of the entry is inserted. An
+  entry named as one of an engine's own is ignored by it.
+
 ## 0.6.1
 
 All five crates move to 0.6.1. No migration, and nothing to change in a host.
