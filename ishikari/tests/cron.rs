@@ -517,3 +517,29 @@ async fn a_null_tag_is_refused() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn unreadable_entries_are_listed_apart_so_they_can_be_deleted() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO ishikari_crons (name, pattern, timezone, worker, args, queue, max_attempts) \
+         VALUES ('broken', 'not a pattern', 'UTC', 'x', '{}', 'default', 1)",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let crons = Crons::new(db.pool.clone());
+    crons.put(&every_second_ping("fine", 1)).await.unwrap();
+
+    let all = crons.list_all().await.unwrap();
+    assert_eq!(all.len(), 2);
+    let broken = all[0].as_ref().unwrap_err();
+    assert_eq!(broken.name(), "broken");
+    assert_eq!(broken.error().pattern, "not a pattern");
+    assert_eq!(all[1].as_ref().unwrap().name(), "fine");
+    assert!(crons.delete("broken").await.unwrap());
+
+    db.finish().await;
+}

@@ -354,6 +354,14 @@ impl StoredCron {
         self.schedule.slots(after, until, MAX_SLOTS)
     }
 
+    /// The first slot after `after`, if the pattern has one.
+    pub fn next(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.schedule
+            .slots(after, DateTime::<Utc>::MAX_UTC, 1)
+            .into_iter()
+            .next()
+    }
+
     /// Insert the job for `slot`, unless some node already has, as long as the entry is still
     /// as it was read: `None` once it's been deleted or changed. The entry's row is locked
     /// (shared) until the job is in, so a delete waits for it, and no slot is inserted after.
@@ -408,16 +416,33 @@ struct CronRow {
     updated_at: DateTime<Utc>,
 }
 
-/// A row whose pattern or timezone can't be read (edited by hand).
-struct Unreadable {
+/// A stored cron entry whose pattern or timezone can't be read (edited by hand): it never runs,
+/// and [`Crons::delete`] deletes it.
+#[derive(Debug)]
+pub struct UnreadableCron {
     name: String,
     updated_at: DateTime<Utc>,
     error: CronError,
 }
 
+impl UnreadableCron {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn updated_at(&self) -> DateTime<Utc> {
+        self.updated_at
+    }
+
+    /// Why it can't be read.
+    pub fn error(&self) -> &CronError {
+        &self.error
+    }
+}
+
 impl CronRow {
     /// The entry, unless its pattern or timezone can't be read.
-    fn read(self) -> Result<StoredCron, Unreadable> {
+    fn read(self) -> Result<StoredCron, UnreadableCron> {
         let timezone = Tz::from_str(&self.timezone).map_err(|e| CronError {
             pattern: self.pattern.clone(),
             reason: format!("unknown timezone {:?}: {e}", self.timezone),
@@ -426,7 +451,7 @@ impl CronRow {
             match Schedule::parse(&self.pattern).and_then(|schedule| Ok((schedule, timezone?))) {
                 Ok(read) => read,
                 Err(error) => {
-                    return Err(Unreadable {
+                    return Err(UnreadableCron {
                         name: self.name,
                         updated_at: self.updated_at,
                         error,
@@ -609,11 +634,17 @@ impl Crons {
             .collect())
     }
 
+    /// Every entry, by name, with those that can't be read (edited by hand) as errors: they
+    /// never run, and [`delete`](Self::delete) deletes them.
+    pub async fn list_all(&self) -> Result<Vec<Result<StoredCron, UnreadableCron>>, sqlx::Error> {
+        self.read(None).await
+    }
+
     /// The entries (or the one named), by name, each read or not.
     async fn read(
         &self,
         name: Option<&str>,
-    ) -> Result<Vec<Result<StoredCron, Unreadable>>, sqlx::Error> {
+    ) -> Result<Vec<Result<StoredCron, UnreadableCron>>, sqlx::Error> {
         let rows: Vec<CronRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT * FROM {} WHERE $1::text IS NULL OR name = $1 ORDER BY name",
             self.table()
@@ -1003,5 +1034,34 @@ mod tests {
         );
 
         db.finish().await;
+    }
+
+    #[test]
+    fn the_next_slot() {
+        let hourly = Cron::new("h", "0 * * * *", || Tick).unwrap();
+        let stored = StoredCron {
+            name: "h".into(),
+            schedule: hourly.schedule.clone(),
+            worker: "w".into(),
+            args: serde_json::json!({}),
+            queue: "default".into(),
+            priority: 0,
+            max_attempts: 1,
+            tags: vec![],
+            inserted_at: at(0, 0),
+            updated_at: at(0, 0),
+        };
+        assert_eq!(stored.next(at(9, 30)), Some(at(10, 0)));
+        assert_eq!(stored.next(at(10, 0)), Some(at(11, 0)), "after, not at");
+        // Months away, past where `due` would stop looking.
+        let yearly = Cron::new("y", "0 0 1 1 *", || Tick).unwrap();
+        let stored = StoredCron {
+            schedule: yearly.schedule.clone(),
+            ..stored
+        };
+        assert_eq!(
+            stored.next(at(9, 30)),
+            Some(Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap())
+        );
     }
 }
