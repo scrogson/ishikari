@@ -817,6 +817,46 @@ impl Crons {
         .await
     }
 
+    /// Insert the job of the entry `name` now, outside its schedule (to try it, or for a "run
+    /// it now" button): its worker and args, in its queue, with its priority, max attempts and
+    /// tags, and `{"cron": name, "slot": now, "run_now": true}` in its meta, so it's found with
+    /// the entry's own. `None` if there's no such entry. A paused entry runs too. It's no slot:
+    /// the entry's next still runs on its own.
+    pub async fn run_now(&self, name: &str) -> Result<Option<Inserted>, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.run_now_in(&mut conn, name).await
+    }
+
+    /// [`run_now`](Self::run_now) in the caller's transaction (`&mut tx`).
+    pub async fn run_now_in(
+        &self,
+        conn: &mut PgConnection,
+        name: &str,
+    ) -> Result<Option<Inserted>, sqlx::Error> {
+        // As stored, read or not: the job doesn't need the pattern.
+        let row: Option<CronRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT * FROM {} WHERE name = $1",
+            self.table()
+        )))
+        .bind(name)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let now = Utc::now();
+        let mut opts = InsertOpts::new()
+            .priority(row.priority)
+            .meta(serde_json::json!({"cron": row.name, "slot": now.to_rfc3339(), "run_now": true}));
+        for tag in row.tags {
+            opts = opts.tag(tag);
+        }
+        let job = Row::stored(row.worker, row.args, row.queue, row.max_attempts, &opts);
+        insert_row(conn, self.schema.as_deref(), &job, None)
+            .await
+            .map(Some)
+    }
+
     /// The entry `name`, if there is one (and it can be read).
     pub async fn get(&self, name: &str) -> Result<Option<StoredCron>, sqlx::Error> {
         Ok(self

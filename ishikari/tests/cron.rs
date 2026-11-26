@@ -663,3 +663,38 @@ async fn an_entrys_catch_up_is_kept_and_a_change_to_it_is_a_change() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn an_entry_is_run_now_as_its_own_job() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let crons = Crons::new(db.pool.clone());
+    let yearly = CronEntry::new("yearly", "0 0 1 1 *", &Ping { n: 7 })
+        .unwrap()
+        .priority(2)
+        .tag("agent");
+    crons.put(&yearly).await.unwrap();
+    crons.pause("yearly").await.unwrap();
+
+    let Some(ishikari::Inserted::New(job)) = crons.run_now("yearly").await.unwrap() else {
+        panic!("a new job");
+    };
+    assert_eq!(job.worker, std::any::type_name::<Ping>());
+    assert_eq!(job.args["n"], 7);
+    assert_eq!(job.priority, 2);
+    assert_eq!(job.tags, ["agent"]);
+    let meta = job.meta.clone().unwrap();
+    assert_eq!(meta["cron"], "yearly");
+    assert_eq!(meta["run_now"], true);
+    assert!(job.scheduled_at <= Utc::now());
+    assert!(crons.run_now("never-was").await.unwrap().is_none());
+
+    // In the caller's transaction: rolled back with it.
+    let mut tx = db.pool.begin().await.unwrap();
+    crons.run_now_in(&mut tx, "yearly").await.unwrap().unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(pings(&db, "yearly").await.len(), 1);
+
+    db.finish().await;
+}
