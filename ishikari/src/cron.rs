@@ -476,10 +476,11 @@ impl StoredCron {
     /// runs none (see [`paused`](Self::paused)).
     ///
     /// Its last run is a job: of those whose meta has `{"cron": name}` (`meta @> ...`, which
-    /// the jobs' `meta` index serves) inserted since its [`inserted_at`](Self::inserted_at) (not
-    /// those of a deleted entry of the same name), the one with the latest `"slot"`. Slots are
-    /// RFC 3339 in UTC, so their text sorts as their time does; not `scheduled_at`, which a
-    /// retry or a snooze moves on.
+    /// the jobs' `meta` index serves) inserted since its [`inserted_at`](Self::inserted_at), the
+    /// one with the latest `"slot"`. That leaves out the jobs of an entry of the same name
+    /// deleted before this one's transaction began, but not those it inserted while that
+    /// transaction was open. Slots are RFC 3339 in UTC, so their text sorts as their time does;
+    /// not `scheduled_at`, which a retry or a snooze moves on.
     pub fn next(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.schedule
             .slots(after.max(self.updated_at), DateTime::<Utc>::MAX_UTC, 1)
@@ -1312,7 +1313,7 @@ impl Checks {
             Ok(rows) => rows,
             Err(e) => {
                 if !self.read_failed {
-                    tracing::error!(error = %e, "failed to read the stored cron entries (is the schema at v11?); running the engine's own until they can be");
+                    tracing::error!(error = %e, "failed to read the stored cron entries (is the schema at v11?); running the engine's own, and those read last, until they can be");
                     self.read_failed = true;
                 }
                 return None;
