@@ -1210,8 +1210,9 @@ pub(crate) struct Checks {
     /// one whose read of them failed. An entry new to the node missed the slots at or before it,
     /// and runs on time after it.
     unseen_through: Option<DateTime<Utc>>,
-    /// The stored entries as last read, run again while they can't be read: the guard on each
-    /// slot's insert refuses those of an entry since deleted, changed or paused.
+    /// The stored entries as last read, tried again while they can't be read: the guard on each
+    /// slot's insert reads the entry's row, so it refuses those of an entry since deleted,
+    /// changed or paused, and fails while the table can't be read.
     last_read: Vec<StoredCron>,
     /// Stored entries named as one of the engine's, and those that can't be read (by name and
     /// version), as of the last read: each is warned of once, not on every check.

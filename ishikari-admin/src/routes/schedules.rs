@@ -340,8 +340,8 @@ fn changed(state: &AppState, done: &str, name: &str, job: Option<i64>) -> Respon
 }
 
 /// The job of each schedule's latest slot, by schedule name, in one query: of the jobs inserted
-/// since the schedule was (so not one of a deleted schedule of the same name), the one with the
-/// latest slot. Not the latest `scheduled_at`: a retry or a snooze moves that on.
+/// since the schedule was (see `StoredCron::next` for which those are), the one with the latest
+/// slot. Not the latest `scheduled_at`: a retry or a snooze moves that on.
 async fn last_runs(
     state: &AppState,
     schedules: &[(String, DateTime<Utc>)],
