@@ -306,13 +306,12 @@ impl EngineBuilder {
             }));
         }
 
-        if !self.crons.is_empty() {
-            let (s, crons) = (storage.clone(), Arc::new(self.crons));
-            let (every, catch_up) = (self.cron_interval, self.cron_catch_up);
-            tasks.push(spawn_supervised("cron", move || {
-                cron_task(s.clone(), crons.clone(), every, catch_up)
-            }));
-        }
+        // Always: entries kept in the database may be put at any time.
+        let (s, crons) = (storage.clone(), Arc::new(self.crons));
+        let (every, catch_up) = (self.cron_interval, self.cron_catch_up);
+        tasks.push(spawn_supervised("cron", move || {
+            cron_task(s.clone(), crons.clone(), every, catch_up)
+        }));
 
         let stager_interval = self.stager_interval.unwrap_or(Duration::from_secs(1));
         let stager_limit = self.stager_limit.unwrap_or(100);
@@ -702,9 +701,10 @@ async fn rescuer(
     }
 }
 
-/// Insert cron slots as they fall due, starting `catch_up` in the past. Each entry goes on from
-/// its last slot that is in, never further back than `catch_up`: older slots' jobs may have been
-/// pruned, and inserting them again would run them twice.
+/// Insert cron slots as they fall due, the engine's entries' and those kept in the database,
+/// starting `catch_up` in the past. Each entry goes on from its last slot that is in, never
+/// further back than `catch_up`: older slots' jobs may have been pruned, and inserting them again
+/// would run them twice.
 async fn cron_task(
     storage: Arc<Postgres>,
     crons: Arc<Vec<Cron>>,
@@ -712,12 +712,12 @@ async fn cron_task(
     catch_up: Duration,
 ) {
     let catch_up = chrono::Duration::from_std(catch_up).unwrap_or_default();
-    let mut done = vec![chrono::Utc::now() - catch_up; crons.len()];
+    let mut checks = crate::cron::Checks::new(crons.to_vec(), &storage);
     let mut interval = tokio::time::interval(every);
     loop {
         interval.tick().await;
         let now = chrono::Utc::now();
-        crate::cron::run_due(&crons, &storage, &mut done, now - catch_up, now).await;
+        checks.run(&storage, now - catch_up, now).await;
     }
 }
 

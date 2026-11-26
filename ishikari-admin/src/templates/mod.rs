@@ -17,6 +17,7 @@ use crate::routes::resolver::{
     BlockedJob, CompensatingSaga, PendingDependency, PendingRelease, ResolverStats,
 };
 use crate::routes::sagas::{SagaDetail, SagaInfo, SagaStepInfo};
+use crate::routes::schedules::{ScheduleForm, ScheduleRow, UnreadableRow};
 use crate::routes::secrets::SecretRow;
 use crate::routes::workflows::{WorkflowDetail, WorkflowInfo, WorkflowJobInfo};
 use crate::NavItem;
@@ -107,6 +108,7 @@ pages!(
     ScriptTemplate,
     ModuleJobTemplate,
     SecretsTemplate,
+    SchedulesTemplate,
 );
 
 /// Dashboard page template.
@@ -413,6 +415,23 @@ pub struct SecretsTemplate {
     pub name: String,
     /// The hosts the form was given, to show again when it's refused.
     pub hosts: String,
+}
+
+/// The Schedules page: the cron entries kept in the database, and the form to schedule a
+/// module.
+#[derive(Template)]
+#[template(path = "schedules.html", blocks = ["title", "content"])]
+pub struct SchedulesTemplate {
+    pub base_path: String,
+    pub nav_items: Vec<NavItem>,
+    pub schedules: Vec<ScheduleRow>,
+    pub unreadable: Vec<UnreadableRow>,
+    /// The host's modules, by name, when it has any to schedule.
+    pub modules: Option<Vec<String>>,
+    pub notice: Option<String>,
+    pub error: Option<String>,
+    /// The form, as given (when it's refused) or its defaults.
+    pub form: ScheduleForm,
 }
 
 /// Workflow definition run form template.

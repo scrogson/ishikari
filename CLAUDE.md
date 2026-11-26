@@ -49,7 +49,9 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   (`/node-types/script`) writes, test-runs and saves scripts, and its job form
   (`/node-types/job`) inserts a module's `ModuleJob`. Its Secrets page sets and deletes the
   host's secrets and the hosts each is bound to (`AppState::with_secrets`), never showing a
-  value.
+  value. Its Schedules page lists the cron entries kept in the database
+  (`ishikari::Crons`), with their next and last run, pauses, resumes, runs now and deletes them
+  and, with node modules, schedules a module.
 - `ishikari-wasm` - `WasmModules`, node types uploaded as WebAssembly components (wasmtime,
   the `ishikari:node` world in `wit/node.wit`) or as TypeScript/JavaScript scripts, each call
   in a sandbox with its module's grants and limits. A script's types are stripped by swc
@@ -83,7 +85,16 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   as slots free up while jobs wait. It tracks running jobs in a `JoinSet` (which bounds
   concurrency) and drains on stop.
 - **`insert.rs`**: `insert`, `insert_with`, `insert_all`, `InsertOpts`, `Unique`, `Inserted`.
-- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key.
+- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key. `Crons` keeps entries
+  in `ishikari_crons` (`CronEntry` to put, `StoredCron` read back), put, paused and deleted while
+  engines run (`*_in` in the caller's transaction): each cron check (`Checks`) reads them again and
+  runs them beside the engine's own, none before its `updated_at`, each slot inserted under a shared
+  lock on its row (`SKIP LOCKED`: a row a transaction holds waits for the next check) so no slot
+  follows a delete or pause; while they can't be read, those read last are tried. `CatchUp` picks
+  which missed slots are inserted: for an entry the node hadn't read (put, changed or resumed),
+  those due by its first check or its last that failed to read them, whenever the entry
+  committed (a slot due after that check is on time, even for an entry committed late). A slot it
+  couldn't insert is owed, and tried again. One named as an engine's own is ignored.
 - **`stager.rs`**: moves due scheduled and retryable jobs to available.
 - **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
 - **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into
@@ -139,6 +150,7 @@ it creates.
 - v09: secrets (kept encrypted, and those modules are granted)
 - v10: jobs' claims, counted, which fence a run's outcome; the hosts secrets are bound to; the
   versions of modules runs keep
+- v11: cron entries kept in the database (`ishikari_crons`)
 
 The installed version is the comment on `ishikari_jobs`. A new version means a new
 `migrations/v0N.sql` and a bump of `CURRENT_VERSION`.

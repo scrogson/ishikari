@@ -21,7 +21,7 @@
 use sqlx::{PgExecutor, PgPool};
 
 /// The newest schema version.
-pub const CURRENT_VERSION: i32 = 10;
+pub const CURRENT_VERSION: i32 = 11;
 
 /// The schema used when none is given.
 pub const DEFAULT_SCHEMA: &str = "public";
@@ -37,6 +37,7 @@ const VERSIONS: [&str; CURRENT_VERSION as usize] = [
     include_str!("../migrations/v08.sql"),
     include_str!("../migrations/v09.sql"),
     include_str!("../migrations/v10.sql"),
+    include_str!("../migrations/v11.sql"),
 ];
 
 /// Whether `schema` may hold ishikari's tables: a name Postgres takes as it is, unquoted, of
