@@ -91,9 +91,10 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   runs them beside the engine's own, none before its `updated_at`, each slot inserted under a shared
   lock on its row (`SKIP LOCKED`: a row a transaction holds waits for the next check) so no slot
   follows a delete or pause; while they can't be read, those read last run. `CatchUp` picks which
-  missed slots are inserted: those due before the node could see the entry (its first check, or the
-  last that failed to read them; an entry put while a node runs, even one seen late, missed none). A
-  slot it couldn't insert is owed, and tried again. One named as an engine's own is ignored.
+  missed slots are inserted: for an entry new to the node (put, changed or resumed), those due by
+  the node's first check or its last that failed to read them (one committed late, after a check
+  that read them, missed none). A slot it couldn't insert is owed, and tried again. One named as an
+  engine's own is ignored.
 - **`stager.rs`**: moves due scheduled and retryable jobs to available.
 - **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
 - **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into

@@ -588,3 +588,27 @@ async fn a_schedule_is_run_now_and_its_job_is_its_last_run() {
 
     db.drop().await;
 }
+
+#[tokio::test]
+async fn a_job_run_now_in_the_transaction_that_put_its_schedule_is_its_last_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let mut tx = db.pool.begin().await.unwrap();
+    crons(&db).put_in(&mut tx, &hourly("fresh")).await.unwrap();
+    let job = crons(&db)
+        .run_now_in(&mut tx, "fresh")
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let html = body(get(&admin(&db, false), "/admin/schedules", &[]).await).await;
+    let id = job.job().id;
+    assert!(
+        html.contains(&format!(r#"href="/admin/jobs/{id}""#)),
+        "its last run"
+    );
+
+    db.drop().await;
+}

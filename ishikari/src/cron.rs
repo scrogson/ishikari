@@ -115,8 +115,9 @@ impl Schedule {
 /// up isn't missed, however many fall due between two checks. Nor is one of an entry kept in the
 /// database ([`Crons`]) that a running node sees late: put, changed or resumed in a transaction
 /// that committed after the node's check, its slots from when it was put run on that node's next.
-/// But a node that can't read the stored entries doesn't see those put meanwhile (nor any, if it
-/// started so): their slots until it can read them are missed.
+/// But once a check of a node failed to read the stored entries (or before its first check), an
+/// entry it hadn't read before (put, changed or resumed since its last read) missed the slots due
+/// until then, as one the node couldn't see.
 ///
 /// A slot a node tried to insert and couldn't (the database refused it, the entry's row was
 /// held by a transaction, or the stored entries couldn't be read, so the node ran those it read
@@ -443,7 +444,9 @@ impl StoredCron {
         &self.tags
     }
 
-    /// When the entry was first put.
+    /// When the entry was first put: when the transaction that put it began, as for a job's
+    /// `inserted_at`, so a job inserted with it (as by [`run_now_in`](Crons::run_now_in)) is
+    /// inserted since it.
     pub fn inserted_at(&self) -> DateTime<Utc> {
         self.inserted_at
     }
@@ -757,8 +760,9 @@ impl Crons {
     /// those still due when it commits are the new version's. It starts from when it was put,
     /// not from the commit: the slots between are inserted when it commits (those within
     /// [`cron_catch_up`](crate::EngineBuilder::cron_catch_up)), whatever its [`CatchUp`], as
-    /// they fell due while the nodes were up (on a node that couldn't read the stored entries
-    /// meanwhile, they were missed). Keep the transaction short.
+    /// they fell due while the nodes were up; but on a node that failed to read the stored
+    /// entries between the put and its first read of it, those due until then were missed (see
+    /// [`CatchUp`]). Keep the transaction short.
     ///
     /// Under `REPEATABLE READ` or `SERIALIZABLE`, a put racing another of the same name fails
     /// with a serialization error, for the caller to retry its transaction.
@@ -773,8 +777,7 @@ impl Crons {
             WITH put AS (
                 INSERT INTO {table} AS c (name, pattern, timezone, worker, args, queue, priority,
                                           max_attempts, tags, catch_up, inserted_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp(),
-                        clock_timestamp())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), clock_timestamp())
                 ON CONFLICT (name) DO UPDATE SET
                     pattern = EXCLUDED.pattern, timezone = EXCLUDED.timezone,
                     worker = EXCLUDED.worker, args = EXCLUDED.args, queue = EXCLUDED.queue,
@@ -859,7 +862,7 @@ impl Crons {
     }
 
     /// [`pause`](Self::pause) in the caller's transaction (`&mut tx`). Until it commits, the
-    /// entry's slots wait (even if it was paused already).
+    /// entry's slots wait, and another pause or resume of it does too.
     pub async fn pause_in(&self, conn: &mut PgConnection, name: &str) -> Result<bool, sqlx::Error> {
         self.set_paused(conn, name, true).await
     }
@@ -873,7 +876,8 @@ impl Crons {
     }
 
     /// [`resume`](Self::resume) in the caller's transaction (`&mut tx`). Until it commits, the
-    /// entry's slots wait (even if it wasn't paused).
+    /// entry's slots wait (even if it wasn't paused), and another pause or resume of it does
+    /// too.
     pub async fn resume_in(
         &self,
         conn: &mut PgConnection,
