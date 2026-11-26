@@ -85,15 +85,15 @@ A workspace of four crates, and `ishikari-wasm` in a workspace of its own:
   as slots free up while jobs wait. It tracks running jobs in a `JoinSet` (which bounds
   concurrency) and drains on stop.
 - **`insert.rs`**: `insert`, `insert_with`, `insert_all`, `InsertOpts`, `Unique`, `Inserted`.
-- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key. `Crons` keeps
-  entries in `ishikari_crons` (`CronEntry` to put, `StoredCron` read back), put, paused and
-  deleted while engines run (`*_in` in the caller's transaction): each cron check (`Checks`) reads
-  them again and runs them beside the engine's own, none before its `updated_at`, each slot
-  inserted under a shared lock on its row (`SKIP LOCKED`: a row a transaction holds waits for the
-  next check) so no slot follows a delete or pause; while they can't be read, those read last
-  run. `CatchUp` picks which missed slots are inserted: those due before the node's first
-  check (an entry new to a running node, even one seen late, missed none). A slot it couldn't insert is owed, and tried again. One named as an
-  engine's own is ignored.
+- **`cron.rs`**: `Cron` entries, inserted once per slot through a unique key. `Crons` keeps entries
+  in `ishikari_crons` (`CronEntry` to put, `StoredCron` read back), put, paused and deleted while
+  engines run (`*_in` in the caller's transaction): each cron check (`Checks`) reads them again and
+  runs them beside the engine's own, none before its `updated_at`, each slot inserted under a shared
+  lock on its row (`SKIP LOCKED`: a row a transaction holds waits for the next check) so no slot
+  follows a delete or pause; while they can't be read, those read last run. `CatchUp` picks which
+  missed slots are inserted: those due before the node could see the entry (its first check, or the
+  last that failed to read them; an entry put while a node runs, even one seen late, missed none). A
+  slot it couldn't insert is owed, and tried again. One named as an engine's own is ignored.
 - **`stager.rs`**: moves due scheduled and retryable jobs to available.
 - **`model.rs`**: `Job` and `JobState`, which decodes the enum from any schema.
 - **`migrations.rs`, `../migrations/v0N.sql`**: the versioned schema SQL; the CLI writes it into

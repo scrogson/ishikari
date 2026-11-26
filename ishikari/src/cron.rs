@@ -115,6 +115,8 @@ impl Schedule {
 /// up isn't missed, however many fall due between two checks. Nor is one of an entry kept in the
 /// database ([`Crons`]) that a running node sees late: put, changed or resumed in a transaction
 /// that committed after the node's check, its slots from when it was put run on that node's next.
+/// But a node that can't read the stored entries doesn't see those put meanwhile (nor any, if it
+/// started so): their slots until it can read them are missed.
 ///
 /// A slot a node tried to insert and couldn't (the database refused it, the entry's row was
 /// held by a transaction, or the stored entries couldn't be read, so the node ran those it read
@@ -1193,9 +1195,10 @@ pub(crate) struct Checks {
     stored: Crons,
     /// How far each entry is in.
     done: HashMap<Key, Progress>,
-    /// The `until` of the node's first check: a slot at or before it was missed, unless the
-    /// node decided on it since (an entry new to the node runs on time from then).
-    started: Option<DateTime<Utc>>,
+    /// The `until` of the last check that couldn't see the stored entries: the node's first, or
+    /// one whose read of them failed. An entry new to the node missed the slots at or before it,
+    /// and runs on time after it.
+    unseen_through: Option<DateTime<Utc>>,
     /// The stored entries as last read, run again while they can't be read: the guard on each
     /// slot's insert refuses those of an entry since deleted, changed or paused.
     last_read: Vec<StoredCron>,
@@ -1213,7 +1216,7 @@ impl Checks {
             engine,
             stored: Crons::of(storage),
             done: HashMap::new(),
-            started: None,
+            unseen_through: None,
             last_read: Vec::new(),
             shadowed: HashSet::new(),
             unreadable: HashSet::new(),
@@ -1233,7 +1236,9 @@ impl Checks {
         floor: DateTime<Utc>,
         until: DateTime<Utc>,
     ) -> usize {
-        if let Some(stored) = self.read_stored().await {
+        let read = self.read_stored().await;
+        let unseen = read.is_none() || self.unseen_through.is_none();
+        if let Some(stored) = read {
             self.last_read = stored;
         }
         let stored = &self.last_read;
@@ -1262,10 +1267,10 @@ impl Checks {
             // Slots after this weren't missed: the last check decided on the entry through
             // `through`, so the rest fell due since. An entry new to the node (put, changed or
             // resumed since its last check, or seen late: its transaction committed after a
-            // check) missed only those due before the node started; on its first check, all due.
+            // check) missed only those due before the node could see it; on its first check, all.
             let on_time = match progress {
                 Some(p) => p.through,
-                None => self.started.unwrap_or(until),
+                None => self.unseen_through.unwrap_or(until),
             };
             let owed: Vec<_> = progress
                 .map(|p| {
@@ -1286,7 +1291,9 @@ impl Checks {
             self.done.insert(key.clone(), progress);
             live.insert(key);
         }
-        self.started.get_or_insert(until);
+        if unseen {
+            self.unseen_through = Some(until);
+        }
         // Forget the entries that are gone, changed or paused.
         self.done.retain(|key, _| live.contains(key));
         inserted
@@ -1630,28 +1637,34 @@ mod tests {
             .await;
     }
 
-    /// An hourly entry put with `catch_up`, checked from before `h0`; the stored entries can't
-    /// be read by the checks `failing` minutes after `h0`, and can by those `after` it: the slots
-    /// inserted.
+    /// An hourly entry put with `catch_up`, then a node checking from 10 minutes before `h0`
+    /// (that check reading the stored entries if `read_first`); they can't be read by the checks
+    /// `failing` minutes after `h0`, and can by those `after` it: the slots inserted from `h0`.
     async fn through_failed_reads(
         catch_up: CatchUp,
+        h0: DateTime<Utc>,
+        read_first: bool,
         failing: &[i64],
         after: &[i64],
     ) -> Vec<DateTime<Utc>> {
         let db = Db::new().await.expect("database tests");
-        let h0 = an_hour_ahead();
         let entry = CronEntry::new("rf", "0 * * * *", &Tick)
             .unwrap()
             .catch_up(catch_up);
         db.crons.put(&entry).await.unwrap();
         let mut checks = Checks::new(vec![], &db.storage);
-        check(&mut checks, &db, h0 - minutes(10)).await;
         let rename =
             |from: &str, to: &str| format!("ALTER TABLE {s}.{from} RENAME TO {to}", s = db.schema);
+        if read_first {
+            check(&mut checks, &db, h0 - minutes(10)).await;
+        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(rename("ishikari_crons", "crons_away")))
             .execute(&db.admin)
             .await
             .unwrap();
+        if !read_first {
+            check(&mut checks, &db, h0 - minutes(10)).await;
+        }
         for m in failing {
             check(&mut checks, &db, h0 + minutes(*m)).await;
         }
@@ -1674,7 +1687,7 @@ mod tests {
         }
         let h0 = an_hour_ahead();
         for catch_up in [CatchUp::All, CatchUp::Latest, CatchUp::None] {
-            let slots = through_failed_reads(catch_up, &[10], &[20, 30]).await;
+            let slots = through_failed_reads(catch_up, h0, true, &[10], &[20, 30]).await;
             assert_eq!(slots, [h0], "{catch_up}");
         }
     }
@@ -1684,15 +1697,34 @@ mod tests {
         if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
             return;
         }
-        let h = |n: i64| an_hour_ahead() + chrono::Duration::hours(n);
+        let h0 = an_hour_ahead();
+        let h = |n: i64| h0 + chrono::Duration::hours(n);
         // Each slot was due while they couldn't be read, so tried and owed: all of them, or only
         // the newest, as an engine's entry would be through an outage of the database.
-        let all = through_failed_reads(CatchUp::All, &[10, 70, 130], &[140]).await;
+        let all = through_failed_reads(CatchUp::All, h0, true, &[10, 70, 130], &[140]).await;
         assert_eq!(all, [h(0), h(1), h(2)]);
         for catch_up in [CatchUp::Latest, CatchUp::None] {
-            let slots = through_failed_reads(catch_up, &[10, 70, 130], &[140]).await;
+            let slots = through_failed_reads(catch_up, h0, true, &[10, 70, 130], &[140]).await;
             assert_eq!(slots, [h(2)], "{catch_up}");
         }
+    }
+
+    #[tokio::test]
+    async fn an_entry_first_read_after_an_outage_missed_the_slots_due_through_it() {
+        if std::env::var_os("ISHIKARI_SKIP_DB_TESTS").is_some() {
+            return;
+        }
+        let h0 = an_hour_ahead();
+        let h = |n: i64| h0 + chrono::Duration::hours(n);
+        // The node started while they couldn't be read: it never checked the entry, so the slots
+        // until it could were missed.
+        let all = through_failed_reads(CatchUp::All, h0, false, &[10, 70, 130], &[140]).await;
+        assert_eq!(all, [h(0), h(1), h(2)]);
+        let latest = through_failed_reads(CatchUp::Latest, h0, false, &[10, 70, 130], &[140]).await;
+        assert_eq!(latest, [h(2)]);
+        let none =
+            through_failed_reads(CatchUp::None, h0, false, &[10, 70, 130], &[140, 190]).await;
+        assert_eq!(none, [h(3)], "the next on time");
     }
 
     #[tokio::test]
@@ -1701,34 +1733,37 @@ mod tests {
             return;
         };
         let h0 = an_hour_ahead();
-        db.crons
-            .put(&CronEntry::new("gone", "0 * * * *", &Tick).unwrap())
-            .await
-            .unwrap();
+        let entry = CronEntry::new("gone", "0 * * * *", &Tick).unwrap();
+        db.crons.put(&entry).await.unwrap();
         let mut checks = Checks::new(vec![], &db.storage);
         check(&mut checks, &db, h0 - minutes(10)).await;
-        // Unread (a bad statement for the read only), and deleted.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "ALTER TABLE {s}.ishikari_crons RENAME COLUMN tags TO tags_away",
-            s = db.schema
+        // Unread, and deleted meanwhile.
+        let sql = |sql: &str| sql.replace("{s}", &db.schema);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql(
+            "ALTER TABLE {s}.ishikari_crons RENAME TO crons_away;
+             DELETE FROM {s}.crons_away WHERE name = 'gone';",
         )))
         .execute(&db.admin)
         .await
         .unwrap();
-        assert!(db.crons.delete("gone").await.unwrap());
         check(&mut checks, &db, h0 + minutes(10)).await;
         assert!(
             db.slots_from("gone", h0).await.is_empty(),
             "the copy last read isn't run"
         );
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "ALTER TABLE {s}.ishikari_crons RENAME COLUMN tags_away TO tags",
-            s = db.schema
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql(
+            "ALTER TABLE {s}.crons_away RENAME TO ishikari_crons",
         )))
         .execute(&db.admin)
         .await
         .unwrap();
+        // Read again (another entry runs), and still nothing of the deleted one.
+        db.crons
+            .put(&CronEntry::new("other", "0 * * * *", &Tick).unwrap())
+            .await
+            .unwrap();
         check(&mut checks, &db, h0 + minutes(20)).await;
+        assert_eq!(db.slots_from("other", h0).await, [h0]);
         assert!(db.slots_from("gone", h0).await.is_empty());
         db.finish().await;
     }
