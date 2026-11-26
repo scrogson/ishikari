@@ -30,7 +30,7 @@ use crate::{engine::qualified, InsertOpts, Inserted, Postgres, Unique, Worker};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::future::Future;
@@ -370,6 +370,9 @@ impl StoredCron {
     /// Insert the job for `slot`, unless some node already has, as long as the entry is still
     /// as it was read: `None` once it's been deleted or changed. The entry's row is locked
     /// (shared) until the job is in, so a delete waits for it, and no slot is inserted after.
+    /// A row another transaction is changing (a `put_in` or `delete_in` not yet committed) is
+    /// skipped, not waited on, and reads as changed: its slot waits for the next check, and no
+    /// other entry waits for it.
     async fn insert_slot(
         &self,
         storage: &Postgres,
@@ -378,7 +381,7 @@ impl StoredCron {
         let schema = storage.schema();
         let mut tx = storage.pool.begin().await?;
         let current: Option<i32> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT 1 FROM {} WHERE name = $1 AND updated_at = $2 FOR SHARE",
+            "SELECT 1 FROM {} WHERE name = $1 AND updated_at = $2 FOR SHARE SKIP LOCKED",
             qualified(schema, "ishikari_crons")
         )))
         .bind(&self.name)
@@ -550,13 +553,29 @@ impl Crons {
     /// after it insert the new job, on the new pattern. Putting an entry as it already is
     /// changes nothing.
     pub async fn put(&self, entry: &CronEntry) -> Result<StoredCron, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.put_in(&mut conn, entry).await
+    }
+
+    /// [`put`](Self::put) in the caller's transaction (`&mut tx`), so the entry is kept or not
+    /// with the caller's own rows. The engines see it once the transaction commits; while it's
+    /// open, a changed entry's slots wait (no other entry's do), and those still due when it
+    /// commits are the new version's. It starts from when it was put, not from the commit.
+    ///
+    /// Under `REPEATABLE READ` or `SERIALIZABLE`, a put racing another of the same name fails
+    /// with a serialization error, for the caller to retry its transaction.
+    pub async fn put_in(
+        &self,
+        conn: &mut PgConnection,
+        entry: &CronEntry,
+    ) -> Result<StoredCron, sqlx::Error> {
         let table = self.table();
         let sql = format!(
             r#"
             WITH put AS (
                 INSERT INTO {table} AS c (name, pattern, timezone, worker, args, queue, priority,
-                                          max_attempts, tags)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                          max_attempts, tags, inserted_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp(), clock_timestamp())
                 ON CONFLICT (name) DO UPDATE SET
                     pattern = EXCLUDED.pattern, timezone = EXCLUDED.timezone,
                     worker = EXCLUDED.worker, args = EXCLUDED.args, queue = EXCLUDED.queue,
@@ -575,7 +594,10 @@ impl Crons {
             "#
         );
         // An entry put by a statement that began after this one isn't visible to its second
-        // half; trying again sees it.
+        // half; trying again sees it. (Under READ COMMITTED each try is a new snapshot, in a
+        // transaction too; under REPEATABLE READ the conflict is an error instead.) `updated_at`
+        // is `clock_timestamp()`, not `now()`: in a long transaction that's the transaction's
+        // start, and slots between it and the put would follow the new version.
         for _ in 0..3 {
             let row: Option<CronRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(&entry.name)
@@ -587,7 +609,7 @@ impl Crons {
                 .bind(entry.priority)
                 .bind(entry.max_attempts)
                 .bind(&entry.tags)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *conn)
                 .await?;
             if let Some(row) = row {
                 return row
@@ -603,12 +625,24 @@ impl Crons {
     /// Delete the entry `name`: whether there was one. Once this returns, no node inserts
     /// another of its slots (a job already inserted still runs).
     pub async fn delete(&self, name: &str) -> Result<bool, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.delete_in(&mut conn, name).await
+    }
+
+    /// [`delete`](Self::delete) in the caller's transaction (`&mut tx`). Once it commits, no
+    /// node inserts another of the entry's slots; while it's open, they wait (no other entry's
+    /// do), and if it rolls back, those still due are inserted.
+    pub async fn delete_in(
+        &self,
+        conn: &mut PgConnection,
+        name: &str,
+    ) -> Result<bool, sqlx::Error> {
         let deleted = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {} WHERE name = $1",
             self.table()
         )))
         .bind(name)
-        .execute(&self.pool)
+        .execute(conn)
         .await?;
         Ok(deleted.rows_affected() > 0)
     }
@@ -1037,6 +1071,41 @@ mod tests {
             db.slots("chg").await,
             changed.due(changed.updated_at(), until)
         );
+
+        db.finish().await;
+    }
+
+    /// A transaction holding one entry's row (a `delete_in` not yet committed) holds up no other
+    /// entry's slots, on any node: its own wait for the next check after it ends.
+    #[tokio::test]
+    async fn an_open_transaction_on_one_entry_holds_up_no_other() {
+        let Some(db) = Db::new().await else {
+            return;
+        };
+        // Read in name order: the held entry first.
+        for name in ["a-held", "b-free"] {
+            let entry = CronEntry::new(name, "* * * * * *", &Tick).unwrap();
+            db.crons.put(&entry).await.unwrap();
+        }
+        let mut tx = db.admin.begin().await.unwrap();
+        assert!(db.crons.delete_in(&mut tx, "a-held").await.unwrap());
+
+        let mut checks = Checks::new(vec![], &db.storage);
+        let until = Utc::now() + chrono::Duration::seconds(2);
+        let floor = until - chrono::Duration::seconds(10);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            checks.run(&db.storage, floor, until),
+        )
+        .await
+        .expect("the check waited on the held entry");
+        assert!(!db.slots("b-free").await.is_empty());
+        assert!(db.slots("a-held").await.is_empty());
+
+        // Rolled back: the held entry's slots are still due.
+        tx.rollback().await.unwrap();
+        checks.run(&db.storage, floor, until).await;
+        assert!(!db.slots("a-held").await.is_empty());
 
         db.finish().await;
     }

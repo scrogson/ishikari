@@ -543,3 +543,44 @@ async fn unreadable_entries_are_listed_apart_so_they_can_be_deleted() {
 
     db.finish().await;
 }
+
+#[tokio::test]
+async fn an_entry_is_put_and_deleted_with_the_callers_transaction() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let crons = Crons::new(db.pool.clone());
+    let entry = every_second_ping("owned", 1);
+
+    // Rolled back with the caller's own rows: not kept.
+    let mut tx = db.pool.begin().await.unwrap();
+    crons.put_in(&mut tx, &entry).await.unwrap();
+    assert!(
+        crons.get("owned").await.unwrap().is_none(),
+        "not seen before the commit"
+    );
+    tx.rollback().await.unwrap();
+    assert!(crons.get("owned").await.unwrap().is_none());
+
+    let mut tx = db.pool.begin().await.unwrap();
+    let put = crons.put_in(&mut tx, &entry).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        crons.get("owned").await.unwrap().unwrap().updated_at(),
+        put.updated_at()
+    );
+
+    let mut tx = db.pool.begin().await.unwrap();
+    assert!(crons.delete_in(&mut tx, "owned").await.unwrap());
+    tx.rollback().await.unwrap();
+    assert!(
+        crons.get("owned").await.unwrap().is_some(),
+        "a rolled back delete keeps it"
+    );
+    let mut tx = db.pool.begin().await.unwrap();
+    assert!(crons.delete_in(&mut tx, "owned").await.unwrap());
+    tx.commit().await.unwrap();
+    assert!(crons.get("owned").await.unwrap().is_none());
+
+    db.finish().await;
+}
