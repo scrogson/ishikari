@@ -497,7 +497,11 @@ pub async fn create_sample_schedules(pool: &PgPool) -> Result<(), Box<dyn std::e
         query: "SELECT * FROM orders WHERE updated_at > now() - interval '1 hour'".into(),
     };
     crons
-        .put(&CronEntry::new("hourly-extract", "0 * * * *", &extract)?.tag("etl"))
+        .put(
+            &CronEntry::new("hourly-extract", "0 * * * *", &extract)?
+                .tag("etl")
+                .catch_up(ishikari::CatchUp::Latest),
+        )
         .await?;
     let check = ValidateEmail {
         email: "signup@example.com".into(),
@@ -505,5 +509,14 @@ pub async fn create_sample_schedules(pool: &PgPool) -> Result<(), Box<dyn std::e
     crons
         .put(&CronEntry::new("signup-check", "* * * * *", &check)?)
         .await?;
+    // A schedule an operator has paused.
+    let sync = ExtractFromSource {
+        source: "crm".into(),
+        query: "SELECT * FROM contacts".into(),
+    };
+    crons
+        .put(&CronEntry::new("crm-sync", "*/15 * * * *", &sync)?.tag("etl"))
+        .await?;
+    crons.pause("crm-sync").await?;
     Ok(())
 }

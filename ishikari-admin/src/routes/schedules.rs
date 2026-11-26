@@ -1,9 +1,11 @@
 //! The Schedules page: the cron entries kept in the database (`ishikari::Crons`), put by the host
-//! or its agents while its engines run, each with its next and last run. Operators delete them
-//! here, and, with the host's modules (`AppState::with_node_modules`), schedule a module.
+//! or its agents while its engines run, each with its next and last run. Operators pause, resume,
+//! run now and delete them here, and, with the host's modules (`AppState::with_node_modules`),
+//! schedule a module.
 //! Entries given to an engine in code aren't kept there, so they aren't listed.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::str::FromStr;
 
 use axum::extract::rejection::FormRejection;
@@ -13,7 +15,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use chrono::{DateTime, Utc};
 use ishikari::chrono_tz::Tz;
 use ishikari::execution::ModuleJob;
-use ishikari::{CronEntry, Crons, StoredCron};
+use ishikari::{CatchUp, CronEntry, Crons, StoredCron};
 use serde::Deserialize;
 
 use crate::templates::SchedulesTemplate;
@@ -35,7 +37,11 @@ pub struct ScheduleRow {
     pub priority: i32,
     pub max_attempts: i32,
     pub tags: Vec<String>,
-    /// Its next slot, if the pattern has one.
+    /// Which missed slots a node catches up: `all`, `latest` or `none`.
+    pub catch_up: String,
+    /// Paused: none of its slots is inserted until it's resumed.
+    pub paused: bool,
+    /// Its next slot, if the pattern has one (none while it's paused).
     pub next: Option<DateTime<Utc>>,
     /// The job of its latest slot, while it's kept.
     pub last: Option<LastRun>,
@@ -49,6 +55,8 @@ pub struct LastRun {
     pub state: String,
     /// Its slot (or, for a job whose meta doesn't give one, when it's scheduled).
     pub slot: DateTime<Utc>,
+    /// Inserted by "Run now" (`Crons::run_now`), not on a slot of the pattern.
+    pub run_now: bool,
 }
 
 impl LastRun {
@@ -79,6 +87,28 @@ pub struct UnreadableRow {
 pub struct ChangedQuery {
     pub put: Option<String>,
     pub deleted: Option<String>,
+    pub paused: Option<String>,
+    pub resumed: Option<String>,
+    pub ran: Option<String>,
+    /// The job "Run now" inserted.
+    pub job: Option<i64>,
+}
+
+impl ChangedQuery {
+    fn notice(self) -> Option<String> {
+        let said = |done: &str, name: Option<String>| name.map(|name| format!("{done} {name}"));
+        said("Scheduled", self.put)
+            .or_else(|| said("Deleted", self.deleted))
+            .or_else(|| said("Paused", self.paused))
+            .or_else(|| said("Resumed", self.resumed))
+            .or_else(|| {
+                let ran = said("Ran", self.ran)?;
+                Some(match self.job {
+                    Some(id) => format!("{ran}: job #{id}"),
+                    None => ran,
+                })
+            })
+    }
 }
 
 /// The form scheduling a module.
@@ -96,6 +126,8 @@ pub struct ScheduleForm {
     pub queue: String,
     /// How many times each job is attempted, the job's own when empty.
     pub max_attempts: String,
+    /// Which missed slots a node catches up: `all` (when empty), `latest` or `none`.
+    pub catch_up: String,
 }
 
 impl ScheduleForm {
@@ -105,15 +137,16 @@ impl ScheduleForm {
             pattern: "0 * * * *".into(),
             timezone: "UTC".into(),
             args: "{}".into(),
+            catch_up: CatchUp::All.to_string(),
             ..ScheduleForm::default()
         }
     }
 }
 
-/// The form deleting a schedule.
+/// The form naming the schedule to pause, resume, run now or delete.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub struct DeleteForm {
+pub struct NameForm {
     pub name: String,
 }
 
@@ -121,11 +154,7 @@ type Refused = (StatusCode, String);
 
 /// The Schedules page.
 pub async fn list(State(state): State<AppState>, Query(query): Query<ChangedQuery>) -> Response {
-    let notice = match (query.put, query.deleted) {
-        (Some(name), _) => Some(format!("Scheduled {name}")),
-        (_, Some(name)) => Some(format!("Deleted {name}")),
-        _ => None,
-    };
+    let notice = query.notice();
     page(
         &state,
         StatusCode::OK,
@@ -150,7 +179,7 @@ pub async fn put(
         Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
     };
     match putting(&state, &form).await {
-        Ok(name) => changed(&state, "put", &name),
+        Ok(name) => changed(&state, "put", &name, None),
         Err((status, error)) => page(&state, status, None, Some(error), form).await,
     }
 }
@@ -180,10 +209,15 @@ async fn putting(state: &AppState, form: &ScheduleForm) -> Result<String, Refuse
         "" => Tz::UTC,
         tz => Tz::from_str(tz).map_err(|_| bad(format!("Unknown timezone {tz}")))?,
     };
+    let catch_up = match form.catch_up.trim() {
+        "" => CatchUp::All,
+        catch_up => CatchUp::from_str(catch_up).map_err(|e| bad(e.to_string()))?,
+    };
     let job = ModuleJob::new(module, args);
     let mut entry = CronEntry::new(name, form.pattern.trim(), &job)
         .map_err(|e| bad(e.to_string()))?
-        .timezone(timezone);
+        .timezone(timezone)
+        .catch_up(catch_up);
     if let Some(attempts) = max_attempts {
         entry = entry.max_attempts(attempts);
     }
@@ -205,33 +239,80 @@ async fn putting(state: &AppState, form: &ScheduleForm) -> Result<String, Refuse
     Ok(name.to_string())
 }
 
-/// Delete a schedule, an `application/x-www-form-urlencoded` [`DeleteForm`], by its name exactly
+/// Delete a schedule, an `application/x-www-form-urlencoded` [`NameForm`], by its name exactly
 /// as given (one edited by hand may have odd whitespace). No slot of it is inserted once it's
 /// deleted; a job already inserted still runs.
 pub async fn delete(
     State(state): State<AppState>,
-    form: Result<Form<DeleteForm>, FormRejection>,
+    form: Result<Form<NameForm>, FormRejection>,
 ) -> Response {
+    act(state, form, "deleted", "delete", |crons, name| async move {
+        crons.delete(&name).await.map(|found| found.then_some(None))
+    })
+    .await
+}
+
+/// Pause a schedule, a [`NameForm`]: none of its slots is inserted until it's resumed.
+pub async fn pause(
+    State(state): State<AppState>,
+    form: Result<Form<NameForm>, FormRejection>,
+) -> Response {
+    act(state, form, "paused", "pause", |crons, name| async move {
+        crons.pause(&name).await.map(|found| found.then_some(None))
+    })
+    .await
+}
+
+/// Resume a schedule, a [`NameForm`]: it runs from now, catching up none of the slots while it
+/// was paused.
+pub async fn resume(
+    State(state): State<AppState>,
+    form: Result<Form<NameForm>, FormRejection>,
+) -> Response {
+    act(state, form, "resumed", "resume", |crons, name| async move {
+        crons.resume(&name).await.map(|found| found.then_some(None))
+    })
+    .await
+}
+
+/// Run a schedule's job now, a [`NameForm`], outside its pattern (paused or not).
+pub async fn run_now(
+    State(state): State<AppState>,
+    form: Result<Form<NameForm>, FormRejection>,
+) -> Response {
+    act(state, form, "ran", "run", |crons, name| async move {
+        let inserted = crons.run_now(&name).await?;
+        Ok(inserted.map(|inserted| Some(inserted.job().id)))
+    })
+    .await
+}
+
+/// Do `action` to the form's schedule, then back to the page saying it was `done`: `action`
+/// gives `None` when there's no such schedule, else the job it inserted, if any.
+async fn act<F, Fut>(
+    state: AppState,
+    form: Result<Form<NameForm>, FormRejection>,
+    done: &str,
+    verb: &str,
+    action: F,
+) -> Response
+where
+    F: FnOnce(Crons, String) -> Fut,
+    Fut: Future<Output = Result<Option<Option<i64>>, sqlx::Error>>,
+{
     let name = match form {
         Ok(Form(form)) => form.name,
         Err(rejection) => return (rejection.status(), rejection.body_text()).into_response(),
     };
-    let error = match crons(&state).delete(&name).await {
-        Ok(true) => return changed(&state, "deleted", &name),
-        Ok(false) => (StatusCode::NOT_FOUND, format!("No schedule {name}")),
+    let (status, error) = match action(crons(&state), name.clone()).await {
+        Ok(Some(job)) => return changed(&state, done, &name, job),
+        Ok(None) => (StatusCode::NOT_FOUND, format!("No schedule {name}")),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Couldn't delete {name}: {e}"),
+            format!("Couldn't {verb} {name}: {e}"),
         ),
     };
-    page(
-        &state,
-        error.0,
-        None,
-        Some(error.1),
-        ScheduleForm::defaults(),
-    )
-    .await
+    page(&state, status, None, Some(error), ScheduleForm::defaults()).await
 }
 
 /// The schedules of the admin's schema.
@@ -243,9 +324,14 @@ fn crons(state: &AppState) -> Crons {
     }
 }
 
-/// Back to the page, which says what was `done` to `name`.
-fn changed(state: &AppState, done: &str, name: &str) -> Response {
-    match serde_urlencoded::to_string([(done, name)]) {
+/// Back to the page, which says what was `done` to `name` (and the job it inserted).
+fn changed(state: &AppState, done: &str, name: &str, job: Option<i64>) -> Response {
+    let job = job.map(|id| id.to_string());
+    let mut query = vec![(done, name)];
+    if let Some(job) = &job {
+        query.push(("job", job));
+    }
+    match serde_urlencoded::to_string(query) {
         Ok(query) => {
             Redirect::to(&format!("{}/schedules?{query}", state.base_path)).into_response()
         }
@@ -270,13 +356,16 @@ async fn last_runs(
     };
     // `meta @>` is what the GIN index on `meta` serves. Slots are RFC 3339 in UTC, so their text
     // sorts as their time does.
-    // The schedule's name, then its job's id, state, slot and scheduled time.
-    type LastRow = (String, i64, String, Option<String>, DateTime<Utc>);
+    // The schedule's name, then its job's id, state, slot, scheduled time and whether it was run
+    // now.
+    type LastRow = (String, i64, String, Option<String>, DateTime<Utc>, bool);
     let rows: Vec<LastRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT c.name, j.id, j.state::text, j.slot, j.scheduled_at
+        "SELECT c.name, j.id, j.state::text, j.slot, j.scheduled_at, j.run_now
              FROM unnest($1::text[], $2::timestamptz[]) AS c(name, since)
              CROSS JOIN LATERAL (
-                 SELECT id, state, meta->>'slot' AS slot, scheduled_at FROM {jobs}
+                 SELECT id, state, meta->>'slot' AS slot, scheduled_at,
+                     meta @> '{{\"run_now\": true}}' AS run_now
+                 FROM {jobs}
                  WHERE meta @> jsonb_build_object('cron', c.name) AND inserted_at >= c.since
                  ORDER BY meta->>'slot' DESC NULLS LAST, id DESC LIMIT 1
              ) j"
@@ -287,11 +376,19 @@ async fn last_runs(
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(name, id, state, slot, scheduled_at)| {
+        .map(|(name, id, state, slot, scheduled_at, run_now)| {
             let slot = slot
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map_or(scheduled_at, |s| s.with_timezone(&Utc));
-            (name, LastRun { id, state, slot })
+            (
+                name,
+                LastRun {
+                    id,
+                    state,
+                    slot,
+                    run_now,
+                },
+            )
         })
         .collect())
 }
@@ -320,7 +417,9 @@ fn row(cron: StoredCron, now: DateTime<Utc>, last: Option<LastRun>) -> ScheduleR
         priority: cron.priority(),
         max_attempts: cron.max_attempts(),
         tags: cron.tags().to_vec(),
-        next: cron.next(now),
+        catch_up: cron.catch_up().to_string(),
+        paused: cron.paused(),
+        next: (!cron.paused()).then(|| cron.next(now)).flatten(),
         last,
         updated_at: cron.updated_at(),
     }

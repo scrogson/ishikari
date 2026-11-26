@@ -434,6 +434,9 @@ fn routes() -> Router<AppState> {
             get(routes::schedules::list).post(routes::schedules::put),
         )
         .route("/schedules/delete", post(routes::schedules::delete))
+        .route("/schedules/pause", post(routes::schedules::pause))
+        .route("/schedules/resume", post(routes::schedules::resume))
+        .route("/schedules/run", post(routes::schedules::run_now))
         // API endpoints for htmx
         .route("/api/jobs", get(routes::api::enhanced_jobs_table))
         .route("/api/stats", get(routes::api::stats_or_counts))

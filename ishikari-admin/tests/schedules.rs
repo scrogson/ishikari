@@ -1,5 +1,6 @@
 //! The Schedules page lists the cron entries kept in the database (`ishikari::Crons`), with each
-//! one's next and last run, deletes them, and, with the host's modules, schedules a module.
+//! one's next and last run, pauses, resumes, runs now and deletes them, and, with the host's
+//! modules, schedules a module.
 
 mod common;
 
@@ -14,7 +15,7 @@ use ishikari::execution::{
     ModuleError, ModuleGrants, ModuleHandler, ModuleJob, ModuleUpload, ModuleVersion, NodeModule,
     NodeModules, NodeSpec, TestRun,
 };
-use ishikari::{CronEntry, Crons};
+use ishikari::{CatchUp, CronEntry, Crons};
 use ishikari_admin::AppState;
 
 /// Modules that are only listed: `test/kit`.
@@ -236,6 +237,7 @@ async fn a_module_is_scheduled() {
             ("args", r#"{"n": 1}"#),
             ("queue", ""),
             ("max_attempts", "3"),
+            ("catch_up", "latest"),
         ],
     )
     .await;
@@ -247,6 +249,7 @@ async fn a_module_is_scheduled() {
     assert_eq!(stored.worker(), ModuleJob::WORKER);
     assert_eq!(stored.queue(), ModuleJob::QUEUE);
     assert_eq!(stored.max_attempts(), 3);
+    assert_eq!(stored.catch_up(), CatchUp::Latest);
     assert_eq!(
         stored.args(),
         &serde_json::json!({"ishikari_worker": ModuleJob::WORKER, "module": "test/kit", "args": {"n": 1}})
@@ -461,6 +464,121 @@ async fn a_failed_delete_keeps_the_forms_defaults() {
     .await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     assert!(body(res).await.contains(r#"value="0 * * * *""#));
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_catch_up_the_table_has_no_name_for_is_refused_with_the_form_kept() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    let app = admin(&db, true);
+    let res = post_form(
+        &app,
+        "/admin/schedules",
+        &[
+            ("name", "kit"),
+            ("module", "test/kit"),
+            ("pattern", "0 * * * *"),
+            ("catch_up", "sometimes"),
+        ],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let html = body(res).await;
+    assert!(html.contains("sometimes"), "why it's refused");
+    assert!(html.contains(r#"value="kit""#), "the form kept");
+    assert!(crons(&db).get("kit").await.unwrap().is_none());
+
+    // The page first offers every missed slot.
+    let html = body(get(&app, "/admin/schedules", &[]).await).await;
+    assert!(html.contains(r#"<option value="all" selected>"#));
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_is_paused_and_resumed() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    crons(&db).put(&hourly("nap")).await.unwrap();
+    let app = admin(&db, false);
+
+    let res = post_form(&app, "/admin/schedules/pause", &[("name", "nap")]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), "/admin/schedules?paused=nap");
+    assert!(crons(&db).get("nap").await.unwrap().unwrap().paused());
+    let html = body(get(&app, &location(&res), &[]).await).await;
+    assert!(html.contains("Paused nap"));
+    assert!(
+        html.contains(r#"<span class="ik-none">paused</span>"#),
+        "no next run"
+    );
+    assert!(html.contains("/admin/schedules/resume"));
+    assert!(!html.contains("/admin/schedules/pause"));
+
+    // Pausing it again changes nothing, and says so as before.
+    let res = post_form(&app, "/admin/schedules/pause", &[("name", "nap")]).await;
+    assert_eq!(location(&res), "/admin/schedules?paused=nap");
+
+    let res = post_form(&app, "/admin/schedules/resume", &[("name", "nap")]).await;
+    assert_eq!(location(&res), "/admin/schedules?resumed=nap");
+    assert!(!crons(&db).get("nap").await.unwrap().unwrap().paused());
+    let html = body(get(&app, &location(&res), &[]).await).await;
+    assert!(html.contains("Resumed nap"));
+    assert!(html.contains("/admin/schedules/pause"));
+
+    for action in ["pause", "resume", "run"] {
+        let res = post_form(
+            &app,
+            &format!("/admin/schedules/{action}"),
+            &[("name", "nope")],
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{action}");
+        assert!(body(res).await.contains("No schedule nope"), "{action}");
+    }
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_schedule_is_run_now_and_its_job_is_its_last_run() {
+    let Some(db) = TestDb::new().await else {
+        return;
+    };
+    crons(&db).put(&hourly("now")).await.unwrap();
+    crons(&db).pause("now").await.unwrap();
+    let app = admin(&db, false);
+
+    let res = post_form(&app, "/admin/schedules/run", &[("name", "now")]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let to = location(&res);
+    let id: i64 = to
+        .strip_prefix("/admin/schedules?ran=now&job=")
+        .expect("the job it inserted")
+        .parse()
+        .unwrap();
+    let meta: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT meta FROM {}.ishikari_jobs WHERE id = $1",
+        db.schema
+    )))
+    .bind(id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(meta["cron"], "now");
+    assert_eq!(meta["run_now"], true);
+
+    let html = body(get(&app, &to, &[]).await).await;
+    assert!(html.contains(&format!("Ran now: job #{id}")));
+    assert!(
+        html.contains(&format!(r#"href="/admin/jobs/{id}""#)),
+        "its last run"
+    );
+    assert!(html.contains("· run now"));
 
     db.drop().await;
 }
